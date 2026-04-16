@@ -41,8 +41,8 @@ int OnInit() {
    g_trade.SetDeviationInPoints(30);
    ZeroMemory(g_sig);
 
-   //--- Derive signal file name from account number
-   g_signalFile = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
+   //--- Derive signal file name from account number (Files/ZoneSignalEA/{account}.json)
+   g_signalFile = "ZoneSignalEA\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
 
    if (!IsPeriod(PERIOD_M15))
       Print("[WARN] EA is attached to a non-M15 chart. Logic still uses M15 bars.");
