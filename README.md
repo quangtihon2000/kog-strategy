@@ -127,10 +127,18 @@ zone_signal_agent/
 
 ```bash
 cd zone_signal_agent
+
+# 1. Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate        # macOS/Linux
+# .venv\Scripts\activate         # Windows
+
+# 2. Install dependencies
 pip install -r requirements.txt
 
+# 3. Configure environment
 cp .env.example .env
-# edit .env — set MT5_SIGNAL_DIR and MT5_ACCOUNTS at minimum
+# edit .env — set MT5_SIGNAL_DIR, MT5_ACCOUNTS, and REDIS_URL at minimum
 ```
 
 ### Configuration (`.env`)
@@ -139,21 +147,39 @@ cp .env.example .env
 |---|---|---|---|
 | `MT5_SIGNAL_DIR` | yes | — | Absolute path to the directory where `{account}.json` files are written |
 | `MT5_ACCOUNTS` | yes | — | Comma-separated MT5 account numbers, e.g. `5100000,5100001` |
-| `REDIS_URL` | no | `redis://localhost:6379` | Redis connection URL |
+| `REDIS_URL` | no | `redis://localhost:6379` | Redis connection URL. For password-protected Redis use `redis://:PASSWORD@host:port` |
 | `REDIS_STREAM` | no | `zone_signals` | Redis Stream key to consume |
 | `REDIS_GROUP` | no | `ea_writer` | Consumer group name |
 | `REDIS_CONSUMER` | no | `agent-1` | Consumer name (change if running multiple instances) |
 | `LOG_LEVEL` | no | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
-### Running
+### Starting the agent
 
 ```bash
-# Ensure Redis is running
-redis-server
+cd zone_signal_agent
 
-# Start the agent
-python main.py
+# Activate the venv (if not already active)
+source .venv/bin/activate        # macOS/Linux
+
+# Start — the agent blocks and processes signals until killed
+.venv/bin/python main.py
 ```
+
+Expected output on successful start:
+
+```
+2026-04-16 12:00:00 INFO     Consumer group 'ea_writer' created on stream 'zone_signals'
+2026-04-16 12:00:00 INFO     Started. Accounts: [5100000, 5100001]  |  Stream: zone_signals  |  Dir: ../data
+```
+
+The agent then blocks, waiting for messages. Each consumed signal writes `{account}.json` for every account listed in `MT5_ACCOUNTS`:
+
+```
+2026-04-16 12:01:00 INFO     [5100000] Written zone=[2340.00, 2350.00]
+2026-04-16 12:01:00 INFO     [5100001] Written zone=[2340.00, 2350.00]
+```
+
+To stop the agent press `Ctrl+C`.
 
 ---
 
