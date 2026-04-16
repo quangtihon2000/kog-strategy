@@ -353,7 +353,8 @@ bool JsonGetDoubleArray(const string json, const string key, double &arr[]) {
    for (int i = 0; i < n; i++) {
       string s = parts[i];
       StringReplace(s, "\"", "");
-      s = StringTrimRight(StringTrimLeft(s));
+      StringTrimLeft(s);
+      StringTrimRight(s);
       if (s == "") continue;
 
       int idx = ArraySize(arr);
