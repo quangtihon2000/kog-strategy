@@ -53,8 +53,9 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Ensure output directory exists
-    settings.mt5_signal_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure output directory exists (skip if it's already a symlink)
+    if not settings.mt5_signal_dir.exists():
+        settings.mt5_signal_dir.mkdir(parents=True, exist_ok=True)
 
     consumer = RedisConsumer(settings)
     consumer.create_group_if_missing()
