@@ -1,0 +1,28 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Signal files (runtime output — not for version control)
+zone_signal_agent/*.json
+zone_signal_agent/*.tmp
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# MT5 compiled binaries
+*.ex5
