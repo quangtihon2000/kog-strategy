@@ -322,7 +322,9 @@ string JsonGetString(const string json, const string key) {
          val += ShortToString(c);
          pos++;
       }
-      return StringTrimRight(StringTrimLeft(val));
+      StringTrimLeft(val);
+      StringTrimRight(val);
+      return val;
    }
 }
 
