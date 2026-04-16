@@ -204,8 +204,8 @@ r.xadd("zone_signals", {
 ### 1. Test the Python agent end-to-end
 
 ```bash
-# Start agent writing to a temp directory
-MT5_SIGNAL_DIR=/tmp/test_sigs MT5_ACCOUNTS=5100000,5100001 python main.py
+# Start agent — writes to the project-root data/ folder by default
+MT5_SIGNAL_DIR=../data MT5_ACCOUNTS=5100000,5100001 python main.py
 ```
 
 ```bash
@@ -215,7 +215,7 @@ redis-cli XADD zone_signals '*' \
   targets_above "2360,2370" targets_below "2330,2320"
 ```
 
-Expected result: `/tmp/test_sigs/5100000.json` and `/tmp/test_sigs/5100001.json` both created with the correct zone data and a fresh `timestamp`.
+Expected result: `data/5100000.json` and `data/5100001.json` both created with the correct zone data and a fresh `timestamp`.
 
 ```bash
 # Push again — confirm timestamp updates and old file is replaced cleanly

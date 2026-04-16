@@ -14,8 +14,8 @@ dist/
 build/
 
 # Signal files (runtime output — not for version control)
-zone_signal_agent/*.json
-zone_signal_agent/*.tmp
+data/*.json
+data/*.tmp
 
 # macOS
 .DS_Store
