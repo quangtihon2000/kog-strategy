@@ -89,7 +89,15 @@ void OnTick() {
       CheckSignalFile();
    }
 
-   //--- Trade entry logic: once per new M15 bar
+   //--- Scalp entry: check on every tick after breakout confirmed
+   if (g_sig.valid) {
+      if (g_breakoutBuy && !g_scalpBuyActive && !g_buyDone)
+         OpenScalpEntry(POSITION_TYPE_BUY);
+      if (g_breakoutSell && !g_scalpSellActive && !g_sellDone)
+         OpenScalpEntry(POSITION_TYPE_SELL);
+   }
+
+   //--- Other entries: once per new M15 bar
    datetime barTime = iTime(_Symbol, PERIOD_M15, 0);
    if (barTime == g_lastBarTime) return;
    g_lastBarTime = barTime;
@@ -303,13 +311,7 @@ void ProcessNewBar() {
       }
    }
 
-   //--- 2) Scalp entry — re-entrant, fires on breakout bar and later bars
-   if (g_breakoutBuy && !g_scalpBuyActive && !g_buyDone)
-      OpenScalpEntry(POSITION_TYPE_BUY);
-   if (g_breakoutSell && !g_scalpSellActive && !g_sellDone)
-      OpenScalpEntry(POSITION_TYPE_SELL);
-
-   //--- 3) Normal entries — one-shot, requires retrace near redbox (skip breakout bar)
+   //--- 2) Normal entries — one-shot, requires retrace near redbox (skip breakout bar)
    if (g_breakoutBuy && !justBrokeBuy && !g_normalBuyDone && !g_buyDone) {
       double retraceLim = g_sig.redbox_upper + InpRetracePts * _Point;
       if (close1 >= g_sig.redbox_upper && close1 <= retraceLim) {
