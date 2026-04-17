@@ -1,7 +1,7 @@
 #$Source = "C:\Users\QuangXAU\projects\kog-strategy\ZoneSignalEA"
 #$Dest = "C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\7D70CC401B91FAC031C1DD6731E80E7A\MQL5\Experts\ZoneSignalEA"
 
-$Source = "C:\Users\QuangXAU\projects\kog-strategy\ZoneSignalEA\data"
+$Source = "C:\Users\QuangXAU\projects\kog-strategy-data"
 $Dest = "C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\7D70CC401B91FAC031C1DD6731E80E7A\MQL5\Files\ZoneSignalEA"
 
 # 1. Cleanup: Remove the destination if it already exists

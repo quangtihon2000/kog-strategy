@@ -248,13 +248,29 @@ void ProcessNewBar() {
 
    //--- 1) Initial breakout entry (blocked if direction is done)
    if (close1 > g_sig.redbox_upper && !g_breakoutBuy && !g_buyDone) {
-      Print("[Signal] Close ABOVE zone → opening BUY positions");
-      OpenTrades(POSITION_TYPE_BUY);
-      g_breakoutBuy = true;
+      //--- If price already hit/passed T1, ignore BUY direction entirely
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      int nAbove = ArraySize(g_sig.targets_above);
+      if (nAbove > 0 && ask >= g_sig.targets_above[0]) {
+         PrintFormat("[Signal] BUY IGNORED — price %.5f already at/past T1 (%.5f)", ask, g_sig.targets_above[0]);
+         g_buyDone = true;
+      } else {
+         Print("[Signal] Close ABOVE zone → opening BUY positions");
+         OpenTrades(POSITION_TYPE_BUY);
+         g_breakoutBuy = true;
+      }
    } else if (close1 < g_sig.redbox_lower && !g_breakoutSell && !g_sellDone) {
-      Print("[Signal] Close BELOW zone → opening SELL positions");
-      OpenTrades(POSITION_TYPE_SELL);
-      g_breakoutSell = true;
+      //--- If price already hit/passed T1, ignore SELL direction entirely
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      int nBelow = ArraySize(g_sig.targets_below);
+      if (nBelow > 0 && bid <= g_sig.targets_below[0]) {
+         PrintFormat("[Signal] SELL IGNORED — price %.5f already at/past T1 (%.5f)", bid, g_sig.targets_below[0]);
+         g_sellDone = true;
+      } else {
+         Print("[Signal] Close BELOW zone → opening SELL positions");
+         OpenTrades(POSITION_TYPE_SELL);
+         g_breakoutSell = true;
+      }
    }
 
    //--- 2) Mid-zone reentry (blocked if direction is done)
