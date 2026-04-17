@@ -175,9 +175,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    //--- Remove closed ticket from tracking array
    RemoveTicket(closedPosId);
 
-   //--- If no more open positions → signal fully completed
-   if (!HasOpenPositions()) {
-      Print("[Signal] All positions closed (SL/TP hit) → signal deactivated");
+   //--- Deactivate signal when both directions are done (T1 reached or SL hit)
+   if (g_buyDone && g_sellDone) {
+      Print("[Signal] Both directions done → signal deactivated");
       g_sig.valid = false;
    }
 }

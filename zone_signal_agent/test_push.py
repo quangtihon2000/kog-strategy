@@ -14,10 +14,10 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 
 msg = {
     "symbol":        "XAUUSD",
-    "redbox_upper":  "4815.00",
-    "redbox_lower":  "4795.00",
-    "targets_above": "4830.0,4840.0",
-    "targets_below": "4785.0,4775.0",
+    "redbox_upper":  "4810.00",
+    "redbox_lower":  "4790.00",
+    "targets_above": "4825.0,4835.0",
+    "targets_below": "4780.0,4770.0",
 }
 
 msg_id = r.xadd(STREAM, msg)
