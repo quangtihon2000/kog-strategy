@@ -16,8 +16,8 @@ msg = {
     "symbol":        "XAUUSD",
     "redbox_upper":  "4810.00",
     "redbox_lower":  "4790.00",
-    "targets_above": "4825.0,4835.0",
-    "targets_below": "4780.0,4770.0",
+    "targets_above": "4835.0,4850.0",
+    "targets_below": "4770.0,4755.0",
 }
 
 msg_id = r.xadd(STREAM, msg)

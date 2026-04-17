@@ -89,12 +89,33 @@ void OnTick() {
       CheckSignalFile();
    }
 
-   //--- Scalp entry: check on every tick after breakout confirmed
+   //--- Entries: check on every tick after breakout confirmed
    if (g_sig.valid) {
+      // 1) Scalp entries
       if (g_breakoutBuy && !g_scalpBuyActive && !g_buyDone)
          OpenScalpEntry(POSITION_TYPE_BUY);
       if (g_breakoutSell && !g_scalpSellActive && !g_sellDone)
          OpenScalpEntry(POSITION_TYPE_SELL);
+
+      // 2) Normal entries — triggers immediately when price hits retrace zone
+      if (g_breakoutBuy && !g_normalBuyDone && !g_buyDone) {
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double retraceLim = g_sig.redbox_upper + InpRetracePts * _Point;
+         if (ask >= g_sig.redbox_upper && ask <= retraceLim) {
+            PrintFormat("[Normal] BUY retrace near redbox (Ask %.5f) → opening target positions", ask);
+            OpenTrades(POSITION_TYPE_BUY);
+            g_normalBuyDone = true;
+         }
+      }
+      if (g_breakoutSell && !g_normalSellDone && !g_sellDone) {
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double retraceLim = g_sig.redbox_lower - InpRetracePts * _Point;
+         if (bid <= g_sig.redbox_lower && bid >= retraceLim) {
+            PrintFormat("[Normal] SELL retrace near redbox (Bid %.5f) → opening target positions", bid);
+            OpenTrades(POSITION_TYPE_SELL);
+            g_normalSellDone = true;
+         }
+      }
    }
 
    //--- Other entries: once per new M15 bar
@@ -283,9 +304,6 @@ void ProcessNewBar() {
                close1, g_sig.redbox_lower, g_sig.redbox_upper, midZone);
 
    //--- 1) Breakout detection — flag only, no immediate trade opening
-   bool justBrokeBuy  = false;
-   bool justBrokeSell = false;
-
    if (close1 > g_sig.redbox_upper && !g_breakoutBuy && !g_buyDone) {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       int nAbove = ArraySize(g_sig.targets_above);
@@ -295,7 +313,6 @@ void ProcessNewBar() {
       } else {
          Print("[Signal] Close ABOVE zone → BUY breakout confirmed");
          g_breakoutBuy = true;
-         justBrokeBuy  = true;
       }
    }
    if (close1 < g_sig.redbox_lower && !g_breakoutSell && !g_sellDone) {
@@ -307,29 +324,10 @@ void ProcessNewBar() {
       } else {
          Print("[Signal] Close BELOW zone → SELL breakout confirmed");
          g_breakoutSell = true;
-         justBrokeSell  = true;
       }
    }
 
-   //--- 2) Normal entries — one-shot, requires retrace near redbox (skip breakout bar)
-   if (g_breakoutBuy && !justBrokeBuy && !g_normalBuyDone && !g_buyDone) {
-      double retraceLim = g_sig.redbox_upper + InpRetracePts * _Point;
-      if (close1 >= g_sig.redbox_upper && close1 <= retraceLim) {
-         Print("[Normal] BUY retrace near redbox → opening target positions");
-         OpenTrades(POSITION_TYPE_BUY);
-         g_normalBuyDone = true;
-      }
-   }
-   if (g_breakoutSell && !justBrokeSell && !g_normalSellDone && !g_sellDone) {
-      double retraceLim = g_sig.redbox_lower - InpRetracePts * _Point;
-      if (close1 <= g_sig.redbox_lower && close1 >= retraceLim) {
-         Print("[Normal] SELL retrace near redbox → opening target positions");
-         OpenTrades(POSITION_TYPE_SELL);
-         g_normalSellDone = true;
-      }
-   }
-
-   //--- 4) Mid-zone reentry (optional, blocked if direction is done)
+   //--- 2) Mid-zone reentry (M15 close based, optional blocked if direction is done)
    if (InpEnableMidEntry && close1 >= g_sig.redbox_lower && close1 <= g_sig.redbox_upper) {
       if (g_breakoutBuy && !g_midEntryBuyDone && !g_buyDone) {
          Print("[MidZone] Price back in zone → opening extra BUY at mid-zone");
