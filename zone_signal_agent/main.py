@@ -53,9 +53,11 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Ensure output directory exists (skip if it's already a symlink)
-    if not settings.mt5_signal_dir.exists():
-        settings.mt5_signal_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure output directory exists (handles Windows symlinks correctly)
+    sig_dir = settings.mt5_signal_dir.resolve()   # follow symlinks to real path
+    if not sig_dir.exists():
+        sig_dir.mkdir(parents=True, exist_ok=True)
+    settings.mt5_signal_dir = sig_dir
 
     consumer = RedisConsumer(settings)
     consumer.create_group_if_missing()
