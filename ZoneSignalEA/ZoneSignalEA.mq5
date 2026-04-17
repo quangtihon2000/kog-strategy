@@ -3,8 +3,8 @@
 //|  Trades M15 breakouts from a JSON zone signal file               |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "2.00"
-#property description "Reads a JSON signal file and trades M15 zone breakouts"
+#property version     "3.00"
+#property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
 
@@ -16,6 +16,10 @@ input double   InpMinTpPts      = 300;           // Min TP distance (points) to 
 input double   InpSlBufferPts   = 50;            // Extra SL buffer (points)
 input ulong    InpMagic         = 20240416;      // Magic number
 input bool     InpUseCommonDir  = true;          // Use MT5 common Files folder
+input double   InpScalpTpPts    = 400;           // Scalp TP distance (points)
+input double   InpScalpBufPts   = 500;           // Scalp zone ceiling buffer from T1 (points)
+input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
+input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -41,13 +45,19 @@ bool       g_breakoutBuy   = false;  // true once a BUY breakout has been taken
 bool       g_breakoutSell  = false;  // true once a SELL breakout has been taken
 bool       g_midEntryBuyDone  = false;  // true once a mid-zone BUY reentry has been taken
 bool       g_midEntrySellDone = false;  // true once a mid-zone SELL reentry has been taken
-bool       g_buyDone       = false;  // true once any BUY position hits TP/SL → no more BUY entries
-bool       g_sellDone      = false;  // true once any SELL position hits TP/SL → no more SELL entries
+bool       g_buyDone       = false;  // true once any BUY position hits SL → no more BUY entries
+bool       g_sellDone      = false;  // true once any SELL position hits SL → no more SELL entries
+bool       g_scalpBuyActive   = false;  // true while a scalp BUY position is open
+bool       g_scalpSellActive  = false;  // true while a scalp SELL position is open
+bool       g_normalBuyDone    = false;  // true once normal BUY entries have been placed
+bool       g_normalSellDone   = false;  // true once normal SELL entries have been placed
 
 //--- Ticket tracking: all positions opened by the current signal
 ulong      g_signalTickets[];         // ticket numbers from this signal
 ulong      g_t1BuyTicket   = 0;       // ticket of BUY target 1 (for BE trigger)
 ulong      g_t1SellTicket  = 0;       // ticket of SELL target 1 (for BE trigger)
+ulong      g_scalpBuyTicket   = 0;    // ticket of current scalp BUY position
+ulong      g_scalpSellTicket  = 0;    // ticket of current scalp SELL position
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -114,17 +124,29 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    bool wasBuy  = (dealType == DEAL_TYPE_SELL);  // closing deal sells → was a BUY
    bool wasSell = (dealType == DEAL_TYPE_BUY);   // closing deal buys  → was a SELL
 
-   //--- Mark direction as DONE (no more entries for this direction)
-   if (reason == DEAL_REASON_TP || reason == DEAL_REASON_SL) {
+   //--- Handle scalp ticket closures (TP → allow re-entry)
+   if (closedPosId == g_scalpBuyTicket && g_scalpBuyTicket != 0) {
+      g_scalpBuyActive = false;
+      g_scalpBuyTicket = 0;
+      if (reason == DEAL_REASON_TP)
+         Print("[Scalp] BUY scalp TP hit → re-entry allowed");
+   }
+   if (closedPosId == g_scalpSellTicket && g_scalpSellTicket != 0) {
+      g_scalpSellActive = false;
+      g_scalpSellTicket = 0;
+      if (reason == DEAL_REASON_TP)
+         Print("[Scalp] SELL scalp TP hit → re-entry allowed");
+   }
+
+   //--- Mark direction as DONE only on SL hit (TP allows continued trading)
+   if (reason == DEAL_REASON_SL) {
       if (wasBuy && !g_buyDone) {
          g_buyDone = true;
-         PrintFormat("[Signal] BUY direction DONE (ticket #%d hit %s) → no more BUY entries",
-                     closedPosId, reason == DEAL_REASON_TP ? "TP" : "SL");
+         PrintFormat("[Signal] BUY direction DONE (ticket #%d hit SL) → no more BUY entries", closedPosId);
       }
       if (wasSell && !g_sellDone) {
          g_sellDone = true;
-         PrintFormat("[Signal] SELL direction DONE (ticket #%d hit %s) → no more SELL entries",
-                     closedPosId, reason == DEAL_REASON_TP ? "TP" : "SL");
+         PrintFormat("[Signal] SELL direction DONE (ticket #%d hit SL) → no more SELL entries", closedPosId);
       }
    }
 
@@ -227,8 +249,14 @@ void ApplySignal(const ZoneSignal &sig) {
    g_midEntrySellDone = false;
    g_buyDone          = false;
    g_sellDone         = false;
+   g_scalpBuyActive   = false;
+   g_scalpSellActive  = false;
+   g_normalBuyDone    = false;
+   g_normalSellDone   = false;
    g_t1BuyTicket      = 0;
    g_t1SellTicket     = 0;
+   g_scalpBuyTicket   = 0;
+   g_scalpSellTicket  = 0;
    ArrayResize(g_signalTickets, 0);   // clear ticket tracking
    PrintFormat("[Signal] Applied — Zone %.5f – %.5f | Targets above: %d | below: %d",
                sig.redbox_lower, sig.redbox_upper,
@@ -246,35 +274,61 @@ void ProcessNewBar() {
    PrintFormat("[Bar] M15 close[1]=%.5f  Zone [%.5f – %.5f]  Mid=%.5f",
                close1, g_sig.redbox_lower, g_sig.redbox_upper, midZone);
 
-   //--- 1) Initial breakout entry (blocked if direction is done)
+   //--- 1) Breakout detection — flag only, no immediate trade opening
+   bool justBrokeBuy  = false;
+   bool justBrokeSell = false;
+
    if (close1 > g_sig.redbox_upper && !g_breakoutBuy && !g_buyDone) {
-      //--- If price already hit/passed T1, ignore BUY direction entirely
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       int nAbove = ArraySize(g_sig.targets_above);
       if (nAbove > 0 && ask >= g_sig.targets_above[0]) {
          PrintFormat("[Signal] BUY IGNORED — price %.5f already at/past T1 (%.5f)", ask, g_sig.targets_above[0]);
          g_buyDone = true;
       } else {
-         Print("[Signal] Close ABOVE zone → opening BUY positions");
-         OpenTrades(POSITION_TYPE_BUY);
+         Print("[Signal] Close ABOVE zone → BUY breakout confirmed");
          g_breakoutBuy = true;
+         justBrokeBuy  = true;
       }
-   } else if (close1 < g_sig.redbox_lower && !g_breakoutSell && !g_sellDone) {
-      //--- If price already hit/passed T1, ignore SELL direction entirely
+   }
+   if (close1 < g_sig.redbox_lower && !g_breakoutSell && !g_sellDone) {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       int nBelow = ArraySize(g_sig.targets_below);
       if (nBelow > 0 && bid <= g_sig.targets_below[0]) {
          PrintFormat("[Signal] SELL IGNORED — price %.5f already at/past T1 (%.5f)", bid, g_sig.targets_below[0]);
          g_sellDone = true;
       } else {
-         Print("[Signal] Close BELOW zone → opening SELL positions");
-         OpenTrades(POSITION_TYPE_SELL);
+         Print("[Signal] Close BELOW zone → SELL breakout confirmed");
          g_breakoutSell = true;
+         justBrokeSell  = true;
       }
    }
 
-   //--- 2) Mid-zone reentry (blocked if direction is done)
-   if (close1 >= g_sig.redbox_lower && close1 <= g_sig.redbox_upper) {
+   //--- 2) Scalp entry — re-entrant, fires on breakout bar and later bars
+   if (g_breakoutBuy && !g_scalpBuyActive && !g_buyDone)
+      OpenScalpEntry(POSITION_TYPE_BUY);
+   if (g_breakoutSell && !g_scalpSellActive && !g_sellDone)
+      OpenScalpEntry(POSITION_TYPE_SELL);
+
+   //--- 3) Normal entries — one-shot, requires retrace near redbox (skip breakout bar)
+   if (g_breakoutBuy && !justBrokeBuy && !g_normalBuyDone && !g_buyDone) {
+      double retraceLim = g_sig.redbox_upper + InpRetracePts * _Point;
+      if (close1 >= g_sig.redbox_upper && close1 <= retraceLim) {
+         Print("[Normal] BUY retrace near redbox → opening target positions");
+         OpenTrades(POSITION_TYPE_BUY);
+         g_normalBuyDone = true;
+      }
+   }
+   if (g_breakoutSell && !justBrokeSell && !g_normalSellDone && !g_sellDone) {
+      double retraceLim = g_sig.redbox_lower - InpRetracePts * _Point;
+      if (close1 <= g_sig.redbox_lower && close1 >= retraceLim) {
+         Print("[Normal] SELL retrace near redbox → opening target positions");
+         OpenTrades(POSITION_TYPE_SELL);
+         g_normalSellDone = true;
+      }
+   }
+
+   //--- 4) Mid-zone reentry (optional, blocked if direction is done)
+   if (InpEnableMidEntry && close1 >= g_sig.redbox_lower && close1 <= g_sig.redbox_upper) {
       if (g_breakoutBuy && !g_midEntryBuyDone && !g_buyDone) {
          Print("[MidZone] Price back in zone → opening extra BUY at mid-zone");
          OpenMidZoneEntry(POSITION_TYPE_BUY);
@@ -284,6 +338,93 @@ void ProcessNewBar() {
          Print("[MidZone] Price back in zone → opening extra SELL at mid-zone");
          OpenMidZoneEntry(POSITION_TYPE_SELL);
          g_midEntrySellDone = true;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open 1 scalp position — can re-enter after TP hit                |
+//+------------------------------------------------------------------+
+void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
+   double buffer   = InpSlBufferPts * _Point;
+   double lotSize  = MathMin(InpLotPerTarget, InpMaxLots);
+   double midZone  = NormalizeDouble((g_sig.redbox_upper + g_sig.redbox_lower) / 2.0, _Digits);
+
+   //--- Check max positions cap
+   if (CountOpenPositions(dir) >= InpMaxPositions) {
+      PrintFormat("[Scalp SKIP] Max positions (%d) reached for %s",
+                  InpMaxPositions, dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
+      return;
+   }
+
+   if (dir == POSITION_TYPE_BUY) {
+      int n = ArraySize(g_sig.targets_above);
+      if (n == 0) return;
+
+      double entry        = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double scalpCeiling = g_sig.targets_above[0] - InpScalpBufPts * _Point;
+
+      //--- Entry must be in scalp zone: [midZone, scalpCeiling]
+      if (entry < midZone || entry > scalpCeiling) {
+         PrintFormat("[Scalp SKIP] BUY entry %.5f outside scalp zone [%.5f – %.5f]",
+                     entry, midZone, scalpCeiling);
+         return;
+      }
+
+      double sl    = NormalizeDouble(g_sig.redbox_lower - buffer, _Digits);
+      double rawTp = entry + InpScalpTpPts * _Point;
+      double tp    = NormalizeDouble(MathMin(rawTp, g_sig.targets_above[0]), _Digits);
+
+      if (tp <= entry) {
+         PrintFormat("[Scalp SKIP] BUY TP %.5f <= entry %.5f", tp, entry);
+         return;
+      }
+
+      string comment = StringFormat("ZB_SCALP_%d", (int)g_sig.timestamp);
+      bool   ok      = g_trade.Buy(lotSize, _Symbol, entry, sl, tp, comment);
+      PrintFormat("[Scalp BUY] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
+                  lotSize, entry, sl, tp,
+                  ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      if (ok) {
+         ulong ticket = g_trade.ResultOrder();
+         AddTicket(ticket);
+         g_scalpBuyActive = true;
+         g_scalpBuyTicket = ticket;
+      }
+
+   } else { // SELL
+      int n = ArraySize(g_sig.targets_below);
+      if (n == 0) return;
+
+      double entry      = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double scalpFloor = g_sig.targets_below[0] + InpScalpBufPts * _Point;
+
+      //--- Entry must be in scalp zone: [scalpFloor, midZone]
+      if (entry > midZone || entry < scalpFloor) {
+         PrintFormat("[Scalp SKIP] SELL entry %.5f outside scalp zone [%.5f – %.5f]",
+                     entry, scalpFloor, midZone);
+         return;
+      }
+
+      double sl    = NormalizeDouble(g_sig.redbox_upper + buffer, _Digits);
+      double rawTp = entry - InpScalpTpPts * _Point;
+      double tp    = NormalizeDouble(MathMax(rawTp, g_sig.targets_below[0]), _Digits);
+
+      if (tp >= entry) {
+         PrintFormat("[Scalp SKIP] SELL TP %.5f >= entry %.5f", tp, entry);
+         return;
+      }
+
+      string comment = StringFormat("ZS_SCALP_%d", (int)g_sig.timestamp);
+      bool   ok      = g_trade.Sell(lotSize, _Symbol, entry, sl, tp, comment);
+      PrintFormat("[Scalp SELL] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
+                  lotSize, entry, sl, tp,
+                  ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      if (ok) {
+         ulong ticket = g_trade.ResultOrder();
+         AddTicket(ticket);
+         g_scalpSellActive = true;
+         g_scalpSellTicket = ticket;
       }
    }
 }
