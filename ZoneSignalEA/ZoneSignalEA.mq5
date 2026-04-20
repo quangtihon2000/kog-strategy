@@ -20,6 +20,7 @@ input double   InpScalpTpPts    = 400;           // Scalp TP distance (points)
 input double   InpScalpBufPts   = 500;           // Scalp zone ceiling buffer from T1 (points)
 input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
 input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
+input double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -218,15 +219,22 @@ void MoveSignalToBreakEven(const ENUM_POSITION_TYPE dir) {
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       double currentSL = PositionGetDouble(POSITION_SL);
       double tp        = PositionGetDouble(POSITION_TP);
-      double newSL     = NormalizeDouble(openPrice, _Digits);
+      double offset    = InpBeProfitPts * _Point;
+      double newSL     = (dir == POSITION_TYPE_BUY)
+                         ? NormalizeDouble(openPrice + offset, _Digits)
+                         : NormalizeDouble(openPrice - offset, _Digits);
 
-      //--- Skip if SL is already at or better than break even
+      //--- Skip if SL is already at or better than break-even target
       if (dir == POSITION_TYPE_BUY  && currentSL >= newSL) continue;
       if (dir == POSITION_TYPE_SELL && currentSL <= newSL && currentSL > 0) continue;
 
+      //--- Skip if TP is too close (would invert SL/TP)
+      if (dir == POSITION_TYPE_BUY  && tp > 0 && newSL >= tp) continue;
+      if (dir == POSITION_TYPE_SELL && tp > 0 && newSL <= tp) continue;
+
       bool ok = g_trade.PositionModify(ticket, newSL, tp);
-      PrintFormat("[BE] Ticket #%d SL: %.5f → %.5f (entry)  %s",
-                  ticket, currentSL, newSL,
+      PrintFormat("[BE] Ticket #%d SL: %.5f → %.5f (entry %.5f +%.0f pts)  %s",
+                  ticket, currentSL, newSL, openPrice, InpBeProfitPts,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
 }
