@@ -21,6 +21,10 @@ input double   InpScalpBufPts   = 500;           // Scalp zone ceiling buffer fr
 input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
 input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
 input double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
+input bool     InpEnableTrailing = true;         // Enable trailing stop (non-scalp positions)
+input double   InpTrailStartPts  = 200;          // Profit to activate trailing (points)
+input double   InpTrailDistPts   = 150;          // Trail SL this far behind current price (points)
+input double   InpTrailStepPts   = 20;           // Minimum SL improvement before modify (points)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -55,6 +59,7 @@ bool       g_normalSellDone   = false;  // true once normal SELL entries have be
 
 //--- Ticket tracking: all positions opened by the current signal
 ulong      g_signalTickets[];         // ticket numbers from this signal
+ulong      g_scalpTickets[];          // parallel set of scalp tickets (excluded from trail)
 ulong      g_t1BuyTicket   = 0;       // ticket of BUY target 1 (for BE trigger)
 ulong      g_t1SellTicket  = 0;       // ticket of SELL target 1 (for BE trigger)
 ulong      g_scalpBuyTicket   = 0;    // ticket of current scalp BUY position
@@ -71,6 +76,10 @@ int OnInit() {
 
    if (!IsPeriod(PERIOD_M15))
       Print("[WARN] EA is attached to a non-M15 chart. Logic still uses M15 bars.");
+
+   if (InpEnableTrailing && InpTrailDistPts >= InpTrailStartPts)
+      PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
+                  InpTrailDistPts, InpTrailStartPts);
 
    Print("[ZoneSignalEA] Initialized. Signal file: ", g_signalFile);
    return INIT_SUCCEEDED;
@@ -117,6 +126,9 @@ void OnTick() {
             g_normalSellDone = true;
          }
       }
+
+      // 3) Trailing stop management
+      UpdateTrailingStops();
    }
 
    //--- Other entries: once per new M15 bar
@@ -151,8 +163,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    //--- Determine the original position direction from the closing deal type
    //    Closing a BUY = DEAL_TYPE_SELL, closing a SELL = DEAL_TYPE_BUY
    ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(deal, DEAL_TYPE);
-   bool wasBuy  = (dealType == DEAL_TYPE_SELL);  // closing deal sells → was a BUY
-   bool wasSell = (dealType == DEAL_TYPE_BUY);   // closing deal buys  → was a SELL
+   bool wasBuy = (dealType == DEAL_TYPE_SELL);  // closing deal sells → was a BUY
+
+   ENUM_POSITION_TYPE dir = wasBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
 
    //--- Handle scalp ticket closures (TP → allow re-entry)
    if (closedPosId == g_scalpBuyTicket && g_scalpBuyTicket != 0) {
@@ -167,37 +180,37 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       if (reason == DEAL_REASON_TP)
          Print("[Scalp] SELL scalp TP hit → re-entry allowed");
    }
+   RemoveScalpTicket(closedPosId);
 
-   //--- Mark direction as DONE only on SL hit (TP allows continued trading)
-   if (reason == DEAL_REASON_SL) {
-      if (wasBuy && !g_buyDone) {
-         g_buyDone = true;
-         PrintFormat("[Signal] BUY direction DONE (ticket #%d hit SL) → no more BUY entries", closedPosId);
+   //--- R1, R4: T1 TP is the ONLY direction-done trigger
+   if (reason == DEAL_REASON_TP) {
+      if (dir == POSITION_TYPE_BUY && closedPosId == g_t1BuyTicket && g_t1BuyTicket != 0) {
+         PrintFormat("[Signal] BUY T1 (#%d) hit TP → BE + BUY direction DONE", closedPosId);
+         MoveSignalToBreakEven(POSITION_TYPE_BUY);
+         g_buyDone     = true;
+         g_t1BuyTicket = 0;
       }
-      if (wasSell && !g_sellDone) {
-         g_sellDone = true;
-         PrintFormat("[Signal] SELL direction DONE (ticket #%d hit SL) → no more SELL entries", closedPosId);
+      else if (dir == POSITION_TYPE_SELL && closedPosId == g_t1SellTicket && g_t1SellTicket != 0) {
+         PrintFormat("[Signal] SELL T1 (#%d) hit TP → BE + SELL direction DONE", closedPosId);
+         MoveSignalToBreakEven(POSITION_TYPE_SELL);
+         g_sellDone     = true;
+         g_t1SellTicket = 0;
       }
    }
+   //--- R4, R6: SL does NOT end the direction. Clear T1 slot if T1 itself stopped,
+   //    then re-arm re-entry flags if the direction is fully drained without T1 TP.
+   else if (reason == DEAL_REASON_SL) {
+      if (dir == POSITION_TYPE_BUY  && closedPosId == g_t1BuyTicket)  g_t1BuyTicket  = 0;
+      if (dir == POSITION_TYPE_SELL && closedPosId == g_t1SellTicket) g_t1SellTicket = 0;
 
-   //--- Check if T1 hit TP → move remaining positions to break even
-   if (reason == DEAL_REASON_TP) {
-      if (closedPosId == g_t1BuyTicket && g_t1BuyTicket != 0) {
-         PrintFormat("[BE] BUY T1 (ticket #%d) hit TP → moving remaining positions to break even", closedPosId);
-         MoveSignalToBreakEven(POSITION_TYPE_BUY);
-         g_t1BuyTicket = 0;  // consumed
-      }
-      if (closedPosId == g_t1SellTicket && g_t1SellTicket != 0) {
-         PrintFormat("[BE] SELL T1 (ticket #%d) hit TP → moving remaining positions to break even", closedPosId);
-         MoveSignalToBreakEven(POSITION_TYPE_SELL);
-         g_t1SellTicket = 0;  // consumed
-      }
+      PrintFormat("[Signal] Ticket #%d closed at SL (direction stays active)", closedPosId);
+      ResetReEntryFlagsIfDrained(dir, closedPosId);
    }
 
    //--- Remove closed ticket from tracking array
    RemoveTicket(closedPosId);
 
-   //--- Deactivate signal when both directions are done (T1 reached or SL hit)
+   //--- R13: deactivate signal only when both directions have hit T1 TP
    if (g_buyDone && g_sellDone) {
       Print("[Signal] Both directions done → signal deactivated");
       g_sig.valid = false;
@@ -265,6 +278,118 @@ void RemoveTicket(ulong ticket) {
 }
 
 //+------------------------------------------------------------------+
+//| Scalp parallel ticket set (R12: identify scalp without relying   |
+//| on POSITION_COMMENT, which some brokers strip on modify)         |
+//+------------------------------------------------------------------+
+void AddScalpTicket(ulong ticket) {
+   int n = ArraySize(g_scalpTickets);
+   ArrayResize(g_scalpTickets, n + 1);
+   g_scalpTickets[n] = ticket;
+}
+
+void RemoveScalpTicket(ulong ticket) {
+   int n = ArraySize(g_scalpTickets);
+   for (int i = 0; i < n; i++) {
+      if (g_scalpTickets[i] == ticket) {
+         for (int j = i; j < n - 1; j++)
+            g_scalpTickets[j] = g_scalpTickets[j + 1];
+         ArrayResize(g_scalpTickets, n - 1);
+         return;
+      }
+   }
+}
+
+bool IsScalpTicket(ulong ticket) {
+   int n = ArraySize(g_scalpTickets);
+   for (int i = 0; i < n; i++)
+      if (g_scalpTickets[i] == ticket) return true;
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| R5, R6: re-arm re-entry flags when a direction fully drains      |
+//| without any T1 TP. Walks PositionsTotal and excludes the         |
+//| just-closed ticket to dodge broker-specific OnTradeTransaction   |
+//| visibility races.                                                |
+//+------------------------------------------------------------------+
+void ResetReEntryFlagsIfDrained(const ENUM_POSITION_TYPE dir, const ulong closedPosId) {
+   int remaining = 0;
+   for (int i = PositionsTotal() - 1; i >= 0; --i) {
+      ulong t = PositionGetTicket(i);
+      if (t == 0 || t == closedPosId) continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)       continue;
+      if (PositionGetString (POSITION_SYMBOL) != _Symbol)             continue;
+      if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
+      remaining++;
+   }
+   if (remaining > 0) return;
+
+   //--- R6 guard: never re-arm if direction has already been marked done via T1 TP
+   bool done = (dir == POSITION_TYPE_BUY) ? g_buyDone : g_sellDone;
+   if (done) return;
+
+   if (dir == POSITION_TYPE_BUY) {
+      g_normalBuyDone   = false;
+      g_midEntryBuyDone = false;
+      g_t1BuyTicket     = 0;
+      Print("[Signal] BUY drained without T1 TP → re-entry re-armed");
+   } else {
+      g_normalSellDone   = false;
+      g_midEntrySellDone = false;
+      g_t1SellTicket     = 0;
+      Print("[Signal] SELL drained without T1 TP → re-entry re-armed");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Trailing stop manager — R7/R8/R9/R10, excludes scalp (R12)       |
+//+------------------------------------------------------------------+
+void UpdateTrailingStops() {
+   if (!InpEnableTrailing || !g_sig.valid) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   for (int i = ArraySize(g_signalTickets) - 1; i >= 0; --i) {
+      ulong ticket = g_signalTickets[i];
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (IsScalpTicket(ticket))           continue;  // R12
+
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double tp        = PositionGetDouble(POSITION_TP);
+
+      double profitPts = (type == POSITION_TYPE_BUY)
+                         ? (bid - openPrice) / _Point
+                         : (openPrice - ask) / _Point;
+      if (profitPts < InpTrailStartPts) continue;  // R9
+
+      double desiredSL = (type == POSITION_TYPE_BUY)
+                         ? NormalizeDouble(bid - InpTrailDistPts * _Point, _Digits)
+                         : NormalizeDouble(ask + InpTrailDistPts * _Point, _Digits);
+
+      //--- R7 + R10: strictly improving AND clears step threshold
+      if (type == POSITION_TYPE_BUY) {
+         if (desiredSL < currentSL + InpTrailStepPts * _Point) continue;
+      } else {
+         if (currentSL != 0 && desiredSL > currentSL - InpTrailStepPts * _Point) continue;
+      }
+
+      //--- R8: never cross TP
+      if (tp > 0) {
+         if (type == POSITION_TYPE_BUY  && desiredSL >= tp) continue;
+         if (type == POSITION_TYPE_SELL && desiredSL <= tp) continue;
+      }
+
+      bool ok = g_trade.PositionModify(ticket, desiredSL, tp);
+      PrintFormat("[Trail] Ticket #%d SL: %.5f → %.5f  (profit=%.0f pts)  %s",
+                  ticket, currentSL, desiredSL, profitPts,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Poll JSON file and apply if a new timestamp is detected          |
 //+------------------------------------------------------------------+
 void CheckSignalFile() {
@@ -295,6 +420,7 @@ void ApplySignal(const ZoneSignal &sig) {
    g_scalpBuyTicket   = 0;
    g_scalpSellTicket  = 0;
    ArrayResize(g_signalTickets, 0);   // clear ticket tracking
+   ArrayResize(g_scalpTickets, 0);
    PrintFormat("[Signal] Applied — Zone %.5f – %.5f | Targets above: %d | below: %d",
                sig.redbox_lower, sig.redbox_upper,
                ArraySize(sig.targets_above), ArraySize(sig.targets_below));
@@ -396,6 +522,7 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
          AddTicket(ticket);
+         AddScalpTicket(ticket);
          g_scalpBuyActive = true;
          g_scalpBuyTicket = ticket;
       }
@@ -431,6 +558,7 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
          AddTicket(ticket);
+         AddScalpTicket(ticket);
          g_scalpSellActive = true;
          g_scalpSellTicket = ticket;
       }
