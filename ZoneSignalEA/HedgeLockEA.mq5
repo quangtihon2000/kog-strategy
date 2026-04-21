@@ -11,7 +11,8 @@
 
 //--- Input Parameters
 input double InpLots         = 0.01;       // Lot size (same for both legs)
-input int    InpDistancePts  = 1000;       // Sell limit distance above buy (points)
+input double InpSpreadMult   = 1.5;        // Distance = spread × mult + buffer
+input int    InpBufferPts    = 10;         // Extra points above spread (safety cushion)
 input double InpMinProfit    = 0.0;        // Min combined floating (account currency) to close
 input ulong  InpMagic        = 70260421;   // Magic number
 input int    InpSlippagePts  = 20;         // Deviation (points) for market orders
@@ -28,8 +29,8 @@ int OnInit() {
    }
    g_trade.SetExpertMagicNumber(InpMagic);
    g_trade.SetDeviationInPoints((ulong)InpSlippagePts);
-   PrintFormat("[HedgeLockEA] Init  sym=%s  lots=%.2f  dist=%d pts  minProfit=%.2f",
-               _Symbol, InpLots, InpDistancePts, InpMinProfit);
+   PrintFormat("[HedgeLockEA] Init  sym=%s  lots=%.2f  spreadMult=%.2f  buffer=%d pts  minProfit=%.2f",
+               _Symbol, InpLots, InpSpreadMult, InpBufferPts, InpMinProfit);
    return INIT_SUCCEEDED;
 }
 
@@ -119,9 +120,21 @@ double FloatingPL() {
 }
 
 //+------------------------------------------------------------------+
+// Distance (points) = max(spread × mult + buffer, broker stop level + buffer)
+int ComputeDistancePts() {
+   long spreadPts = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   long fromSpread = (long)MathCeil(spreadPts * InpSpreadMult) + InpBufferPts;
+   long fromStops  = stopLevel + InpBufferPts;
+   return (int)MathMax(fromSpread, fromStops);
+}
+
+//+------------------------------------------------------------------+
 void OpenPair() {
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    if (ask <= 0) return;
+
+   int distPts = ComputeDistancePts();
 
    if (!g_trade.Buy(InpLots, _Symbol, 0, 0, 0, "HedgeLock-BUY")) {
       PrintFormat("[HedgeLockEA] Buy failed: %u %s",
@@ -129,7 +142,7 @@ void OpenPair() {
       return;
    }
    double buyFill = g_trade.ResultPrice();
-   double sellPx  = NormalizeDouble(buyFill + InpDistancePts * _Point, _Digits);
+   double sellPx  = NormalizeDouble(buyFill + distPts * _Point, _Digits);
 
    if (!g_trade.SellLimit(InpLots, sellPx, _Symbol, 0, 0,
                           ORDER_TIME_GTC, 0, "HedgeLock-SELL")) {
@@ -137,8 +150,9 @@ void OpenPair() {
                   g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
       return;
    }
-   PrintFormat("[HedgeLockEA] Opened pair  buy=%.5f  sellLimit=%.5f  dist=%d pts",
-               buyFill, sellPx, InpDistancePts);
+   long curSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   PrintFormat("[HedgeLockEA] Opened pair  buy=%.5f  sellLimit=%.5f  dist=%d pts  spread=%d pts",
+               buyFill, sellPx, distPts, (int)curSpread);
 }
 
 //+------------------------------------------------------------------+
@@ -150,7 +164,8 @@ void RestoreSellLimit() {
       if ((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
       if (PositionGetInteger(POSITION_TYPE) != POSITION_TYPE_BUY) continue;
       double buyPx  = PositionGetDouble(POSITION_PRICE_OPEN);
-      double sellPx = NormalizeDouble(buyPx + InpDistancePts * _Point, _Digits);
+      int    distPts = ComputeDistancePts();
+      double sellPx = NormalizeDouble(buyPx + distPts * _Point, _Digits);
       if (!g_trade.SellLimit(InpLots, sellPx, _Symbol, 0, 0,
                              ORDER_TIME_GTC, 0, "HedgeLock-SELL")) {
          PrintFormat("[HedgeLockEA] Restore SellLimit failed: %u",
