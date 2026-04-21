@@ -12,7 +12,7 @@
 input double InpLotPerTarget        = 0.01;        // Lot size per TP position
 input double InpMaxLotsPerPosition  = 0.10;        // Max lot size per individual position
 input double InpMaxTotalLotsPerDir  = 1.00;        // Max total lots across all open positions in one direction
-input int    InpMaxPositions        = 10;          // Max total open EA positions on this symbol
+input int    InpMaxPositions        = 10;          // Max open EA positions per direction on this symbol
 input double InpMaxSlippagePts      = 100;         // Max distance (points) between market and entry_price to fire
 input double InpSlBufferPts         = 0;           // Extra SL buffer (points)
 input ulong  InpMagic               = 20260421;    // Magic number
@@ -116,10 +116,11 @@ bool OpenTrades(const CondeSignal &sig) {
          continue;
       }
 
-      //--- Cap: max total positions on this symbol
-      int totalOpen = CountOpenPositions(POSITION_TYPE_BUY) + CountOpenPositions(POSITION_TYPE_SELL);
-      if (totalOpen >= InpMaxPositions) {
-         PrintFormat("[SKIP] TP #%d — max positions (%d) reached", i + 1, InpMaxPositions);
+      //--- Cap: max positions per direction on this symbol
+      int dirOpen = CountOpenPositions(dir);
+      if (dirOpen >= InpMaxPositions) {
+         PrintFormat("[SKIP] TP #%d — max %s positions (%d) reached",
+                     i + 1, sig.direction, InpMaxPositions);
          break;
       }
 
