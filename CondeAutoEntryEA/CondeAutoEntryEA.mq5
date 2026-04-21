@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.00"
+#property version     "1.01"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP"
 
 #include <Trade\Trade.mqh>
@@ -17,6 +17,7 @@ input double InpMaxSlippagePts      = 100;         // Max distance (points) betw
 input double InpSlBufferPts         = 0;           // Extra SL buffer (points)
 input ulong  InpMagic               = 20260421;    // Magic number
 input bool   InpUseCommonDir        = true;        // Use MT5 common Files folder
+input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -42,14 +43,17 @@ CondeSignal g_sig;
 //+------------------------------------------------------------------+
 int OnInit() {
    g_trade.SetExpertMagicNumber(InpMagic);
-   g_trade.SetDeviationInPoints(30);
+   g_trade.SetDeviationInPoints((ulong)InpMaxSlippagePts);
    ZeroMemory(g_sig);
 
    g_signalFile = "CondeAutoEntryEA\\"
                 + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))
                 + "_" + _Symbol + ".json";
 
-   Print("[CondeAutoEntryEA] Initialized. Signal file: ", g_signalFile);
+   g_lastSigTs = ScanMaxSeenTimestamp();
+
+   PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
+               g_signalFile, IntegerToString(g_lastSigTs));
    return INIT_SUCCEEDED;
 }
 
@@ -83,21 +87,35 @@ void OnTick() {
    }
 
    g_sig = sig;
-   OpenTrades(sig);
-   g_lastSigTs = sig.timestamp;
+   if (OpenTrades(sig))
+      g_lastSigTs = sig.timestamp;
 }
 
 //+------------------------------------------------------------------+
-//| Open one position per TP, respecting position and lot caps       |
+//| Open one position per TP, respecting position and lot caps.      |
+//| Returns true iff every TP either succeeded or was already        |
+//| accounted for (open position / historical deal) or was terminally|
+//| blocked by a cap. A live broker failure returns false so the     |
+//| caller retries on the next tick without re-opening prior TPs.    |
 //+------------------------------------------------------------------+
-void OpenTrades(const CondeSignal &sig) {
+bool OpenTrades(const CondeSignal &sig) {
    ENUM_POSITION_TYPE dir = (sig.direction == "BUY") ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-   int nTps = ArraySize(sig.tps);
+   int    nTps  = ArraySize(sig.tps);
+   string tsStr = IntegerToString(sig.timestamp);
+   int    failed = 0;
 
-   PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%d",
-               sig.direction, sig.entry_price, sig.sl, nTps, (int)sig.timestamp);
+   PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%s",
+               sig.direction, sig.entry_price, sig.sl, nTps, tsStr);
 
    for (int i = 0; i < nTps; i++) {
+      string comment = StringFormat("CAE_T%d_%s", i + 1, tsStr);
+
+      //--- Skip TPs already accounted for (restart or partial-fill retry)
+      if (PositionExistsByComment(comment) || HistoryDealExistsByComment(comment)) {
+         PrintFormat("[SKIP] TP #%d — %s already recorded", i + 1, comment);
+         continue;
+      }
+
       //--- Cap: max total positions on this symbol
       int totalOpen = CountOpenPositions(POSITION_TYPE_BUY) + CountOpenPositions(POSITION_TYPE_SELL);
       if (totalOpen >= InpMaxPositions) {
@@ -105,7 +123,7 @@ void OpenTrades(const CondeSignal &sig) {
          break;
       }
 
-      //--- Cap: per-position lot size
+      //--- Cap: per-position lot size (invariant across iterations — break on zero)
       double lot = NormalizeLot(MathMin(InpLotPerTarget, InpMaxLotsPerPosition));
       if (lot <= 0) {
          PrintFormat("[SKIP] TP #%d — lot size normalized to 0", i + 1);
@@ -120,24 +138,22 @@ void OpenTrades(const CondeSignal &sig) {
          break;
       }
 
-      double entry = (dir == POSITION_TYPE_BUY)
-                     ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
-                     : SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double buffer = InpSlBufferPts * _Point;
-      double sl = (dir == POSITION_TYPE_BUY)
-                  ? NormalizeDouble(sig.sl - buffer, _Digits)
-                  : NormalizeDouble(sig.sl + buffer, _Digits);
-      double tp = NormalizeDouble(sig.tps[i], _Digits);
+      double slRaw  = (dir == POSITION_TYPE_BUY) ? sig.sl - buffer : sig.sl + buffer;
+      double sl     = ClampStop(dir, slRaw,       true);
+      double tp     = ClampStop(dir, sig.tps[i],  false);
 
-      string comment = StringFormat("CAE_T%d_%d", i + 1, (int)sig.timestamp);
       bool ok = (dir == POSITION_TYPE_BUY)
-                ? g_trade.Buy (lot, _Symbol, entry, sl, tp, comment)
-                : g_trade.Sell(lot, _Symbol, entry, sl, tp, comment);
+                ? g_trade.Buy (lot, _Symbol, 0.0, sl, tp, comment)
+                : g_trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
 
-      PrintFormat("[%s #%d] lots=%.2f entry=%.5f sl=%.5f tp=%.5f  %s",
-                  sig.direction, i + 1, lot, entry, sl, tp,
+      PrintFormat("[%s #%d] lots=%.2f sl=%.5f tp=%.5f  %s",
+                  sig.direction, i + 1, lot, sl, tp,
                   ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      if (!ok) failed++;
    }
+
+   return failed == 0;
 }
 
 //+------------------------------------------------------------------+
@@ -152,6 +168,34 @@ double NormalizeLot(const double raw) {
    if (v < mn) v = mn;
    if (v > mx) v = mx;
    return NormalizeDouble(v, 2);
+}
+
+//+------------------------------------------------------------------+
+//| Clamp SL/TP to broker's minimum stop distance                    |
+//+------------------------------------------------------------------+
+double ClampStop(const ENUM_POSITION_TYPE dir, const double rawPrice, const bool isSL) {
+   double price    = rawPrice;
+   long   stopsLvl = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double minDist  = stopsLvl * _Point;
+
+   if (minDist > 0) {
+      double ref  = (dir == POSITION_TYPE_BUY)
+                    ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
+                    : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double orig = price;
+      if (dir == POSITION_TYPE_BUY) {
+         if ( isSL && price > ref - minDist) price = ref - minDist;
+         if (!isSL && price < ref + minDist) price = ref + minDist;
+      } else {
+         if ( isSL && price < ref + minDist) price = ref + minDist;
+         if (!isSL && price > ref - minDist) price = ref - minDist;
+      }
+      if (MathAbs(price - orig) > _Point / 2)
+         PrintFormat("[Clamp] %s %s %.5f -> %.5f (broker min dist %.0f pts)",
+                     dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                     isSL ? "SL" : "TP", orig, price, (double)stopsLvl);
+   }
+   return NormalizeDouble(price, _Digits);
 }
 
 //+------------------------------------------------------------------+
@@ -185,6 +229,80 @@ double SumOpenLots(const ENUM_POSITION_TYPE dir) {
       total += PositionGetDouble(POSITION_VOLUME);
    }
    return total;
+}
+
+//+------------------------------------------------------------------+
+//| True if an open position has this comment on this symbol/magic   |
+//+------------------------------------------------------------------+
+bool PositionExistsByComment(const string comment) {
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket))                         continue;
+      if (PositionGetString(POSITION_SYMBOL)  != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic)   continue;
+      if (PositionGetString(POSITION_COMMENT) == comment) return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| True if a historical entry deal with this comment exists         |
+//+------------------------------------------------------------------+
+bool HistoryDealExistsByComment(const string comment) {
+   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
+   if (!HistorySelect(from, TimeCurrent() + 60)) return false;
+
+   int total = HistoryDealsTotal();
+   for (int i = total - 1; i >= 0; i--) {
+      ulong deal = HistoryDealGetTicket(i);
+      if (deal == 0) continue;
+      if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
+      if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
+      if (HistoryDealGetInteger(deal, DEAL_ENTRY)  != DEAL_ENTRY_IN)  continue;
+      if (HistoryDealGetString(deal, DEAL_COMMENT) == comment) return true;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Max timestamp seen in prior CAE_T*_{ts} comments — for restart   |
+//| dedup so a re-attached EA never re-fires a completed signal.     |
+//+------------------------------------------------------------------+
+ulong ScanMaxSeenTimestamp() {
+   ulong maxTs = 0;
+
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket))                      continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)        continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic) continue;
+      ulong ts = ParseTsFromComment(PositionGetString(POSITION_COMMENT));
+      if (ts > maxTs) maxTs = ts;
+   }
+
+   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
+   if (HistorySelect(from, TimeCurrent() + 60)) {
+      int total = HistoryDealsTotal();
+      for (int i = total - 1; i >= 0; i--) {
+         ulong deal = HistoryDealGetTicket(i);
+         if (deal == 0) continue;
+         if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
+         if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
+         ulong ts = ParseTsFromComment(HistoryDealGetString(deal, DEAL_COMMENT));
+         if (ts > maxTs) maxTs = ts;
+      }
+   }
+   return maxTs;
+}
+
+//+------------------------------------------------------------------+
+//| Extract trailing ts from "CAE_T{n}_{ts}"; 0 if not our format    |
+//+------------------------------------------------------------------+
+ulong ParseTsFromComment(const string comment) {
+   if (StringFind(comment, "CAE_T") != 0) return 0;
+   int sep = StringFind(comment, "_", 5);   // skip past "CAE_T"
+   if (sep < 0) return 0;
+   return (ulong)StringToInteger(StringSubstr(comment, sep + 1));
 }
 
 //+------------------------------------------------------------------+
@@ -264,18 +382,18 @@ bool LoadSignal(const string filename, CondeSignal &sig) {
       }
    }
 
-   //--- Timestamp freshness (only for unseen signals)
+   //--- Timestamp freshness
    ulong ts  = (ulong)StringToInteger(ts_str);
    ulong now = (ulong)TimeGMT();
-   if (ts != g_lastSigTs) {
-      if (ts > now) {
-         PrintFormat("[Validation] Timestamp in future (ts=%d now=%d)", ts, now);
-         return false;
-      }
-      if (now - ts > 86400) {
-         PrintFormat("[Validation] Signal expired — age=%d s (max 86400)", now - ts);
-         return false;
-      }
+   if (ts > now) {
+      PrintFormat("[Validation] Timestamp in future (ts=%s now=%s)",
+                  IntegerToString(ts), IntegerToString(now));
+      return false;
+   }
+   if (now - ts > 86400) {
+      PrintFormat("[Validation] Signal expired — age=%s s (max 86400)",
+                  IntegerToString(now - ts));
+      return false;
    }
 
    sig.timestamp   = ts;
@@ -313,19 +431,42 @@ string ReadFileToString(const string filename) {
 }
 
 //+------------------------------------------------------------------+
+//| Locate `"key"` followed by `:` (skipping whitespace).            |
+//| Returns index just past the colon, or -1. Skips matches that     |
+//| happen to appear inside a string value (no colon after).         |
+//+------------------------------------------------------------------+
+int FindJsonKey(const string json, const string key) {
+   string needle = "\"" + key + "\"";
+   int    from   = 0;
+   int    len    = StringLen(json);
+
+   while (from < len) {
+      int p = StringFind(json, needle, from);
+      if (p < 0) return -1;
+      int after = p + StringLen(needle);
+      while (after < len) {
+         ushort c = StringGetCharacter(json, after);
+         if (c != ' ' && c != '\t' && c != '\n' && c != '\r') break;
+         after++;
+      }
+      if (after < len && StringGetCharacter(json, after) == ':')
+         return after + 1;
+      from = p + 1;
+   }
+   return -1;
+}
+
+//+------------------------------------------------------------------+
 //| Extract a scalar string value for a given JSON key               |
 //+------------------------------------------------------------------+
 string JsonGetString(const string json, const string key) {
-   string needle = "\"" + key + "\"";
-   int    pos    = StringFind(json, needle);
+   int pos = FindJsonKey(json, key);
    if (pos < 0) return "";
-
-   pos += StringLen(needle);
    int len = StringLen(json);
 
    while (pos < len) {
       ushort c = StringGetCharacter(json, pos);
-      if (c != ' ' && c != '\t' && c != ':') break;
+      if (c != ' ' && c != '\t' && c != '\n' && c != '\r') break;
       pos++;
    }
    if (pos >= len) return "";
@@ -337,24 +478,27 @@ string JsonGetString(const string json, const string key) {
       string val = "";
       while (pos < len) {
          ushort c = StringGetCharacter(json, pos++);
+         if (c == '\\' && pos < len) {
+            val += ShortToString(StringGetCharacter(json, pos++));
+            continue;
+         }
          if (c == '"') break;
          val += ShortToString(c);
       }
       return val;
-   } else if (first == '[' || first == '{') {
-      return "";
-   } else {
-      string val = "";
-      while (pos < len) {
-         ushort c = StringGetCharacter(json, pos);
-         if (c == ',' || c == '}' || c == '\n' || c == '\r') break;
-         val += ShortToString(c);
-         pos++;
-      }
-      StringTrimLeft(val);
-      StringTrimRight(val);
-      return val;
    }
+   if (first == '[' || first == '{') return "";
+
+   string val = "";
+   while (pos < len) {
+      ushort c = StringGetCharacter(json, pos);
+      if (c == ',' || c == '}' || c == '\n' || c == '\r') break;
+      val += ShortToString(c);
+      pos++;
+   }
+   StringTrimLeft(val);
+   StringTrimRight(val);
+   return val;
 }
 
 //+------------------------------------------------------------------+
@@ -363,11 +507,10 @@ string JsonGetString(const string json, const string key) {
 bool JsonGetDoubleArray(const string json, const string key, double &arr[]) {
    ArrayResize(arr, 0);
 
-   string needle = "\"" + key + "\"";
-   int    pos    = StringFind(json, needle);
+   int pos = FindJsonKey(json, key);
    if (pos < 0) return false;
 
-   int bracket = StringFind(json, "[", pos + StringLen(needle));
+   int bracket = StringFind(json, "[", pos);
    if (bracket < 0) return false;
 
    int end = StringFind(json, "]", bracket + 1);
