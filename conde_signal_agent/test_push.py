@@ -11,9 +11,9 @@ sample = {
     "timestamp":   int(time.time()),
     "symbol":      "XAUUSD",
     "direction":   "BUY",
-    "entry_price": 2350.00,
-    "sl":          2340.00,
-    "tps":         [2355.0, 2360.0, 2365.0],
+    "entry_price": 4786.00,
+    "sl":          4760.00,
+    "tps":         [4796.0, 4800.0, 4810.0],
 }
 
 ok = push_conde_signal(sample)
