@@ -3,7 +3,7 @@
 import logging
 import time
 
-from config import SIGNAL_SUBDIR, load_settings
+from config import load_settings
 from models import CondeSignal
 from redis_consumer import RedisConsumer
 from signal_writer import SignalWriter
@@ -65,11 +65,7 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Resolve the concrete output dir (base + subdir) and ensure it exists.
-    base_dir = settings.mt5_signal_dir.resolve()   # follow symlinks
-    if not base_dir.exists():
-        base_dir.mkdir(parents=True, exist_ok=True)
-    out_dir = base_dir / SIGNAL_SUBDIR
+    out_dir = settings.mt5_signal_dir.resolve()   # follow symlinks
     out_dir.mkdir(parents=True, exist_ok=True)
 
     consumer = RedisConsumer(settings)

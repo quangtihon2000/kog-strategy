@@ -9,15 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Subdirectory under MT5_SIGNAL_DIR where the EA reads from.
-# Matches g_signalFile prefix in CondeAutoEntryEA.mq5.
-SIGNAL_SUBDIR = "CondeAutoEntryEA"
-
-
 @dataclass
 class Settings:
     # Required
-    mt5_signal_dir: Path        # base dir; writer joins SIGNAL_SUBDIR under this
+    mt5_signal_dir: Path        # full dir where {account}_{symbol}.json files are written
     mt5_accounts: List[int]     # e.g. [5100000, 5100001]
     mt5_symbols: List[str]      # e.g. ["XAUUSD", "EURUSD"]
 
@@ -29,7 +24,7 @@ class Settings:
     log_level: str = "INFO"
 
     def signal_path(self, account_id: int, symbol: str) -> Path:
-        return self.mt5_signal_dir / SIGNAL_SUBDIR / f"{account_id}_{symbol}.json"
+        return self.mt5_signal_dir / f"{account_id}_{symbol}.json"
 
 
 def load_settings() -> Settings:
