@@ -28,14 +28,23 @@ input double InpFallbackLot      = 0.01;  // Used if risk math fails
 input bool   InpEnableLong       = true;  // Place BuyStop above range high
 input bool   InpEnableShort      = false; // Place SellStop below range low
 
+//--- Retest entry (2nd trade after first breakout fills)
+input bool   InpEnableRetest     = true;  // After breakout fills, place limit at range edge
+input double InpRetestOffsetUSD  = 0.0;   // Offset from range edge for retest entry ($)
+
 //--- Identity
 input ulong  InpMagic            = 20260421;
 input int    InpSlippagePts      = 20;
 
 //--- Globals
 CTrade   g_trade;
-int      g_lastTradeDateKey = 0;   // yyyymmdd of last placement
 datetime g_lastCheck = 0;
+int      g_dayKey    = 0;   // yyyymmdd of current session
+int      g_dayPhase  = 0;   // 0=idle, 1=breakout pending, 2=retest placed, 3=done
+double   g_rangeHigh = 0.0;
+double   g_rangeLow  = 0.0;
+double   g_mid       = 0.0;
+double   g_tpDist    = 0.0;
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -60,34 +69,45 @@ void OnTick() {
 
    MqlDateTime tm; TimeToStruct(now, tm);
    int dateKey = tm.year * 10000 + tm.mon * 100 + tm.day;
+   if (dateKey != g_dayKey) {
+      g_dayKey   = dateKey;
+      g_dayPhase = 0;
+   }
 
    int positions = CountMyPositions();
    int pendings  = CountMyPendings();
 
-   // Once a pending fills → cancel the opposite pending
-   if (positions >= 1 && pendings >= 1) {
-      DeleteMyPendings();
-      return;
-   }
-
-   // Session end → cancel any unfilled pendings
-   if (tm.hour >= InpSessionEndHour && pendings > 0) {
-      PrintFormat("[AsiaRangeEA] Session end (%02d:00) — cancelling %d pending(s)",
-                  InpSessionEndHour, pendings);
-      DeleteMyPendings();
-      return;
-   }
-
-   // Session start → place pendings once per day
-   if (tm.hour == InpSessionStartHour
-       && dateKey != g_lastTradeDateKey
-       && positions == 0 && pendings == 0) {
-      if (TryPlaceBreakoutPendings()) {
-         g_lastTradeDateKey = dateKey;
-      } else {
-         // Even on skip (range out of bounds), mark today done to avoid retry spam
-         g_lastTradeDateKey = dateKey;
+   // Session end → cancel unfilled pendings, mark done for today
+   if (tm.hour >= InpSessionEndHour) {
+      if (pendings > 0) {
+         PrintFormat("[AsiaRangeEA] Session end (%02d:00) — cancelling %d pending(s)",
+                     InpSessionEndHour, pendings);
+         DeleteMyPendings();
       }
+      g_dayPhase = 3;
+      return;
+   }
+
+   // Phase 0: session start → place breakout pending
+   if (g_dayPhase == 0
+       && tm.hour == InpSessionStartHour
+       && positions == 0 && pendings == 0) {
+      g_dayPhase = TryPlaceBreakoutPendings() ? 1 : 3;
+      return;
+   }
+
+   // Phase 1: breakout filled → cancel opposite pending, place retest limit
+   if (g_dayPhase == 1 && positions >= 1) {
+      if (pendings > 0) DeleteMyPendings();
+      if (InpEnableRetest && TryPlaceRetestPending()) g_dayPhase = 2;
+      else                                            g_dayPhase = 3;
+      return;
+   }
+
+   // Phase 2: retest filled (2 positions open) → done
+   if (g_dayPhase == 2 && positions >= 2) {
+      g_dayPhase = 3;
+      return;
    }
 }
 
@@ -151,8 +171,10 @@ bool TryPlaceBreakoutPendings() {
    }
 
    double buffer = InpBufferPts * _Point;
-   double mid    = (rangeHigh + rangeLow) / 2.0;
-   double tpDist = rangeUSD * InpTPratio;
+   g_rangeHigh   = rangeHigh;
+   g_rangeLow    = rangeLow;
+   g_mid         = (rangeHigh + rangeLow) / 2.0;
+   g_tpDist      = rangeUSD * InpTPratio;
 
    if (!InpEnableLong && !InpEnableShort) {
       Print("[AsiaRangeEA] Both directions disabled — skip");
@@ -167,9 +189,9 @@ bool TryPlaceBreakoutPendings() {
    bool placedAny = false;
 
    if (InpEnableLong) {
-      double buyEntry = NormalizeDouble(rangeHigh + buffer,  _Digits);
-      double buySL    = NormalizeDouble(mid,                 _Digits);
-      double buyTP    = NormalizeDouble(buyEntry + tpDist,   _Digits);
+      double buyEntry = NormalizeDouble(rangeHigh + buffer,   _Digits);
+      double buySL    = NormalizeDouble(g_mid,                _Digits);
+      double buyTP    = NormalizeDouble(buyEntry + g_tpDist,  _Digits);
       double buyLot   = CalcLot(buyEntry - buySL);
 
       if (buyEntry - ask < stopDist) {
@@ -187,9 +209,9 @@ bool TryPlaceBreakoutPendings() {
    }
 
    if (InpEnableShort) {
-      double sellEntry = NormalizeDouble(rangeLow - buffer,   _Digits);
-      double sellSL    = NormalizeDouble(mid,                 _Digits);
-      double sellTP    = NormalizeDouble(sellEntry - tpDist,  _Digits);
+      double sellEntry = NormalizeDouble(rangeLow - buffer,    _Digits);
+      double sellSL    = NormalizeDouble(g_mid,                _Digits);
+      double sellTP    = NormalizeDouble(sellEntry - g_tpDist, _Digits);
       double sellLot   = CalcLot(sellSL - sellEntry);
 
       if (bid - sellEntry < stopDist) {
@@ -211,6 +233,76 @@ bool TryPlaceBreakoutPendings() {
                InpEnableLong  ? "on" : "off",
                InpEnableShort ? "on" : "off");
    return placedAny;
+}
+
+//+------------------------------------------------------------------+
+// Retest entry: after breakout fills, place limit at range edge (pullback entry)
+// Direction matches the filled position (long → BuyLimit at rangeHigh, short → SellLimit at rangeLow)
+bool TryPlaceRetestPending() {
+   if (g_rangeHigh <= 0 || g_rangeLow <= 0) return false;
+
+   int dir = FirstFilledDirection();
+   if (dir == 0) return false;
+
+   long   stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double stopDist  = stopLevel * _Point;
+   double ask       = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid       = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   if (dir > 0) {
+      double entry = NormalizeDouble(g_rangeHigh - InpRetestOffsetUSD, _Digits);
+      double sl    = NormalizeDouble(g_mid,                            _Digits);
+      double tp    = NormalizeDouble(entry + g_tpDist,                 _Digits);
+      double lot   = CalcLot(entry - sl);
+
+      if (ask - entry < stopDist) {
+         PrintFormat("[AsiaRangeEA] Retest BuyLimit %.2f too close to Ask %.2f (stopLvl=%d) — skip",
+                     entry, ask, (int)stopLevel);
+         return false;
+      }
+      if (!g_trade.BuyLimit(lot, entry, _Symbol, sl, tp,
+                            ORDER_TIME_DAY, 0, "AsiaRange-RETEST-BUY")) {
+         PrintFormat("[AsiaRangeEA] Retest BuyLimit failed: %u %s",
+                     g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+         return false;
+      }
+      PrintFormat("[AsiaRangeEA] Retest BuyLimit placed  entry=%.2f lot=%.2f SL=%.2f TP=%.2f",
+                  entry, lot, sl, tp);
+      return true;
+   } else {
+      double entry = NormalizeDouble(g_rangeLow + InpRetestOffsetUSD, _Digits);
+      double sl    = NormalizeDouble(g_mid,                           _Digits);
+      double tp    = NormalizeDouble(entry - g_tpDist,                _Digits);
+      double lot   = CalcLot(sl - entry);
+
+      if (entry - bid < stopDist) {
+         PrintFormat("[AsiaRangeEA] Retest SellLimit %.2f too close to Bid %.2f (stopLvl=%d) — skip",
+                     entry, bid, (int)stopLevel);
+         return false;
+      }
+      if (!g_trade.SellLimit(lot, entry, _Symbol, sl, tp,
+                             ORDER_TIME_DAY, 0, "AsiaRange-RETEST-SELL")) {
+         PrintFormat("[AsiaRangeEA] Retest SellLimit failed: %u %s",
+                     g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+         return false;
+      }
+      PrintFormat("[AsiaRangeEA] Retest SellLimit placed  entry=%.2f lot=%.2f SL=%.2f TP=%.2f",
+                  entry, lot, sl, tp);
+      return true;
+   }
+}
+
+//+------------------------------------------------------------------+
+int FirstFilledDirection() {
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong tk = PositionGetTicket(i);
+      if (tk == 0) continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if ((ulong)PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      long t = PositionGetInteger(POSITION_TYPE);
+      return (t == POSITION_TYPE_BUY) ? 1 : -1;
+   }
+   return 0;
 }
 
 //+------------------------------------------------------------------+
