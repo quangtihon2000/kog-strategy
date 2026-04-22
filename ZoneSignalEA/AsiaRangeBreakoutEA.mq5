@@ -24,6 +24,10 @@ input double InpRiskPercent      = 0.5;   // % balance risked per trade
 input double InpTPratio          = 0.75;  // TP distance = range × this
 input double InpFallbackLot      = 0.01;  // Used if risk math fails
 
+//--- Direction toggle (gold has long bias — short side unprofitable in prior tests)
+input bool   InpEnableLong       = true;  // Place BuyStop above range high
+input bool   InpEnableShort      = false; // Place SellStop below range low
+
 //--- Identity
 input ulong  InpMagic            = 20260421;
 input int    InpSlippagePts      = 20;
@@ -150,52 +154,63 @@ bool TryPlaceBreakoutPendings() {
    double mid    = (rangeHigh + rangeLow) / 2.0;
    double tpDist = rangeUSD * InpTPratio;
 
-   double buyEntry = NormalizeDouble(rangeHigh + buffer,  _Digits);
-   double buySL    = NormalizeDouble(mid,                 _Digits);
-   double buyTP    = NormalizeDouble(buyEntry + tpDist,   _Digits);
-   double buyLot   = CalcLot(buyEntry - buySL);
+   if (!InpEnableLong && !InpEnableShort) {
+      Print("[AsiaRangeEA] Both directions disabled — skip");
+      return false;
+   }
 
-   double sellEntry = NormalizeDouble(rangeLow - buffer,   _Digits);
-   double sellSL    = NormalizeDouble(mid,                 _Digits);
-   double sellTP    = NormalizeDouble(sellEntry - tpDist,  _Digits);
-   double sellLot   = CalcLot(sellSL - sellEntry);
-
-   // Broker stop level sanity check
    long stopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
    double stopDist = stopLevel * _Point;
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
-   if (buyEntry - ask < stopDist) {
-      PrintFormat("[AsiaRangeEA] BuyStop entry %.2f too close to Ask %.2f (stopLvl=%d pts) — skip",
-                  buyEntry, ask, (int)stopLevel);
-      return false;
-   }
-   if (bid - sellEntry < stopDist) {
-      PrintFormat("[AsiaRangeEA] SellStop entry %.2f too close to Bid %.2f (stopLvl=%d pts) — skip",
-                  sellEntry, bid, (int)stopLevel);
-      return false;
+   bool placedAny = false;
+
+   if (InpEnableLong) {
+      double buyEntry = NormalizeDouble(rangeHigh + buffer,  _Digits);
+      double buySL    = NormalizeDouble(mid,                 _Digits);
+      double buyTP    = NormalizeDouble(buyEntry + tpDist,   _Digits);
+      double buyLot   = CalcLot(buyEntry - buySL);
+
+      if (buyEntry - ask < stopDist) {
+         PrintFormat("[AsiaRangeEA] BuyStop entry %.2f too close to Ask %.2f (stopLvl=%d pts) — skip long",
+                     buyEntry, ask, (int)stopLevel);
+      } else if (!g_trade.BuyStop(buyLot, buyEntry, _Symbol, buySL, buyTP,
+                                  ORDER_TIME_DAY, 0, "AsiaRange-BUY")) {
+         PrintFormat("[AsiaRangeEA] BuyStop failed: %u %s",
+                     g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+      } else {
+         PrintFormat("[AsiaRangeEA] BuyStop placed  entry=%.2f lot=%.2f SL=%.2f TP=%.2f",
+                     buyEntry, buyLot, buySL, buyTP);
+         placedAny = true;
+      }
    }
 
-   bool okBuy = g_trade.BuyStop(buyLot, buyEntry, _Symbol, buySL, buyTP,
-                                ORDER_TIME_DAY, 0, "AsiaRange-BUY");
-   if (!okBuy) {
-      PrintFormat("[AsiaRangeEA] BuyStop failed: %u %s",
-                  g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+   if (InpEnableShort) {
+      double sellEntry = NormalizeDouble(rangeLow - buffer,   _Digits);
+      double sellSL    = NormalizeDouble(mid,                 _Digits);
+      double sellTP    = NormalizeDouble(sellEntry - tpDist,  _Digits);
+      double sellLot   = CalcLot(sellSL - sellEntry);
+
+      if (bid - sellEntry < stopDist) {
+         PrintFormat("[AsiaRangeEA] SellStop entry %.2f too close to Bid %.2f (stopLvl=%d pts) — skip short",
+                     sellEntry, bid, (int)stopLevel);
+      } else if (!g_trade.SellStop(sellLot, sellEntry, _Symbol, sellSL, sellTP,
+                                   ORDER_TIME_DAY, 0, "AsiaRange-SELL")) {
+         PrintFormat("[AsiaRangeEA] SellStop failed: %u %s",
+                     g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+      } else {
+         PrintFormat("[AsiaRangeEA] SellStop placed  entry=%.2f lot=%.2f SL=%.2f TP=%.2f",
+                     sellEntry, sellLot, sellSL, sellTP);
+         placedAny = true;
+      }
    }
 
-   bool okSell = g_trade.SellStop(sellLot, sellEntry, _Symbol, sellSL, sellTP,
-                                  ORDER_TIME_DAY, 0, "AsiaRange-SELL");
-   if (!okSell) {
-      PrintFormat("[AsiaRangeEA] SellStop failed: %u %s",
-                  g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
-   }
-
-   PrintFormat("[AsiaRangeEA] Placed  range=%.2f  H=%.2f L=%.2f  buy@%.2f (lot=%.2f SL=%.2f TP=%.2f)  sell@%.2f (lot=%.2f SL=%.2f TP=%.2f)",
+   PrintFormat("[AsiaRangeEA] Session setup  range=%.2f  H=%.2f L=%.2f  long=%s short=%s",
                rangeUSD, rangeHigh, rangeLow,
-               buyEntry,  buyLot,  buySL,  buyTP,
-               sellEntry, sellLot, sellSL, sellTP);
-   return true;
+               InpEnableLong  ? "on" : "off",
+               InpEnableShort ? "on" : "off");
+   return placedAny;
 }
 
 //+------------------------------------------------------------------+
