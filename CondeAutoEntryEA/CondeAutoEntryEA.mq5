@@ -19,6 +19,13 @@ input ulong  InpMagic               = 20260421;    // Magic number
 input bool   InpUseCommonDir        = true;        // Use MT5 common Files folder
 input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
+input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop
+input double InpBeTriggerPts        = 100;         // Profit (pts) to move SL to break-even
+input double InpBeOffsetPts         = 10;          // Offset beyond entry at BE (covers spread+commission)
+input double InpTrailStartPts       = 200;         // Profit (pts) to start trailing past BE
+input double InpTrailDistPts        = 150;         // SL trails this far behind current price (pts)
+input double InpTrailStepPts        = 20;          // Minimum SL improvement before modify (anti-spam)
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -52,6 +59,10 @@ int OnInit() {
 
    g_lastSigTs = ScanMaxSeenTimestamp();
 
+   if (InpEnableTrailing && InpTrailDistPts >= InpTrailStartPts)
+      PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
+                  InpTrailDistPts, InpTrailStartPts);
+
    PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
                g_signalFile, IntegerToString(g_lastSigTs));
    return INIT_SUCCEEDED;
@@ -67,6 +78,8 @@ void OnTick() {
    datetime now = TimeCurrent();
    if (now == g_lastTickCheck) return;
    g_lastTickCheck = now;
+
+   ManageTrailingStops();
 
    CondeSignal sig;
    if (!LoadSignal(g_signalFile, sig)) return;
@@ -155,6 +168,75 @@ bool OpenTrades(const CondeSignal &sig) {
    }
 
    return failed == 0;
+}
+
+//+------------------------------------------------------------------+
+//| Per-position break-even + trailing stop manager.                 |
+//|  Stage 1: profit >= InpBeTriggerPts → SL to entry +/- BeOffset.  |
+//|  Stage 2: profit >= InpTrailStartPts → SL trails TrailDist       |
+//|           behind current price, gated by TrailStep.              |
+//| SL only moves in the direction of profit — never backward.       |
+//+------------------------------------------------------------------+
+void ManageTrailingStops() {
+   if (!InpEnableTrailing) return;
+
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+
+   for (int i = PositionsTotal() - 1; i >= 0; --i) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket))                         continue;
+      if (PositionGetString(POSITION_SYMBOL)  != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic)   continue;
+
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double tp        = PositionGetDouble(POSITION_TP);
+
+      double profitPts = (type == POSITION_TYPE_BUY)
+                         ? (bid - openPrice) / _Point
+                         : (openPrice - ask) / _Point;
+      if (profitPts < InpBeTriggerPts) continue;
+
+      double desiredSL;
+      string stage;
+      if (profitPts >= InpTrailStartPts) {
+         desiredSL = (type == POSITION_TYPE_BUY)
+                     ? NormalizeDouble(bid - InpTrailDistPts * _Point, _Digits)
+                     : NormalizeDouble(ask + InpTrailDistPts * _Point, _Digits);
+         stage = "Trail";
+      } else {
+         double offset = InpBeOffsetPts * _Point;
+         desiredSL = (type == POSITION_TYPE_BUY)
+                     ? NormalizeDouble(openPrice + offset, _Digits)
+                     : NormalizeDouble(openPrice - offset, _Digits);
+         stage = "BE";
+      }
+
+      //--- Strictly improving + step threshold
+      if (type == POSITION_TYPE_BUY) {
+         if (desiredSL < currentSL + InpTrailStepPts * _Point) continue;
+      } else {
+         if (currentSL != 0 && desiredSL > currentSL - InpTrailStepPts * _Point) continue;
+      }
+
+      //--- Never cross TP
+      if (tp > 0) {
+         if (type == POSITION_TYPE_BUY  && desiredSL >= tp) continue;
+         if (type == POSITION_TYPE_SELL && desiredSL <= tp) continue;
+      }
+
+      //--- Respect broker stops level; clamp can pull SL back toward price
+      desiredSL = ClampStop(type, desiredSL, true);
+      if (type == POSITION_TYPE_BUY  && desiredSL <= currentSL) continue;
+      if (type == POSITION_TYPE_SELL && currentSL != 0 && desiredSL >= currentSL) continue;
+
+      bool ok = g_trade.PositionModify(ticket, desiredSL, tp);
+      PrintFormat("[%s] Ticket #%d SL: %.5f → %.5f (profit=%.0f pts)  %s",
+                  stage, ticket, currentSL, desiredSL, profitPts,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
 }
 
 //+------------------------------------------------------------------+

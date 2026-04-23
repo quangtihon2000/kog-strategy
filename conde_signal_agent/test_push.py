@@ -16,5 +16,17 @@ sample = {
     "tps":         [4796.0, 4800.0, 4810.0],
 }
 
+sample = {
+    "timestamp": 1776866257,
+    "symbol": "XAUUSD",
+    "direction": "BUY",
+    "entry_price": 4747.0,
+    "sl": 4742.0,
+    "tps": [
+        4754.0,
+        4763.0,
+        4779.0
+    ]
+}
 ok = push_conde_signal(sample)
 print(f"{'OK Pushed' if ok else 'FAIL / duplicate'} — payload: {sample}")
