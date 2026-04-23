@@ -26,6 +26,9 @@ input double InpTrailStartPts       = 400;         // Profit (pts) to start trai
 input double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
 input double InpTrailStepPts        = 100;          // Minimum SL improvement before modify (anti-spam)
 
+input double InpPendingExpiryHours  = 4;           // Pending order expiry (hours, 0 = GTC)
+input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to place pending; beyond → skip signal
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -85,22 +88,26 @@ void OnTick() {
    if (!LoadSignal(g_signalFile, sig)) return;
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
-   //--- Price must be within InpMaxSlippagePts of entry_price
+   //--- Distance-based mode selection
+   //    <= InpMaxSlippagePts           → market order
+   //    <= InpMaxPendingDistPts        → pending LIMIT/STOP at entry_price
+   //    >  InpMaxPendingDistPts        → skip (price too far)
    double market = (sig.direction == "BUY")
                    ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                    : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double distPts = MathAbs(market - sig.entry_price) / _Point;
-   if (distPts > InpMaxSlippagePts) {
+   if (distPts > InpMaxPendingDistPts) {
       if (sig.timestamp != g_lastWaitTs) {
-         PrintFormat("[Wait] %s %.5f is %.0f pts from entry %.5f (max %.0f) — holding",
-                     sig.direction, market, distPts, sig.entry_price, InpMaxSlippagePts);
+         PrintFormat("[Skip] %s %.5f is %.0f pts from entry %.5f (> max pending %.0f) — signal too far",
+                     sig.direction, market, distPts, sig.entry_price, InpMaxPendingDistPts);
          g_lastWaitTs = sig.timestamp;
       }
       return;
    }
+   bool usePending = (distPts > InpMaxSlippagePts);
 
    g_sig = sig;
-   if (OpenTrades(sig))
+   if (OpenTrades(sig, usePending, market))
       g_lastSigTs = sig.timestamp;
 }
 
@@ -111,28 +118,37 @@ void OnTick() {
 //| blocked by a cap. A live broker failure returns false so the     |
 //| caller retries on the next tick without re-opening prior TPs.    |
 //+------------------------------------------------------------------+
-bool OpenTrades(const CondeSignal &sig) {
+bool OpenTrades(const CondeSignal &sig, const bool usePending, const double market) {
    ENUM_POSITION_TYPE dir = (sig.direction == "BUY") ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
    int    nTps  = ArraySize(sig.tps);
    string tsStr = IntegerToString(sig.timestamp);
    int    failed = 0;
 
-   PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%s",
-               sig.direction, sig.entry_price, sig.sl, nTps, tsStr);
+   ENUM_ORDER_TYPE pendType = 0;
+   datetime        expiry   = 0;
+   if (usePending) {
+      pendType = PickPendingType(dir, sig.entry_price, market);
+      if (InpPendingExpiryHours > 0)
+         expiry = TimeCurrent() + (datetime)(InpPendingExpiryHours * 3600);
+   }
+
+   PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%s  mode=%s",
+               sig.direction, sig.entry_price, sig.sl, nTps, tsStr,
+               usePending ? PendingTypeName(pendType) : "MARKET");
 
    for (int i = 0; i < nTps; i++) {
       string comment = StringFormat("CAE_T%d_%s", i + 1, tsStr);
 
-      //--- Skip TPs already accounted for (restart or partial-fill retry)
-      if (PositionExistsByComment(comment) || HistoryDealExistsByComment(comment)) {
+      //--- Skip TPs already accounted for (position, pending, or history)
+      if (TradeExistsByComment(comment)) {
          PrintFormat("[SKIP] TP #%d — %s already recorded", i + 1, comment);
          continue;
       }
 
-      //--- Cap: max positions per direction on this symbol
+      //--- Cap: max slots per direction (positions + pendings) on this symbol
       int dirOpen = CountOpenPositions(dir);
       if (dirOpen >= InpMaxPositions) {
-         PrintFormat("[SKIP] TP #%d — max %s positions (%d) reached",
+         PrintFormat("[SKIP] TP #%d — max %s slots (%d) reached",
                      i + 1, sig.direction, InpMaxPositions);
          break;
       }
@@ -144,7 +160,7 @@ bool OpenTrades(const CondeSignal &sig) {
          break;
       }
 
-      //--- Cap: total lots in this direction
+      //--- Cap: total lots in this direction (positions + pendings)
       double openedLots = SumOpenLots(dir);
       if (openedLots + lot > InpMaxTotalLotsPerDir + 1e-8) {
          PrintFormat("[SKIP] TP #%d — would exceed total lots cap (%.2f + %.2f > %.2f)",
@@ -157,17 +173,63 @@ bool OpenTrades(const CondeSignal &sig) {
       double sl     = ClampStop(dir, slRaw,       true);
       double tp     = ClampStop(dir, sig.tps[i],  false);
 
-      bool ok = (dir == POSITION_TYPE_BUY)
-                ? g_trade.Buy (lot, _Symbol, 0.0, sl, tp, comment)
-                : g_trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
-
-      PrintFormat("[%s #%d] lots=%.2f sl=%.5f tp=%.5f  %s",
-                  sig.direction, i + 1, lot, sl, tp,
-                  ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      bool ok;
+      if (usePending) {
+         double priceEntry = NormalizeDouble(sig.entry_price, _Digits);
+         ENUM_ORDER_TYPE_TIME tif = (expiry > 0) ? ORDER_TIME_SPECIFIED : ORDER_TIME_GTC;
+         switch (pendType) {
+            case ORDER_TYPE_BUY_LIMIT:
+               ok = g_trade.BuyLimit (lot, priceEntry, _Symbol, sl, tp, tif, expiry, comment); break;
+            case ORDER_TYPE_BUY_STOP:
+               ok = g_trade.BuyStop  (lot, priceEntry, _Symbol, sl, tp, tif, expiry, comment); break;
+            case ORDER_TYPE_SELL_LIMIT:
+               ok = g_trade.SellLimit(lot, priceEntry, _Symbol, sl, tp, tif, expiry, comment); break;
+            case ORDER_TYPE_SELL_STOP:
+               ok = g_trade.SellStop (lot, priceEntry, _Symbol, sl, tp, tif, expiry, comment); break;
+            default:
+               ok = false;
+         }
+         PrintFormat("[%s #%d] %s lots=%.2f entry=%.5f sl=%.5f tp=%.5f exp=%s  %s",
+                     sig.direction, i + 1, PendingTypeName(pendType), lot,
+                     priceEntry, sl, tp,
+                     (expiry > 0) ? TimeToString(expiry, TIME_DATE|TIME_MINUTES) : "GTC",
+                     ok ? "Placed" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      } else {
+         ok = (dir == POSITION_TYPE_BUY)
+              ? g_trade.Buy (lot, _Symbol, 0.0, sl, tp, comment)
+              : g_trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
+         PrintFormat("[%s #%d] MARKET lots=%.2f sl=%.5f tp=%.5f  %s",
+                     sig.direction, i + 1, lot, sl, tp,
+                     ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
+      }
       if (!ok) failed++;
    }
 
    return failed == 0;
+}
+
+//+------------------------------------------------------------------+
+//| Pick pending order type from direction × (entry vs market).      |
+//|   BUY:  entry < market → BUY_LIMIT  (buy cheaper on pullback)    |
+//|         entry > market → BUY_STOP   (buy on breakout up)         |
+//|   SELL: entry > market → SELL_LIMIT (sell higher on rally)       |
+//|         entry < market → SELL_STOP  (sell on breakdown)          |
+//+------------------------------------------------------------------+
+ENUM_ORDER_TYPE PickPendingType(const ENUM_POSITION_TYPE dir, const double entry, const double market) {
+   if (dir == POSITION_TYPE_BUY)
+      return (entry < market) ? ORDER_TYPE_BUY_LIMIT  : ORDER_TYPE_BUY_STOP;
+   else
+      return (entry > market) ? ORDER_TYPE_SELL_LIMIT : ORDER_TYPE_SELL_STOP;
+}
+
+string PendingTypeName(const ENUM_ORDER_TYPE t) {
+   switch (t) {
+      case ORDER_TYPE_BUY_LIMIT:  return "BUY_LIMIT";
+      case ORDER_TYPE_BUY_STOP:   return "BUY_STOP";
+      case ORDER_TYPE_SELL_LIMIT: return "SELL_LIMIT";
+      case ORDER_TYPE_SELL_STOP:  return "SELL_STOP";
+   }
+   return "UNKNOWN";
 }
 
 //+------------------------------------------------------------------+
@@ -282,7 +344,16 @@ double ClampStop(const ENUM_POSITION_TYPE dir, const double rawPrice, const bool
 }
 
 //+------------------------------------------------------------------+
-//| Returns the number of EA positions open on this symbol/direction |
+//| True iff a pending order type matches the position direction.    |
+//+------------------------------------------------------------------+
+bool IsPendingForDir(const long orderType, const ENUM_POSITION_TYPE dir) {
+   if (dir == POSITION_TYPE_BUY)
+      return orderType == ORDER_TYPE_BUY_LIMIT  || orderType == ORDER_TYPE_BUY_STOP;
+   return    orderType == ORDER_TYPE_SELL_LIMIT || orderType == ORDER_TYPE_SELL_STOP;
+}
+
+//+------------------------------------------------------------------+
+//| EA slots (open positions + live pending orders) in a direction   |
 //+------------------------------------------------------------------+
 int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
    int count = 0;
@@ -295,29 +366,46 @@ int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
             count++;
       }
    }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0)                                         continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir))
+         count++;
+   }
    return count;
 }
 
 //+------------------------------------------------------------------+
-//| Sum of open lots for this EA in a given direction                |
+//| Sum of EA lots (positions + pendings) in a given direction       |
 //+------------------------------------------------------------------+
 double SumOpenLots(const ENUM_POSITION_TYPE dir) {
    double total = 0.0;
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket)) continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)       continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)        continue;
       if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic) continue;
       if (PositionGetInteger(POSITION_TYPE)  != (long)dir)      continue;
       total += PositionGetDouble(POSITION_VOLUME);
+   }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0)                                         continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir))
+         total += OrderGetDouble(ORDER_VOLUME_CURRENT);
    }
    return total;
 }
 
 //+------------------------------------------------------------------+
-//| True if an open position has this comment on this symbol/magic   |
+//| Unified dedup: comment present on any open position, live        |
+//| pending order, historical entry deal, or historical order?       |
 //+------------------------------------------------------------------+
-bool PositionExistsByComment(const string comment) {
+bool TradeExistsByComment(const string comment) {
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket))                         continue;
@@ -325,24 +413,33 @@ bool PositionExistsByComment(const string comment) {
       if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic)   continue;
       if (PositionGetString(POSITION_COMMENT) == comment) return true;
    }
-   return false;
-}
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0)                                             continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)         continue;
+      if (OrderGetString(ORDER_COMMENT) == comment) return true;
+   }
 
-//+------------------------------------------------------------------+
-//| True if a historical entry deal with this comment exists         |
-//+------------------------------------------------------------------+
-bool HistoryDealExistsByComment(const string comment) {
    datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
    if (!HistorySelect(from, TimeCurrent() + 60)) return false;
 
-   int total = HistoryDealsTotal();
-   for (int i = total - 1; i >= 0; i--) {
+   int deals = HistoryDealsTotal();
+   for (int i = deals - 1; i >= 0; i--) {
       ulong deal = HistoryDealGetTicket(i);
       if (deal == 0) continue;
       if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
       if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
       if (HistoryDealGetInteger(deal, DEAL_ENTRY)  != DEAL_ENTRY_IN)  continue;
       if (HistoryDealGetString(deal, DEAL_COMMENT) == comment) return true;
+   }
+   int orders = HistoryOrdersTotal();
+   for (int i = orders - 1; i >= 0; i--) {
+      ulong ord = HistoryOrderGetTicket(i);
+      if (ord == 0) continue;
+      if (HistoryOrderGetString(ord, ORDER_SYMBOL)  != _Symbol)        continue;
+      if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)InpMagic) continue;
+      if (HistoryOrderGetString(ord, ORDER_COMMENT) == comment) return true;
    }
    return false;
 }
@@ -363,15 +460,33 @@ ulong ScanMaxSeenTimestamp() {
       if (ts > maxTs) maxTs = ts;
    }
 
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0)                                         continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      ulong ts = ParseTsFromComment(OrderGetString(ORDER_COMMENT));
+      if (ts > maxTs) maxTs = ts;
+   }
+
    datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
    if (HistorySelect(from, TimeCurrent() + 60)) {
-      int total = HistoryDealsTotal();
-      for (int i = total - 1; i >= 0; i--) {
+      int deals = HistoryDealsTotal();
+      for (int i = deals - 1; i >= 0; i--) {
          ulong deal = HistoryDealGetTicket(i);
          if (deal == 0) continue;
          if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
          if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
          ulong ts = ParseTsFromComment(HistoryDealGetString(deal, DEAL_COMMENT));
+         if (ts > maxTs) maxTs = ts;
+      }
+      int orders = HistoryOrdersTotal();
+      for (int i = orders - 1; i >= 0; i--) {
+         ulong ord = HistoryOrderGetTicket(i);
+         if (ord == 0) continue;
+         if (HistoryOrderGetString(ord, ORDER_SYMBOL)  != _Symbol)        continue;
+         if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)InpMagic) continue;
+         ulong ts = ParseTsFromComment(HistoryOrderGetString(ord, ORDER_COMMENT));
          if (ts > maxTs) maxTs = ts;
       }
    }
