@@ -10,20 +10,20 @@
 
 //--- Input Parameters
 input double InpLotPerTarget        = 0.01;        // Lot size per TP position
-input double InpMaxLotsPerPosition  = 0.10;        // Max lot size per individual position
-input double InpMaxTotalLotsPerDir  = 1.00;        // Max total lots across all open positions in one direction
-input int    InpMaxPositions        = 10;          // Max open EA positions per direction on this symbol
+input double InpMaxLotsPerPosition  = 0.05;        // Max lot size per individual position
+input double InpMaxTotalLotsPerDir  = 0.30;        // Max total lots across all open positions in one direction
+input int    InpMaxPositions        = 20;          // Max open EA positions per direction on this symbol
 input double InpMaxSlippagePts      = 100;         // Max distance (points) between market and entry_price to fire
-input double InpSlBufferPts         = 0;           // Extra SL buffer (points)
+input double InpSlBufferPts         = 20;           // Extra SL buffer (points)
 input ulong  InpMagic               = 20260421;    // Magic number
 input bool   InpUseCommonDir        = true;        // Use MT5 common Files folder
 input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
 input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop
-input double InpBeTriggerPts        = 100;         // Profit (pts) to move SL to break-even
-input double InpBeOffsetPts         = 10;          // Offset beyond entry at BE (covers spread+commission)
+input double InpBeTriggerPts        = 300;         // Profit (pts) to move SL to break-even
+input double InpBeOffsetPts         = 30;          // Offset beyond entry at BE (covers spread+commission)
 input double InpTrailStartPts       = 200;         // Profit (pts) to start trailing past BE
-input double InpTrailDistPts        = 150;         // SL trails this far behind current price (pts)
+input double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
 input double InpTrailStepPts        = 20;          // Minimum SL improvement before modify (anti-spam)
 
 //+------------------------------------------------------------------+
