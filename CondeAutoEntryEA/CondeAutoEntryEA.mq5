@@ -21,10 +21,10 @@ input int    InpHistoryLookbackDays = 30;          // History window for restart
 
 input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop
 input double InpBeTriggerPts        = 300;         // Profit (pts) to move SL to break-even
-input double InpBeOffsetPts         = 30;          // Offset beyond entry at BE (covers spread+commission)
-input double InpTrailStartPts       = 200;         // Profit (pts) to start trailing past BE
+input double InpBeOffsetPts         = 50;          // Offset beyond entry at BE (covers spread+commission)
+input double InpTrailStartPts       = 400;         // Profit (pts) to start trailing past BE
 input double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
-input double InpTrailStepPts        = 20;          // Minimum SL improvement before modify (anti-spam)
+input double InpTrailStepPts        = 100;          // Minimum SL improvement before modify (anti-spam)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
