@@ -86,6 +86,10 @@ void OnTick() {
 
    CondeSignal sig;
    if (!LoadSignal(g_signalFile, sig)) return;
+
+   //--- Invalidate pendings of this signal if TP1 already printed pre-fill
+   CancelPendingsIfTP1Reached(sig);
+
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
    //--- Distance-based mode selection
@@ -297,6 +301,43 @@ void ManageTrailingStops() {
       bool ok = g_trade.PositionModify(ticket, desiredSL, tp);
       PrintFormat("[%s] Ticket #%d SL: %.5f → %.5f (profit=%.0f pts)  %s",
                   stage, ticket, currentSL, desiredSL, profitPts,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| If market has already touched/passed sig.tps[0] before our       |
+//| pendings (of this same ts) filled, the entry opportunity is gone |
+//| — cancel those pendings so the signal is treated as invalid.     |
+//+------------------------------------------------------------------+
+void CancelPendingsIfTP1Reached(const CondeSignal &sig) {
+   if (ArraySize(sig.tps) == 0) return;
+
+   double tp1   = sig.tps[0];
+   bool   isBuy = (sig.direction == "BUY");
+   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   bool   tp1Hit = isBuy ? (bid >= tp1) : (ask <= tp1);
+   if (!tp1Hit) return;
+
+   double ref = isBuy ? bid : ask;
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0)                                        continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)           continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)    continue;
+
+      long otype = OrderGetInteger(ORDER_TYPE);
+      if (otype != ORDER_TYPE_BUY_LIMIT  && otype != ORDER_TYPE_BUY_STOP &&
+          otype != ORDER_TYPE_SELL_LIMIT && otype != ORDER_TYPE_SELL_STOP)
+         continue;
+
+      string cmt = OrderGetString(ORDER_COMMENT);
+      if (ParseTsFromComment(cmt) != sig.timestamp) continue;
+
+      bool ok = g_trade.OrderDelete(ticket);
+      PrintFormat("[Invalid] Cancel pending #%d (%s) — TP1 %.5f reached (%s=%.5f)  %s",
+                  ticket, cmt, tp1, isBuy ? "bid" : "ask", ref,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
 }
