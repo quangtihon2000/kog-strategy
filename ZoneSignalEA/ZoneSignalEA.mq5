@@ -18,6 +18,8 @@ input ulong    InpMagic         = 20240416;      // Magic number
 input bool     InpUseCommonDir  = true;          // Use MT5 common Files folder
 input double   InpScalpTpPts    = 400;           // Scalp TP distance (points)
 input double   InpScalpBufPts   = 500;           // Scalp zone ceiling buffer from T1 (points)
+input int      InpMaxScalpPerDir   = 10;         // Max scalp positions per direction per signal
+input double   InpScalpSpacingPts  = 500;        // Min spacing between consecutive scalps (points)
 input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
 input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
 input double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
@@ -52,8 +54,10 @@ bool       g_midEntryBuyDone  = false;  // true once a mid-zone BUY reentry has 
 bool       g_midEntrySellDone = false;  // true once a mid-zone SELL reentry has been taken
 bool       g_buyDone       = false;  // true once any BUY position hits SL → no more BUY entries
 bool       g_sellDone      = false;  // true once any SELL position hits SL → no more SELL entries
-bool       g_scalpBuyActive   = false;  // true while a scalp BUY position is open
-bool       g_scalpSellActive  = false;  // true while a scalp SELL position is open
+int        g_scalpBuySlConsumed  = 0;  // BUY scalp slots permanently consumed by SL (per signal)
+int        g_scalpSellSlConsumed = 0;  // SELL scalp slots permanently consumed by SL (per signal)
+bool       g_scalpBuyBlocked   = false; // true once Bid < redbox_lower → no more BUY scalps
+bool       g_scalpSellBlocked  = false; // true once Ask > redbox_upper → no more SELL scalps
 bool       g_normalBuyDone    = false;  // true once normal BUY entries have been placed
 bool       g_normalSellDone   = false;  // true once normal SELL entries have been placed
 
@@ -62,8 +66,6 @@ ulong      g_signalTickets[];         // ticket numbers from this signal
 ulong      g_scalpTickets[];          // parallel set of scalp tickets (excluded from trail)
 ulong      g_t1BuyTicket   = 0;       // ticket of BUY target 1 (for BE trigger)
 ulong      g_t1SellTicket  = 0;       // ticket of SELL target 1 (for BE trigger)
-ulong      g_scalpBuyTicket   = 0;    // ticket of current scalp BUY position
-ulong      g_scalpSellTicket  = 0;    // ticket of current scalp SELL position
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -101,10 +103,27 @@ void OnTick() {
 
    //--- Entries: check on every tick after breakout confirmed
    if (g_sig.valid) {
-      // 1) Scalp entries
-      if (g_breakoutBuy && !g_scalpBuyActive && !g_buyDone)
+      // 0) Latch scalp blockers when price crosses back through the redbox boundary
+      double tickBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double tickAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      if (!g_scalpBuyBlocked  && tickBid < g_sig.redbox_lower) {
+         g_scalpBuyBlocked = true;
+         PrintFormat("[Scalp] BUY scalps BLOCKED — Bid %.5f crossed below redbox_lower %.5f",
+                     tickBid, g_sig.redbox_lower);
+      }
+      if (!g_scalpSellBlocked && tickAsk > g_sig.redbox_upper) {
+         g_scalpSellBlocked = true;
+         PrintFormat("[Scalp] SELL scalps BLOCKED — Ask %.5f crossed above redbox_upper %.5f",
+                     tickAsk, g_sig.redbox_upper);
+      }
+
+      // 1) Scalp entries — up to InpMaxScalpPerDir per direction per signal.
+      //    Slot accounting: currently-open scalps + SL-consumed slots. TP frees the slot.
+      if (g_breakoutBuy && !g_buyDone && !g_scalpBuyBlocked
+          && CountOpenScalps(POSITION_TYPE_BUY) + g_scalpBuySlConsumed < InpMaxScalpPerDir)
          OpenScalpEntry(POSITION_TYPE_BUY);
-      if (g_breakoutSell && !g_scalpSellActive && !g_sellDone)
+      if (g_breakoutSell && !g_sellDone && !g_scalpSellBlocked
+          && CountOpenScalps(POSITION_TYPE_SELL) + g_scalpSellSlConsumed < InpMaxScalpPerDir)
          OpenScalpEntry(POSITION_TYPE_SELL);
 
       // 2) Normal entries — triggers immediately when price hits retrace zone
@@ -167,18 +186,17 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 
    ENUM_POSITION_TYPE dir = wasBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
 
-   //--- Handle scalp ticket closures (TP → allow re-entry)
-   if (closedPosId == g_scalpBuyTicket && g_scalpBuyTicket != 0) {
-      g_scalpBuyActive = false;
-      g_scalpBuyTicket = 0;
-      if (reason == DEAL_REASON_TP)
-         Print("[Scalp] BUY scalp TP hit → re-entry allowed");
-   }
-   if (closedPosId == g_scalpSellTicket && g_scalpSellTicket != 0) {
-      g_scalpSellActive = false;
-      g_scalpSellTicket = 0;
-      if (reason == DEAL_REASON_TP)
-         Print("[Scalp] SELL scalp TP hit → re-entry allowed");
+   //--- Handle scalp ticket closures. Only TP releases the slot; SL keeps the
+   //    slot permanently consumed for the rest of the signal's lifetime.
+   if (IsScalpTicket(closedPosId)) {
+      PrintFormat("[Scalp] %s scalp #%d closed (%s)",
+                  wasBuy ? "BUY" : "SELL", closedPosId,
+                  reason == DEAL_REASON_TP ? "TP" :
+                  reason == DEAL_REASON_SL ? "SL" : "OTHER");
+      if (reason == DEAL_REASON_SL) {
+         if (wasBuy) g_scalpBuySlConsumed++;
+         else        g_scalpSellSlConsumed++;
+      }
    }
    RemoveScalpTicket(closedPosId);
 
@@ -411,14 +429,14 @@ void ApplySignal(const ZoneSignal &sig) {
    g_midEntrySellDone = false;
    g_buyDone          = false;
    g_sellDone         = false;
-   g_scalpBuyActive   = false;
-   g_scalpSellActive  = false;
+   g_scalpBuySlConsumed  = 0;
+   g_scalpSellSlConsumed = 0;
+   g_scalpBuyBlocked  = false;
+   g_scalpSellBlocked = false;
    g_normalBuyDone    = false;
    g_normalSellDone   = false;
    g_t1BuyTicket      = 0;
    g_t1SellTicket     = 0;
-   g_scalpBuyTicket   = 0;
-   g_scalpSellTicket  = 0;
    ArrayResize(g_signalTickets, 0);   // clear ticket tracking
    ArrayResize(g_scalpTickets, 0);
    PrintFormat("[Signal] Applied — Zone %.5f – %.5f | Targets above: %d | below: %d",
@@ -491,6 +509,8 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       return;
    }
 
+   double spacing = InpScalpSpacingPts * _Point;
+
    if (dir == POSITION_TYPE_BUY) {
       int n = ArraySize(g_sig.targets_above);
       if (n == 0) return;
@@ -505,6 +525,9 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
+      //--- Spacing: at least InpScalpSpacingPts away from every currently-open BUY scalp
+      if (!ScalpSpacingOk(POSITION_TYPE_BUY, entry, spacing)) return;
+
       double sl    = NormalizeDouble(g_sig.redbox_lower - buffer, _Digits);
       double rawTp = entry + InpScalpTpPts * _Point;
       double tp    = NormalizeDouble(MathMin(rawTp, g_sig.targets_above[0]), _Digits);
@@ -514,17 +537,16 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
-      string comment = StringFormat("ZB_SCALP_%d", (int)g_sig.timestamp);
+      int slot = CountOpenScalps(POSITION_TYPE_BUY) + g_scalpBuySlConsumed + 1;
+      string comment = StringFormat("ZB_SCALP%d_%d", slot, (int)g_sig.timestamp);
       bool   ok      = g_trade.Buy(lotSize, _Symbol, entry, sl, tp, comment);
-      PrintFormat("[Scalp BUY] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
-                  lotSize, entry, sl, tp,
+      PrintFormat("[Scalp BUY #%d/%d] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
+                  slot, InpMaxScalpPerDir, lotSize, entry, sl, tp,
                   ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
          AddTicket(ticket);
          AddScalpTicket(ticket);
-         g_scalpBuyActive = true;
-         g_scalpBuyTicket = ticket;
       }
 
    } else { // SELL
@@ -541,6 +563,9 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
+      //--- Spacing: at least InpScalpSpacingPts away from every currently-open SELL scalp
+      if (!ScalpSpacingOk(POSITION_TYPE_SELL, entry, spacing)) return;
+
       double sl    = NormalizeDouble(g_sig.redbox_upper + buffer, _Digits);
       double rawTp = entry - InpScalpTpPts * _Point;
       double tp    = NormalizeDouble(MathMax(rawTp, g_sig.targets_below[0]), _Digits);
@@ -550,19 +575,42 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
-      string comment = StringFormat("ZS_SCALP_%d", (int)g_sig.timestamp);
+      int slot = CountOpenScalps(POSITION_TYPE_SELL) + g_scalpSellSlConsumed + 1;
+      string comment = StringFormat("ZS_SCALP%d_%d", slot, (int)g_sig.timestamp);
       bool   ok      = g_trade.Sell(lotSize, _Symbol, entry, sl, tp, comment);
-      PrintFormat("[Scalp SELL] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
-                  lotSize, entry, sl, tp,
+      PrintFormat("[Scalp SELL #%d/%d] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
+                  slot, InpMaxScalpPerDir, lotSize, entry, sl, tp,
                   ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
          AddTicket(ticket);
          AddScalpTicket(ticket);
-         g_scalpSellActive = true;
-         g_scalpSellTicket = ticket;
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Spacing check: entry must be at least `spacing` away from every  |
+//| currently-open scalp of the same direction. Logs and returns     |
+//| false if the constraint is violated.                             |
+//+------------------------------------------------------------------+
+bool ScalpSpacingOk(const ENUM_POSITION_TYPE dir, const double entry, const double spacing) {
+   int n = ArraySize(g_scalpTickets);
+   for (int i = 0; i < n; i++) {
+      ulong ticket = g_scalpTickets[i];
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL)  != _Symbol)        continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic) continue;
+      if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      if (MathAbs(entry - openPrice) < spacing) {
+         PrintFormat("[Scalp SKIP] %s entry %.5f too close to open scalp #%d @ %.5f (need %.0f pts)",
+                     dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                     entry, ticket, openPrice, InpScalpSpacingPts);
+         return false;
+      }
+   }
+   return true;
 }
 
 //+------------------------------------------------------------------+
@@ -699,6 +747,21 @@ void OpenTrades(const ENUM_POSITION_TYPE dir) {
 //--- Returns true if at least one EA position (any direction) is open on this symbol
 bool HasOpenPositions() {
    return (CountOpenPositions(POSITION_TYPE_BUY) + CountOpenPositions(POSITION_TYPE_SELL)) > 0;
+}
+
+//--- Returns the number of currently-open scalp positions for the given direction
+int CountOpenScalps(const ENUM_POSITION_TYPE dir) {
+   int count = 0;
+   int n = ArraySize(g_scalpTickets);
+   for (int i = 0; i < n; i++) {
+      ulong ticket = g_scalpTickets[i];
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL)  != _Symbol)        continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic) continue;
+      if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
+      count++;
+   }
+   return count;
 }
 
 //--- Returns the number of EA positions open on this symbol for a given direction
