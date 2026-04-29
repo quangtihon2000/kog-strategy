@@ -52,8 +52,8 @@ bool       g_breakoutBuy   = false;  // true once a BUY breakout has been taken
 bool       g_breakoutSell  = false;  // true once a SELL breakout has been taken
 bool       g_midEntryBuyDone  = false;  // true once a mid-zone BUY reentry has been taken
 bool       g_midEntrySellDone = false;  // true once a mid-zone SELL reentry has been taken
-bool       g_buyDone       = false;  // true once any BUY position hits SL → no more BUY entries
-bool       g_sellDone      = false;  // true once any SELL position hits SL → no more SELL entries
+bool       g_buyDone       = false;  // true once price reaches BUY T1 → no more BUY entries (scalp/normal/mid/breakout)
+bool       g_sellDone      = false;  // true once price reaches SELL T1 → no more SELL entries (scalp/normal/mid/breakout)
 int        g_scalpBuySlConsumed  = 0;  // BUY scalp slots permanently consumed by SL (per signal)
 int        g_scalpSellSlConsumed = 0;  // SELL scalp slots permanently consumed by SL (per signal)
 bool       g_scalpBuyBlocked   = false; // true once Bid < redbox_lower → no more BUY scalps
@@ -115,6 +115,30 @@ void OnTick() {
          g_scalpSellBlocked = true;
          PrintFormat("[Scalp] SELL scalps BLOCKED — Ask %.5f crossed above redbox_upper %.5f",
                      tickAsk, g_sig.redbox_upper);
+      }
+
+      // 0b) Mark direction DONE the moment price reaches T1 level — independent
+      //     of whether a T1 position was ever opened or closed at TP. Reduces
+      //     risk of late entries after the move has already played out.
+      if (!g_buyDone && ArraySize(g_sig.targets_above) > 0
+          && tickBid >= g_sig.targets_above[0]) {
+         PrintFormat("[Signal] BUY T1 reached (Bid %.5f >= T1 %.5f) → BE + BUY direction DONE",
+                     tickBid, g_sig.targets_above[0]);
+         MoveSignalToBreakEven(POSITION_TYPE_BUY);
+         g_buyDone     = true;
+         g_t1BuyTicket = 0;
+      }
+      if (!g_sellDone && ArraySize(g_sig.targets_below) > 0
+          && tickAsk <= g_sig.targets_below[0]) {
+         PrintFormat("[Signal] SELL T1 reached (Ask %.5f <= T1 %.5f) → BE + SELL direction DONE",
+                     tickAsk, g_sig.targets_below[0]);
+         MoveSignalToBreakEven(POSITION_TYPE_SELL);
+         g_sellDone     = true;
+         g_t1SellTicket = 0;
+      }
+      if (g_buyDone && g_sellDone && g_sig.valid) {
+         Print("[Signal] Both directions done → signal deactivated");
+         g_sig.valid = false;
       }
 
       // 1) Scalp entries — up to InpMaxScalpPerDir per direction per signal.
@@ -200,7 +224,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    }
    RemoveScalpTicket(closedPosId);
 
-   //--- R1, R4: T1 TP is the ONLY direction-done trigger
+   //--- R1, R4: T1 TP is a direction-done trigger (price-reach in OnTick is the
+   //    other path; this branch handles the case where T1 closes at TP between
+   //    OnTick polls or before the price-reach check fires).
    if (reason == DEAL_REASON_TP) {
       if (dir == POSITION_TYPE_BUY && closedPosId == g_t1BuyTicket && g_t1BuyTicket != 0) {
          PrintFormat("[Signal] BUY T1 (#%d) hit TP → BE + BUY direction DONE", closedPosId);
@@ -228,7 +254,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    //--- Remove closed ticket from tracking array
    RemoveTicket(closedPosId);
 
-   //--- R13: deactivate signal only when both directions have hit T1 TP
+   //--- R13: deactivate signal only when both directions are done (T1 reached)
    if (g_buyDone && g_sellDone) {
       Print("[Signal] Both directions done → signal deactivated");
       g_sig.valid = false;
