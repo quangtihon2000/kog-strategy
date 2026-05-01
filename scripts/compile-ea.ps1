@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Compile MQL5 EA files using MetaEditor command line.
 .DESCRIPTION

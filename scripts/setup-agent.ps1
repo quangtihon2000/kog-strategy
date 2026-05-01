@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Setup Python agents — venv, pip install, and register as Windows service.
 .DESCRIPTION

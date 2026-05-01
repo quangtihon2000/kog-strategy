@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Deploy compiled .ex5 files to MT5 terminal data folders.
 .DESCRIPTION
