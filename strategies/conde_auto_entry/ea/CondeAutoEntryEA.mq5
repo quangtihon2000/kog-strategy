@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.01"
+#property version     "1.02"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP"
 
 #include <Trade\Trade.mqh>
