@@ -46,6 +46,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          clean: false  # preserve agent runtime: .venv, .env, data/*.json, logs/
 
       - name: Detect changed components (EA vs agent)
         id: changes
@@ -132,6 +133,8 @@ jobs:
           }
 
       - uses: actions/checkout@v4
+        with:
+          clean: false  # preserve agent runtime: .venv, .env, data/*.json, logs/
 
       - name: Deploy & compile EAs in-place at each MT5 terminal
         if: needs.detect-changes.outputs.strategies_ea != '[]' && needs.detect-changes.outputs.strategies_ea != ''
