@@ -20,7 +20,7 @@ class Settings:
     redis_url: str = "redis://localhost:6379"
     redis_stream: str = "zone_signals"
     redis_group: str = "ea_writer"
-    redis_consumer: str = "agent-1"
+    redis_consumer: str = "zone-agent-1"
     log_level: str = "INFO"
 
     def signal_path(self, account_id: int) -> Path:
@@ -46,6 +46,6 @@ def load_settings() -> Settings:
         redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379"),
         redis_stream=os.environ.get("REDIS_STREAM", "zone_signals"),
         redis_group=os.environ.get("REDIS_GROUP", "ea_writer"),
-        redis_consumer=os.environ.get("REDIS_CONSUMER", "agent-1"),
+        redis_consumer=os.environ.get("REDIS_CONSUMER", "zone-agent-1"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
     )
