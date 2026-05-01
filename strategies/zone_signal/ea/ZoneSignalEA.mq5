@@ -3,7 +3,7 @@
 //|  Trades M15 breakouts from a JSON zone signal file               |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "3.00"
+#property version     "3.01"
 #property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
