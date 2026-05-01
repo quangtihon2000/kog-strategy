@@ -34,3 +34,9 @@ data/*.tmp
 
 # Windows artifacts on VPS
 C:/
+
+# Claude Code — ignore personal/runtime, allow team-share dirs
+.claude/*
+!.claude/settings.json
+!.claude/agents/
+!.claude/commands/
