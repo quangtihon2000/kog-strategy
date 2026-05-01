@@ -63,6 +63,28 @@ jobs:
     if: needs.detect-changes.outputs.strategies != '[]' && needs.detect-changes.outputs.strategies != ''
     runs-on: self-hosted
     steps:
+      - name: Stop agent services to release workspace locks
+        shell: powershell
+        run: |
+          $nssm = Get-Command nssm -ErrorAction SilentlyContinue
+          if (-not $nssm) {
+            Write-Host "NSSM not installed — nothing to stop"
+            return
+          }
+          foreach ($svc in @('zone_signal_agent','conde_signal_agent')) {
+            $status = (& nssm status $svc 2>&1) | Out-String
+            if ($status -match "can't open") {
+              Write-Host "[$svc] not installed — skip"
+              continue
+            }
+            if ($status -match "SERVICE_STOPPED") {
+              Write-Host "[$svc] already stopped"
+              continue
+            }
+            Write-Host "[$svc] stopping..."
+            & nssm stop $svc 2>&1 | Write-Host
+          }
+
       - uses: actions/checkout@v4
 
       - name: Load deploy config
