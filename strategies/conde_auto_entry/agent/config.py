@@ -40,10 +40,7 @@ def load_settings() -> Settings:
     if not accounts:
         raise RuntimeError("MT5_ACCOUNTS must contain at least one account id")
 
-    symbols_raw = os.environ.get("MT5_SYMBOLS", "")
-    if not symbols_raw:
-        raise RuntimeError("MT5_SYMBOLS environment variable is required")
-
+    symbols_raw = os.environ.get("MT5_SYMBOLS", "XAUUSD")
     symbols = [s.strip().upper() for s in symbols_raw.split(",") if s.strip()]
     if not symbols:
         raise RuntimeError("MT5_SYMBOLS must contain at least one symbol")

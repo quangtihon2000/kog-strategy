@@ -20,7 +20,11 @@
         "enabled": true,
         "agent_dir": "strategies/zone_signal/agent",
         "service_name": "zone_signal_agent",
-        "data_subfolder": "ZoneSignalEA"
+        "data_subfolder": "ZoneSignalEA",
+        "env": {
+          "required": ["MT5_ACCOUNTS"],
+          "optional": ["REDIS_URL", "REDIS_STREAM", "REDIS_GROUP", "REDIS_CONSUMER", "LOG_LEVEL"]
+        }
       }
     },
     "conde_auto_entry": {
@@ -30,7 +34,11 @@
         "enabled": true,
         "agent_dir": "strategies/conde_auto_entry/agent",
         "service_name": "conde_signal_agent",
-        "data_subfolder": "CondeAutoEntryEA"
+        "data_subfolder": "CondeAutoEntryEA",
+        "env": {
+          "required": ["MT5_ACCOUNTS"],
+          "optional": ["MT5_SYMBOLS", "REDIS_URL", "REDIS_STREAM", "REDIS_GROUP", "REDIS_CONSUMER", "LOG_LEVEL"]
+        }
       }
     },
     "asia_range_breakout": {

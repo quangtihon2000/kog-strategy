@@ -33,6 +33,50 @@ foreach ($name in $strategyList) {
 
     Write-Host "[$name] Setting up agent in: $agentDir"
 
+    # 0. Generate .env from GitHub secrets/variables
+    #    Lookup order per key: ${STRATEGY_UPPER}_${KEY} (override) → ${KEY} (shared)
+    $prefix = $name.ToUpper()
+    $dataDir = Join-Path (Split-Path $agentDir -Parent) "data"
+    $envLines = @("MT5_SIGNAL_DIR=$dataDir")
+
+    $required = @($strat.agent.env.required)
+    $optional = @($strat.agent.env.optional)
+    $missing = @()
+
+    function Resolve-EnvValue($prefix, $key) {
+        $val = [Environment]::GetEnvironmentVariable("${prefix}_${key}")
+        if ([string]::IsNullOrEmpty($val)) {
+            $val = [Environment]::GetEnvironmentVariable($key)
+        }
+        return $val
+    }
+
+    foreach ($key in $required) {
+        $val = Resolve-EnvValue $prefix $key
+        if ([string]::IsNullOrEmpty($val)) {
+            $missing += $key
+        } else {
+            $envLines += "$key=$val"
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        $hint = ($missing | ForEach-Object { "${prefix}_$_ or $_" }) -join ', '
+        Write-Error "[$name] Missing required env vars: $hint. Configure as GitHub Secrets/Variables."
+        continue
+    }
+
+    foreach ($key in $optional) {
+        $val = Resolve-EnvValue $prefix $key
+        if (-not [string]::IsNullOrEmpty($val)) {
+            $envLines += "$key=$val"
+        }
+    }
+
+    $envFile = Join-Path $agentDir ".env"
+    $envLines -join "`r`n" | Set-Content $envFile -Encoding ASCII -NoNewline
+    Write-Host "[$name] Wrote $envFile ($($envLines.Count) keys)"
+
     # 1. Create venv if it doesn't exist
     if (-not (Test-Path $pythonExe)) {
         Write-Host "[$name] Creating Python venv..."

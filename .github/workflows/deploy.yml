@@ -86,6 +86,21 @@ jobs:
 
       - name: Setup/update agents (if needed)
         shell: powershell
+        env:
+          # Shared (fallback when no per-strategy override)
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          # zone_signal
+          ZONE_SIGNAL_MT5_ACCOUNTS: ${{ secrets.ZONE_SIGNAL_MT5_ACCOUNTS }}
+          ZONE_SIGNAL_REDIS_STREAM: ${{ vars.ZONE_SIGNAL_REDIS_STREAM }}
+          ZONE_SIGNAL_REDIS_GROUP: ${{ vars.ZONE_SIGNAL_REDIS_GROUP }}
+          ZONE_SIGNAL_REDIS_CONSUMER: ${{ vars.ZONE_SIGNAL_REDIS_CONSUMER }}
+          # conde_auto_entry
+          CONDE_AUTO_ENTRY_MT5_ACCOUNTS: ${{ secrets.CONDE_AUTO_ENTRY_MT5_ACCOUNTS }}
+          CONDE_AUTO_ENTRY_MT5_SYMBOLS: ${{ vars.CONDE_AUTO_ENTRY_MT5_SYMBOLS }}
+          CONDE_AUTO_ENTRY_REDIS_STREAM: ${{ vars.CONDE_AUTO_ENTRY_REDIS_STREAM }}
+          CONDE_AUTO_ENTRY_REDIS_GROUP: ${{ vars.CONDE_AUTO_ENTRY_REDIS_GROUP }}
+          CONDE_AUTO_ENTRY_REDIS_CONSUMER: ${{ vars.CONDE_AUTO_ENTRY_REDIS_CONSUMER }}
         run: |
           $ErrorActionPreference = "Stop"
           .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
