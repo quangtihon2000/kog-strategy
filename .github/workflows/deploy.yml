@@ -1,5 +1,7 @@
 name: Deploy EAs & Agents
 
+# Redeploy-all trigger: 2026-05-01 (verify clean:false + JSON fix survive force_all)
+
 on:
   push:
     branches: [main]
