@@ -74,7 +74,7 @@ foreach ($name in $strategyList) {
     }
 
     $envFile = Join-Path $agentDir ".env"
-    $envLines -join "`r`n" | Set-Content $envFile -Encoding ASCII -NoNewline
+    Set-Content -Path $envFile -Value $envLines -Encoding ASCII
     Write-Host "[$name] Wrote $envFile ($($envLines.Count) keys)"
 
     # 1. Create venv if it doesn't exist
