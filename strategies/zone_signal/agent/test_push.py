@@ -8,10 +8,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 ocr_data = {
     "symbol":        "XAUUSD",
-    "redbox_upper":  4810.00,
-    "redbox_lower":  4790.00,
-    "targets_above": [4835.0, 4850.0],
-    "targets_below": [4770.0, 4755.0],
+    "redbox_upper":  4600.00,
+    "redbox_lower":  4560.00,
+    "targets_above": [4650.0, 4700.0],
+    "targets_below": [4540.0, 4500.0],
     "support":       [4740.0, 4720.0],
     "resistance":    [4870.0, 4890.0],
 }
