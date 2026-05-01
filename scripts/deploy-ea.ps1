@@ -15,6 +15,7 @@ $Config = Get-Content "$RepoRoot\deploy.json" -Raw | ConvertFrom-Json
 
 $strategyList = $Strategies | ConvertFrom-Json
 $failed = @()
+$terminalsToRestart = @{}
 
 foreach ($name in $strategyList) {
     $strat = $Config.strategies.$name
@@ -104,6 +105,7 @@ foreach ($name in $strategyList) {
         if (Test-Path $destEx5) {
             $size = (Get-Item $destEx5).Length
             Write-Host "[$name -> $termName] OK Compiled & deployed: $destEx5 ($size bytes)"
+            $terminalsToRestart[$termName] = $terminal.mt5_install_dir
         } else {
             Write-Error "[$name -> $termName] .ex5 not found after compilation"
             $failed += "$name@$termName"
@@ -129,6 +131,39 @@ foreach ($name in $strategyList) {
             }
         }
     }
+}
+
+# Restart each terminal that had a successful compile, so MT5 picks up the new .ex5.
+# MT5 does NOT reload .ex5 from disk while the EA is attached - terminal restart is required.
+foreach ($termName in $terminalsToRestart.Keys) {
+    $installDir = $terminalsToRestart[$termName]
+    $exePath = Join-Path $installDir "terminal64.exe"
+
+    if (-not (Test-Path $exePath)) {
+        Write-Warning "[$termName] terminal64.exe not found at $exePath - skip restart"
+        continue
+    }
+
+    $procs = Get-Process -Name terminal64 -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $exePath }
+
+    if ($procs) {
+        Write-Host "[$termName] Stopping $($procs.Count) terminal64.exe process(es) at $exePath"
+        foreach ($p in $procs) {
+            $p.CloseMainWindow() | Out-Null
+            if (-not $p.WaitForExit(8000)) {
+                Write-Warning "[$termName] Graceful close timed out - killing PID $($p.Id)"
+                $p.Kill()
+                $p.WaitForExit(5000) | Out-Null
+            }
+        }
+        Start-Sleep -Seconds 2
+    } else {
+        Write-Host "[$termName] No running terminal64.exe at $exePath (nothing to stop)"
+    }
+
+    Write-Host "[$termName] Launching $exePath"
+    Start-Process -FilePath $exePath -WorkingDirectory $installDir | Out-Null
 }
 
 if ($failed.Count -gt 0) {
