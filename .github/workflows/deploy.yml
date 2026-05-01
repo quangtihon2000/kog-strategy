@@ -58,9 +58,17 @@ jobs:
             Where-Object { $_.Value.agent -and $_.Value.agent.enabled -eq $true } |
             Select-Object -ExpandProperty Name
 
+          # Build a JSON array literal manually — PS 5.1's `,@(...) | ConvertTo-Json`
+          # serializes the PSObject wrapper ({"value":[...],"Count":N}) instead of
+          # the array. Strategy names are bare identifiers, so this is safe.
+          function ConvertTo-JsonArray($items) {
+            if (-not $items -or $items.Count -eq 0) { return "[]" }
+            return '[' + (($items | ForEach-Object { '"' + $_ + '"' }) -join ',') + ']'
+          }
+
           if ("${{ github.event.inputs.force_all }}" -eq "true") {
-            echo "strategies_ea=$(,@($allStrats) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-            echo "strategies_agent=$(,@($allAgentStrats) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+            echo "strategies_ea=$(ConvertTo-JsonArray $allStrats)" >> $env:GITHUB_OUTPUT
+            echo "strategies_agent=$(ConvertTo-JsonArray $allAgentStrats)" >> $env:GITHUB_OUTPUT
             echo "shared_changed=true" >> $env:GITHUB_OUTPUT
             return
           }
@@ -101,8 +109,8 @@ jobs:
           $agentScriptChanged = ($diff | Where-Object { $_ -match "^scripts/setup-agent\.ps1$" }).Count -gt 0
           if ($agentScriptChanged) { $agent = $allAgentStrats }
 
-          echo "strategies_ea=$(,@($ea) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
-          echo "strategies_agent=$(,@($agent) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          echo "strategies_ea=$(ConvertTo-JsonArray $ea)" >> $env:GITHUB_OUTPUT
+          echo "strategies_agent=$(ConvertTo-JsonArray $agent)" >> $env:GITHUB_OUTPUT
           echo "shared_changed=$sharedChanged" >> $env:GITHUB_OUTPUT
           Write-Host "EA: $($ea -join ',')   Agent: $($agent -join ',')"
 
