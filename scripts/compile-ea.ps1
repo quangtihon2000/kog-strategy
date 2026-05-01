@@ -15,12 +15,6 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $Config = Get-Content "$RepoRoot\deploy.json" | ConvertFrom-Json
-$MetaEditor = "$($Config.mt5_install_dir)\metaeditor64.exe"
-
-if (-not (Test-Path $MetaEditor)) {
-    Write-Error "MetaEditor not found: $MetaEditor"
-    exit 1
-}
 
 $strategyList = $Strategies | ConvertFrom-Json
 $failed = @()
@@ -29,6 +23,12 @@ foreach ($name in $strategyList) {
     $strat = $Config.strategies.$name
     if (-not $strat) {
         Write-Warning "[$name] Not found in deploy.json — skipping"
+        continue
+    }
+
+    # Skip strategies with no terminals assigned
+    if (-not $strat.deploy_to -or $strat.deploy_to.Count -eq 0) {
+        Write-Host "[$name] No terminals assigned — skipping compile"
         continue
     }
 
@@ -41,12 +41,21 @@ foreach ($name in $strategyList) {
     $logFile = [System.IO.Path]::ChangeExtension($sourceFile, ".log")
     $ex5File = [System.IO.Path]::ChangeExtension($sourceFile, ".ex5")
 
-    # Find the MQL5 Include directory from the first terminal
+    # Use MetaEditor from the first target terminal's install dir
     $firstTerminal = ($strat.deploy_to | Select-Object -First 1)
-    $termHash = $Config.terminals.$firstTerminal.hash
+    $terminal = $Config.terminals.$firstTerminal
+    $termHash = $terminal.hash
+    $MetaEditor = "$($terminal.mt5_install_dir)\metaeditor64.exe"
     $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$termHash\MQL5\Include"
 
+    if (-not (Test-Path $MetaEditor)) {
+        Write-Error "[$name] MetaEditor not found: $MetaEditor"
+        $failed += $name
+        continue
+    }
+
     Write-Host "[$name] Compiling: $sourceFile"
+    Write-Host "[$name] MetaEditor: $MetaEditor"
     Write-Host "[$name] Include:  $includeDir"
 
     # Run MetaEditor compiler
