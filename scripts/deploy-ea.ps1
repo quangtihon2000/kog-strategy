@@ -39,7 +39,19 @@ foreach ($name in $strategyList) {
             continue
         }
 
-        $expertsRoot = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5\Experts"
+        # Resolve AppData against the user that actually runs THIS MT5 terminal,
+        # NOT the GitHub Actions runner's user (Administrator). Each MT5 instance
+        # may run under a different Windows account (QuangXAU, luanxau, ...).
+        # Fall back to $env:APPDATA only if user_profile is missing in deploy.json.
+        if ($terminal.user_profile) {
+            $userAppData = "C:\Users\$($terminal.user_profile)\AppData\Roaming"
+        } else {
+            $userAppData = $env:APPDATA
+            Write-Warning "[$name -> $termName] No user_profile set in deploy.json, falling back to runner's APPDATA: $userAppData"
+        }
+        $terminalDataRoot = "$userAppData\MetaQuotes\Terminal\$($terminal.hash)"
+
+        $expertsRoot = "$terminalDataRoot\MQL5\Experts"
         $expertsDir = Join-Path $expertsRoot $eaBaseName
 
         if (-not (Test-Path $expertsDir)) {
@@ -73,7 +85,7 @@ foreach ($name in $strategyList) {
 
         # Compile in-place using THIS terminal's MetaEditor + include dir
         $MetaEditor = "$($terminal.mt5_install_dir)\metaeditor64.exe"
-        $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5"
+        $includeDir = "$terminalDataRoot\MQL5"
 
         if (-not (Test-Path $MetaEditor)) {
             Write-Error "[$name -> $termName] MetaEditor not found: $MetaEditor"
@@ -115,7 +127,7 @@ foreach ($name in $strategyList) {
         # Setup data symlink if agent is configured
         if ($strat.agent -and $strat.agent.data_subfolder) {
             $dataSubfolder = $strat.agent.data_subfolder
-            $filesDir = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5\Files\$dataSubfolder"
+            $filesDir = "$terminalDataRoot\MQL5\Files\$dataSubfolder"
             $agentDataDir = Join-Path $RepoRoot "strategies\$name\data"
 
             if (-not (Test-Path $agentDataDir)) {

@@ -3,12 +3,14 @@
     "mt5_8": {
       "hash": "7D70CC401B91FAC031C1DD6731E80E7A",
       "label": "MetaTrader5_8 — ZoneSignal",
-      "mt5_install_dir": "C:\\Program Files\\MetaTrader5_8"
+      "mt5_install_dir": "C:\\Program Files\\MetaTrader5_8",
+      "user_profile": "QuangXAU"
     },
     "mt5_main": {
       "hash": "D0E8209F77C8CF37AD8BF550E51FF075",
       "label": "MetaTrader 5 — CondeAutoEntry",
-      "mt5_install_dir": "C:\\Program Files\\MetaTrader 5"
+      "mt5_install_dir": "C:\\Program Files\\MetaTrader 5",
+      "user_profile": "QuangXAU"
     }
   },
 
