@@ -1,0 +1,52 @@
+{
+  "mt5_install_dir": "C:\\Program Files\\MetaTrader 5",
+
+  "terminals": {
+    "terminal_1": {
+      "hash": "REPLACE_WITH_ACTUAL_HASH_1",
+      "label": "Main Account"
+    },
+    "terminal_2": {
+      "hash": "REPLACE_WITH_ACTUAL_HASH_2",
+      "label": "Sub Account"
+    }
+  },
+
+  "strategies": {
+    "zone_signal": {
+      "ea_source": "strategies/zone_signal/ea/ZoneSignalEA.mq5",
+      "deploy_to": ["terminal_1"],
+      "agent": {
+        "enabled": true,
+        "agent_dir": "strategies/zone_signal/agent",
+        "service_name": "zone_signal_agent",
+        "data_subfolder": "ZoneSignalEA"
+      }
+    },
+    "conde_auto_entry": {
+      "ea_source": "strategies/conde_auto_entry/ea/CondeAutoEntryEA.mq5",
+      "deploy_to": ["terminal_1"],
+      "agent": {
+        "enabled": true,
+        "agent_dir": "strategies/conde_auto_entry/agent",
+        "service_name": "conde_signal_agent",
+        "data_subfolder": "CondeAutoEntryEA"
+      }
+    },
+    "asia_range_breakout": {
+      "ea_source": "strategies/asia_range_breakout/ea/AsiaRangeBreakoutEA.mq5",
+      "deploy_to": ["terminal_1"],
+      "agent": null
+    },
+    "wyckoff_spring": {
+      "ea_source": "strategies/wyckoff_spring/ea/WyckoffSpringEA.mq5",
+      "deploy_to": ["terminal_1"],
+      "agent": null
+    },
+    "hedge_lock": {
+      "ea_source": "strategies/hedge_lock/ea/HedgeLockEA.mq5",
+      "deploy_to": ["terminal_1"],
+      "agent": null
+    }
+  }
+}

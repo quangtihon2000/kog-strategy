@@ -1,11 +1,14 @@
-"""Redis Stream consumer — extensibility hinge for the message backend."""
+"""Redis Stream consumer — shared across all strategy agents.
+
+Extensibility hinge for the message backend.  To swap Redis Streams for
+a different queue (Kafka, RabbitMQ, SQS, simple BRPOP), only this module
+needs to change.
+"""
 
 import logging
 from typing import Optional, Tuple
 
 import redis as redis_lib
-
-from config import Settings
 
 log = logging.getLogger(__name__)
 
@@ -18,13 +21,14 @@ class RedisConsumer:
     Reads one message at a time from a Redis Stream using consumer groups.
 
     Consumer groups provide at-least-once delivery: a message is not
-    removed from the stream until `ack()` is called.  If the agent crashes
-    between `consume_one` and `ack`, the message can be reclaimed via
+    removed from the stream until ``ack()`` is called.  If the agent crashes
+    between ``consume_one`` and ``ack``, the message can be reclaimed via
     XAUTOCLAIM on the next startup (not implemented here, but the stream
     retains the pending entry automatically).
 
     Swap path — to switch to a simple BRPOP queue, only replace the body
-    of `consume_one` and `ack`:
+    of ``consume_one`` and ``ack``::
+
         def consume_one(self, block_ms=5000):
             result = self._r.brpop(self._stream, timeout=block_ms // 1000)
             if result is None:
@@ -34,11 +38,11 @@ class RedisConsumer:
             ...
     """
 
-    def __init__(self, settings: Settings) -> None:
-        self._r = redis_lib.from_url(settings.redis_url, decode_responses=True)
-        self._stream = settings.redis_stream
-        self._group = settings.redis_group
-        self._consumer = settings.redis_consumer
+    def __init__(self, redis_url: str, stream: str, group: str, consumer: str) -> None:
+        self._r = redis_lib.from_url(redis_url, decode_responses=True)
+        self._stream = stream
+        self._group = group
+        self._consumer = consumer
 
     # ------------------------------------------------------------------
     def create_group_if_missing(self) -> None:
@@ -56,7 +60,7 @@ class RedisConsumer:
     # ------------------------------------------------------------------
     def consume_one(self, block_ms: int = 5000) -> Optional[Message]:
         """
-        Block for up to `block_ms` milliseconds waiting for the next message.
+        Block for up to ``block_ms`` milliseconds waiting for the next message.
 
         Returns (msg_id, data_dict) or None on timeout.
         """

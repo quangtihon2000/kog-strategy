@@ -1,11 +1,16 @@
 """Entry point — fan-out loop that writes one signal to all configured accounts."""
 
 import logging
+import os
+import sys
 import time
+
+# Add shared/ to import path so agent_lib is importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
 
 from config import load_settings
 from models import ZoneSignal
-from redis_consumer import RedisConsumer
+from agent_lib.redis_consumer import RedisConsumer
 from signal_writer import SignalWriter
 
 log = logging.getLogger(__name__)
@@ -59,7 +64,12 @@ def main() -> None:
         sig_dir.mkdir(parents=True, exist_ok=True)
     settings.mt5_signal_dir = sig_dir
 
-    consumer = RedisConsumer(settings)
+    consumer = RedisConsumer(
+        redis_url=settings.redis_url,
+        stream=settings.redis_stream,
+        group=settings.redis_group,
+        consumer=settings.redis_consumer,
+    )
     consumer.create_group_if_missing()
 
     writers = [SignalWriter(acc, settings.mt5_signal_dir) for acc in settings.mt5_accounts]

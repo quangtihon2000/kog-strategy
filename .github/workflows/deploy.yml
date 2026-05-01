@@ -1,0 +1,97 @@
+name: Deploy EAs & Agents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'strategies/**'
+      - 'shared/**'
+      - 'deploy.json'
+      - 'scripts/**'
+
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: 'Deploy all strategies (ignore change detection)'
+        type: boolean
+        default: false
+
+jobs:
+  detect-changes:
+    runs-on: self-hosted
+    outputs:
+      strategies: ${{ steps.changes.outputs.strategies }}
+      shared_changed: ${{ steps.changes.outputs.shared_changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed strategies
+        id: changes
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.force_all }}" -eq "true") {
+            $dirs = Get-ChildItem -Path "strategies" -Directory | Select-Object -ExpandProperty Name
+            echo "strategies=$($dirs | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+            echo "shared_changed=true" >> $env:GITHUB_OUTPUT
+            return
+          }
+
+          $diff = git diff --name-only HEAD~1 HEAD
+          $changed = @()
+          foreach ($file in $diff) {
+            if ($file -match "^strategies/([^/]+)/") {
+              $name = $Matches[1]
+              if ($changed -notcontains $name) { $changed += $name }
+            }
+          }
+
+          $sharedChanged = ($diff | Where-Object { $_ -match "^shared/" }).Count -gt 0
+          if ($sharedChanged) {
+            # Shared code changed → deploy all strategies that have agents
+            $dirs = Get-ChildItem -Path "strategies" -Directory | Select-Object -ExpandProperty Name
+            $changed = $dirs
+          }
+
+          echo "strategies=$($changed | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          echo "shared_changed=$sharedChanged" >> $env:GITHUB_OUTPUT
+
+  compile-and-deploy:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.strategies != '[]' && needs.detect-changes.outputs.strategies != ''
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load deploy config
+        id: config
+        shell: pwsh
+        run: |
+          $config = Get-Content "deploy.json" | ConvertFrom-Json
+          echo "mt5_install=$($config.mt5_install_dir)" >> $env:GITHUB_OUTPUT
+
+      - name: Compile changed EAs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\compile-ea.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
+
+      - name: Deploy compiled EAs to MT5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\deploy-ea.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
+
+      - name: Setup/update agents (if needed)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          $strategies = '${{ needs.detect-changes.outputs.strategies }}' | ConvertFrom-Json
+          Write-Host "✅ Deployed strategies: $($strategies -join ', ')"
+          Write-Host "📁 Shared code changed: ${{ needs.detect-changes.outputs.shared_changed }}"

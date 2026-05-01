@@ -13,7 +13,9 @@ env/
 dist/
 build/
 
-# Signal files (runtime output — not for version control)
+# Signal files (runtime output — agent writes, EA reads)
+strategies/*/data/*.json
+strategies/*/data/*.tmp
 data/*.json
 data/*.tmp
 
@@ -24,5 +26,11 @@ data/*.tmp
 .vscode/
 .idea/
 
-# MT5 compiled binaries
+# MT5 compiled binaries (built by CI/CD, not committed)
 *.ex5
+
+# MT5 compiler logs
+*.log
+
+# Windows artifacts on VPS
+C:/

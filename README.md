@@ -1,292 +1,162 @@
-# KOG Strategy — Zone Signal System
+# KOG Strategy — Trading Automation Monorepo
 
-A two-part trading automation system:
-
-1. **`ZoneSignalEA.mq5`** — MetaTrader 5 Expert Advisor that monitors a JSON signal file and enters trades on M15 breakouts of a zone.
-2. **`zone_signal_agent/`** — Python agent that reads zone signals from a Redis Stream and writes them atomically to per-account JSON files.
+A monorepo containing multiple MetaTrader 5 Expert Advisors (EAs) and their supporting Python agents for automated trading.
 
 ---
 
 ## Architecture
 
 ```
-[Any producer]
-      │
-      │  XADD zone_signals  (Redis Stream)
-      ▼
-[Python agent — zone_signal_agent/main.py]
-      │
-      │  atomic rename  ({account}.tmp → {account}.json)
-      │
-      ├── 5100000.json
-      ├── 5100001.json
-      └── 5100002.json
-            │
-            ▼
-       MT5 EA (ZoneSignalEA.mq5)
-       — reads its own account's file
-       — detects new signal by comparing timestamp
-       — enters BUY/SELL on M15 bar close outside the zone
+┌─────────────────────────────────────────────────────────┐
+│  GitHub  (git push to main)                             │
+│    └─ Actions workflow: compile → deploy → agent setup  │
+└────────────────────────┬────────────────────────────────┘
+                         │  Self-hosted runner
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│  VPS Windows (MT5 instances)                            │
+│                                                         │
+│  [metaeditor64.exe] ─── compile .mq5 → .ex5            │
+│                                                         │
+│  MT5 Terminal 1                MT5 Terminal 2            │
+│  ├─ ZoneSignalEA.ex5          ├─ AsiaRangeBreakoutEA    │
+│  ├─ CondeAutoEntryEA.ex5      └─ WyckoffSpringEA        │
+│  └─ HedgeLockEA.ex5                                    │
+│                                                         │
+│  [Python agents]                                        │
+│  ├─ zone_signal_agent   (Redis → JSON → EA reads)       │
+│  └─ conde_signal_agent  (Redis → JSON → EA reads)       │
+└─────────────────────────────────────────────────────────┘
 ```
-
-### File locking approach
-
-The Python agent writes to a `.tmp` file then calls `os.replace(tmp, target)`.  
-On both POSIX and NTFS this rename is **atomic at the OS level**, so the EA always reads either the complete old file or the complete new file — never a partial write. No separate lock file or status field is needed.
 
 ---
 
-## JSON Signal Format
+## Project Structure
 
-```json
-{
-  "timestamp":     1713259200,
-  "symbol":        "XAUUSD",
-  "redbox_upper":  2350.0,
-  "redbox_lower":  2340.0,
-  "targets_above": [2360.0, 2370.0],
-  "targets_below": [2330.0, 2320.0]
-}
 ```
-
-| Field | Type | Description |
-|---|---|---|
-| `timestamp` | Unix seconds | Written by the Python agent at write time; EA detects a new signal when this value changes |
-| `symbol` | string | Trading symbol (informational; EA trades on the chart symbol) |
-| `redbox_upper` | float | Top of the zone |
-| `redbox_lower` | float | Bottom of the zone |
-| `targets_above` | float[] | Take-profit levels for BUY trades (one position per target) |
-| `targets_below` | float[] | Take-profit levels for SELL trades (one position per target) |
+kog_strategy/
+├── strategies/                      # Each strategy = EA + optional agent
+│   ├── zone_signal/                 # Zone breakout M15
+│   │   ├── ea/ZoneSignalEA.mq5
+│   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   ├── data/                    # Runtime: agent writes, EA reads
+│   │   └── EA_LOGIC.md
+│   ├── conde_auto_entry/            # JSON signal auto entry
+│   │   ├── ea/CondeAutoEntryEA.mq5
+│   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   └── data/
+│   ├── asia_range_breakout/         # Asia session breakout (standalone)
+│   │   └── ea/AsiaRangeBreakoutEA.mq5
+│   ├── wyckoff_spring/              # Wyckoff spring/upthrust (standalone)
+│   │   └── ea/WyckoffSpringEA.mq5
+│   └── hedge_lock/                  # Hedge lock pair (standalone)
+│       └── ea/HedgeLockEA.mq5
+├── shared/                          # Shared Python code
+│   └── agent_lib/
+│       └── redis_consumer.py        # Common Redis Stream consumer
+├── scripts/                         # CI/CD PowerShell scripts (VPS)
+│   ├── compile-ea.ps1               # Compile .mq5 → .ex5
+│   ├── deploy-ea.ps1                # Copy .ex5 to MT5 folders
+│   ├── setup-agent.ps1              # venv + pip + service restart
+│   └── link_ea.ps1                  # Legacy symlink helper
+├── .github/workflows/deploy.yml     # CI/CD pipeline
+├── deploy.json                      # EA → MT5 instance mapping
+└── README.md
+```
 
 ---
 
-## ZoneSignalEA.mq5
+## Strategies
+
+| Strategy | EA | Agent | Description |
+|---|---|---|---|
+| `zone_signal` | ZoneSignalEA | ✅ `zone_signal_agent` | Three-tier entry on M15 zone breakout |
+| `conde_auto_entry` | CondeAutoEntryEA | ✅ `conde_signal_agent` | Pre-computed entry/SL/TP auto execution |
+| `asia_range_breakout` | AsiaRangeBreakoutEA | ❌ | Scalp breakout of Asia session range |
+| `wyckoff_spring` | WyckoffSpringEA | ❌ | Wyckoff spring/upthrust reversal |
+| `hedge_lock` | HedgeLockEA | ❌ | Buy+Sell pair recycling on profit |
+
+---
+
+## CI/CD Pipeline
 
 ### How it works
 
-| Event | Action |
-|---|---|
-| Every second (via `OnTick`) | Reads `{AccountLogin}.json`; if `timestamp` changed → loads the new signal |
-| New M15 bar close **above** zone | Opens one BUY per `targets_above` entry; SL below `redbox_lower` |
-| New M15 bar close **below** zone | Opens one SELL per `targets_below` entry; SL above `redbox_upper` |
-| All positions closed (SL or TP) | Deactivates signal — no new trades until the file is updated |
+1. **Push to `main`** → GitHub Actions detects which strategies changed
+2. **Compile** → `metaeditor64.exe` compiles `.mq5` → `.ex5` on VPS
+3. **Deploy** → `.ex5` copied to configured MT5 terminal(s)
+4. **Agent setup** → venv updated, service restarted (if agent exists)
 
-### Input parameters
+### Configuration
 
-| Parameter | Default | Description |
-|---|---|---|
-| `InpLotPerTarget` | `0.01` | Lot size for each individual position |
-| `InpSlBufferPts` | `50` | Extra points added to SL beyond the zone edge |
-| `InpMagic` | `20240416` | Magic number to identify EA orders |
-| `InpUseCommonDir` | `true` | Read from MT5 Common Files folder; set `false` for local MQL5/Files |
+Edit `deploy.json` to map strategies to MT5 terminals:
 
-### Signal file location
-
-The EA automatically determines its filename from the logged-in account number:
-
-```
-Account 5100000  →  reads  5100000.json
-Account 5100001  →  reads  5100001.json
+```json
+{
+  "terminals": {
+    "terminal_1": { "hash": "YOUR_MT5_DATA_HASH", "label": "Main Account" }
+  },
+  "strategies": {
+    "zone_signal": {
+      "ea_source": "strategies/zone_signal/ea/ZoneSignalEA.mq5",
+      "deploy_to": ["terminal_1"]
+    }
+  }
+}
 ```
 
-Place the JSON files in:
-- **Common Files** (default, `InpUseCommonDir = true`):  
-  `%AppData%\MetaQuotes\Terminal\Common\Files\`
-- **Local Files** (`InpUseCommonDir = false`):  
-  `<MT5 data folder>\MQL5\Files\`
+### Manual deploy
 
-### Signal lifecycle
+```powershell
+# Compile all
+.\scripts\compile-ea.ps1 -Strategies '["zone_signal","hedge_lock"]'
 
+# Deploy
+.\scripts\deploy-ea.ps1 -Strategies '["zone_signal","hedge_lock"]'
+
+# Setup agents
+.\scripts\setup-agent.ps1 -Strategies '["zone_signal"]'
 ```
-Python writes file  →  EA reads new timestamp  →  EA enters trades
-                                                         │
-                                              SL or TP hit on all positions
-                                                         │
-                                              g_sig.valid = false
-                                              (no more entries until new timestamp)
-```
+
+### VPS Setup (one-time)
+
+1. Install [GitHub Actions self-hosted runner](https://docs.github.com/en/actions/hosting-your-own-runners)
+2. Configure runner as Windows Service
+3. Fill in `deploy.json` with your MT5 terminal hash(es)
+4. Install Python 3.10+ and NSSM (optional, for agent services)
 
 ---
 
-## Python Agent — `zone_signal_agent/`
-
-### Project structure
+## Data Flow (Agent ↔ EA)
 
 ```
-zone_signal_agent/
-├── .env.example        # environment variable reference
-├── requirements.txt
-├── config.py           # Settings dataclass loaded from .env
-├── models.py           # ZoneSignal dataclass + validate() + to_json()
-├── signal_writer.py    # Atomic per-account file writer
-├── redis_consumer.py   # Redis Stream reader (extensible backend)
-└── main.py             # Fan-out loop
+[Redis Stream]  →  [Python Agent]  →  {account}.json  →  [MT5 EA]
+                    writes to data/     via symlink          reads from
+                                        to MT5 Files/       MQL5/Files/
 ```
 
-### Setup
+Each agent writes JSON signal files atomically (tmp → rename) to the strategy's `data/` folder, which is symlinked to the MT5 `Files/{EAName}/` directory.
+
+---
+
+## Local Development
+
+### Running an agent locally
 
 ```bash
-cd zone_signal_agent
-
-# 1. Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate        # macOS/Linux
-# .venv\Scripts\activate         # Windows
-
-# 2. Install dependencies
+cd strategies/zone_signal/agent
+python -m venv .venv
+source .venv/bin/activate      # macOS/Linux
+# .venv\Scripts\activate       # Windows
 pip install -r requirements.txt
-
-# 3. Configure environment
 cp .env.example .env
-# edit .env — set MT5_SIGNAL_DIR, MT5_ACCOUNTS, and REDIS_URL at minimum
+# Edit .env with your config
+python main.py
 ```
 
-### Configuration (`.env`)
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `MT5_SIGNAL_DIR` | yes | — | Absolute path to the directory where `{account}.json` files are written |
-| `MT5_ACCOUNTS` | yes | — | Comma-separated MT5 account numbers, e.g. `5100000,5100001` |
-| `REDIS_URL` | no | `redis://localhost:6379` | Redis connection URL. For password-protected Redis use `redis://:PASSWORD@host:port` |
-| `REDIS_STREAM` | no | `zone_signals` | Redis Stream key to consume |
-| `REDIS_GROUP` | no | `ea_writer` | Consumer group name |
-| `REDIS_CONSUMER` | no | `agent-1` | Consumer name (change if running multiple instances) |
-| `LOG_LEVEL` | no | `INFO` | Python logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-
-### Starting the agent
+### Testing a signal
 
 ```bash
-cd zone_signal_agent
-
-# Activate the venv (if not already active)
-source .venv/bin/activate        # macOS/Linux
-
-# Start — the agent blocks and processes signals until killed
-.venv/bin/python main.py
-```
-
-Expected output on successful start:
-
-```
-2026-04-16 12:00:00 INFO     Consumer group 'ea_writer' created on stream 'zone_signals'
-2026-04-16 12:00:00 INFO     Started. Accounts: [5100000, 5100001]  |  Stream: zone_signals  |  Dir: ../data
-```
-
-The agent then blocks, waiting for messages. Each consumed signal writes `{account}.json` for every account listed in `MT5_ACCOUNTS`:
-
-```
-2026-04-16 12:01:00 INFO     [5100000] Written zone=[2340.00, 2350.00]
-2026-04-16 12:01:00 INFO     [5100001] Written zone=[2340.00, 2350.00]
-```
-
-To stop the agent press `Ctrl+C`.
-
----
-
-## Producer — Pushing Signals to Redis
-
-The producer sends a Redis Stream entry (`XADD`) with **flat string fields**:
-
-| Field | Type | Example |
-|---|---|---|
-| `symbol` | string | `XAUUSD` |
-| `redbox_upper` | string (float) | `2350.00` |
-| `redbox_lower` | string (float) | `2340.00` |
-| `targets_above` | comma-separated floats | `2360.0,2370.0` |
-| `targets_below` | comma-separated floats | `2330.0,2320.0` |
-
-> **Note:** `timestamp` is NOT included by the producer. The agent stamps it at write time so every file always reflects when it was last written.
-
-### redis-cli example
-
-```bash
-redis-cli XADD zone_signals '*' \
-  symbol        XAUUSD \
-  redbox_upper  2350.00 \
-  redbox_lower  2340.00 \
-  targets_above "2360.0,2370.0" \
-  targets_below "2330.0,2320.0"
-```
-
-### Python producer example
-
-```python
-import redis
-
-r = redis.from_url("redis://localhost:6379")
-r.xadd("zone_signals", {
-    "symbol":        "XAUUSD",
-    "redbox_upper":  "2350.00",
-    "redbox_lower":  "2340.00",
-    "targets_above": "2360.0,2370.0",
-    "targets_below": "2330.0,2320.0",
-})
-```
-
----
-
-## Verification
-
-### 1. Test the Python agent end-to-end
-
-```bash
-# Start agent — writes to the project-root data/ folder by default
-MT5_SIGNAL_DIR=../data MT5_ACCOUNTS=5100000,5100001 python main.py
-```
-
-```bash
-# In another terminal — push a test signal
-redis-cli XADD zone_signals '*' \
-  symbol XAUUSD redbox_upper 2350 redbox_lower 2340 \
-  targets_above "2360,2370" targets_below "2330,2320"
-```
-
-Expected result: `data/5100000.json` and `data/5100001.json` both created with the correct zone data and a fresh `timestamp`.
-
-```bash
-# Push again — confirm timestamp updates and old file is replaced cleanly
-redis-cli XADD zone_signals '*' \
-  symbol XAUUSD redbox_upper 2352 redbox_lower 2342 \
-  targets_above "2362,2372" targets_below "2332,2322"
-```
-
-### 2. Test the EA in MT5
-
-1. Place the correct `{account}.json` in the MT5 Files directory.
-2. Attach `ZoneSignalEA.mq5` to an **M15 XAUUSD** chart logged into the matching account.
-3. Check the Experts log — you should see:
-   ```
-   [ZoneSignalEA] Signal file: 5100000.json
-   [Signal] Applied — Zone 2340.00000 – 2350.00000 | Targets above: 2 | below: 2
-   ```
-4. When price closes above `redbox_upper` on an M15 bar:
-   ```
-   [Signal] Close ABOVE zone → opening BUY positions
-   [BUY #1] entry=2351.00  sl=2339.50  tp=2360.00  Opened
-   [BUY #2] entry=2351.00  sl=2339.50  tp=2370.00  Opened
-   ```
-5. Update the JSON file (new timestamp) — confirm the EA loads it within one second:
-   ```
-   [Signal] Applied — Zone ...
-   ```
-
----
-
-## Extending the Message Backend
-
-To swap Redis Streams for a different queue (Kafka, RabbitMQ, SQS, simple BRPOP), only `redis_consumer.py` needs to change — specifically the internals of `consume_one()` and `ack()`. The rest of the system (`models.py`, `signal_writer.py`, `main.py`) is queue-agnostic.
-
-**BRPOP drop-in** (simpler, no consumer groups):
-
-```python
-def consume_one(self, block_ms=5000):
-    result = self._r.brpop(self._stream, timeout=block_ms // 1000)
-    if result is None:
-        return None
-    _, raw = result          # raw is a JSON string from the producer
-    import json
-    return "brpop", json.loads(raw)
-
-def ack(self, msg_id):
-    pass   # BRPOP is fire-and-forget — no ACK needed
+# Push a test signal via Redis
+python strategies/zone_signal/agent/test_push.py
 ```
