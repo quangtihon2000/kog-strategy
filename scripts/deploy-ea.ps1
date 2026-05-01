@@ -122,12 +122,35 @@ foreach ($name in $strategyList) {
                 New-Item -ItemType Directory -Path $agentDataDir -Force | Out-Null
             }
 
-            # Create symlink: MT5 Files/{EAName} -> strategies/{name}/data
-            if (-not (Test-Path $filesDir)) {
-                cmd /c mklink /D "$filesDir" "$agentDataDir"
-                Write-Host "[$name -> $termName] Symlink: $filesDir -> $agentDataDir"
+            # Create junction: MT5 Files/{EAName} -> strategies/{name}/data.
+            # If $filesDir already exists as a real directory (not a junction), convert it:
+            # back up any files into the agent data dir, remove the real dir, then create the junction.
+            # Without this, agent writes never reach MT5 because the EA reads a different folder.
+            $existing = Get-Item $filesDir -Force -ErrorAction SilentlyContinue
+            $isLink = $existing -and ($existing.LinkType -in 'Junction','SymbolicLink')
+
+            if ($existing -and -not $isLink) {
+                Write-Host "[$name -> $termName] Found real dir at $filesDir - converting to junction"
+                Get-ChildItem -LiteralPath $filesDir -Force -ErrorAction SilentlyContinue | ForEach-Object {
+                    $dest = Join-Path $agentDataDir $_.Name
+                    if (-not (Test-Path -LiteralPath $dest)) {
+                        Move-Item -LiteralPath $_.FullName -Destination $dest -Force
+                        Write-Host "[$name -> $termName]   migrated $($_.Name) -> data\"
+                    } else {
+                        $stash = Join-Path $env:TEMP "kog-stale-$name-$($_.Name).$(Get-Date -Format yyyyMMddHHmmss)"
+                        Move-Item -LiteralPath $_.FullName -Destination $stash -Force
+                        Write-Host "[$name -> $termName]   stashed duplicate $($_.Name) -> $stash"
+                    }
+                }
+                Remove-Item -LiteralPath $filesDir -Force -Recurse
+                $existing = $null
+            }
+
+            if (-not $existing) {
+                cmd /c mklink /J "$filesDir" "$agentDataDir" | Out-Null
+                Write-Host "[$name -> $termName] Junction: $filesDir -> $agentDataDir"
             } else {
-                Write-Host "[$name -> $termName] Data dir already exists: $filesDir"
+                Write-Host "[$name -> $termName] Junction already in place: $filesDir -> $($existing.Target)"
             }
         }
     }
