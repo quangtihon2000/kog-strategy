@@ -1,9 +1,13 @@
-﻿<#
+<#
 .SYNOPSIS
-    Deploy compiled .ex5 files to MT5 terminal data folders.
+    Deploy MQL5 EAs to MT5 terminals by copying source and compiling in-place.
 .DESCRIPTION
-    Reads deploy.json, copies each strategy's .ex5 to the configured
-    MT5 terminal(s) Experts directory. Creates backup of existing files.
+    Reads deploy.json. For each strategy → each target terminal:
+      1. Copy .mq5 source into MQL5/Experts/<EAName>/
+      2. Run that terminal's metaeditor64.exe to compile in-place
+      3. Verify .ex5 was produced
+    Compiling against the terminal's own MetaEditor + include dir ensures
+    MT5 picks up the new EA immediately.
 .PARAMETER Strategies
     JSON array of strategy names to deploy. e.g. '["zone_signal","hedge_lock"]'
 #>
@@ -17,6 +21,7 @@ $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $Config = Get-Content "$RepoRoot\deploy.json" -Raw | ConvertFrom-Json
 
 $strategyList = $Strategies | ConvertFrom-Json
+$failed = @()
 
 foreach ($name in $strategyList) {
     $strat = $Config.strategies.$name
@@ -26,12 +31,12 @@ foreach ($name in $strategyList) {
     }
 
     $sourceFile = Join-Path $RepoRoot $strat.ea_source
-    $ex5File = [System.IO.Path]::ChangeExtension($sourceFile, ".ex5")
-
-    if (-not (Test-Path $ex5File)) {
-        Write-Warning "[$name] .ex5 not found: $ex5File — skipping deploy"
+    if (-not (Test-Path $sourceFile)) {
+        Write-Warning "[$name] Source not found: $sourceFile — skipping"
         continue
     }
+
+    $eaBaseName = [System.IO.Path]::GetFileNameWithoutExtension($sourceFile)
 
     foreach ($termName in $strat.deploy_to) {
         $terminal = $Config.terminals.$termName
@@ -40,7 +45,6 @@ foreach ($name in $strategyList) {
             continue
         }
 
-        $eaBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ex5File)
         $expertsRoot = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5\Experts"
         $expertsDir = Join-Path $expertsRoot $eaBaseName
 
@@ -49,31 +53,68 @@ foreach ($name in $strategyList) {
             Write-Host "[$name → $termName] Created subfolder: $expertsDir"
         }
 
-        # Remove legacy .ex5 at Experts root (pre-subfolder layout)
-        $legacyFile = Join-Path $expertsRoot ([System.IO.Path]::GetFileName($ex5File))
-        if (Test-Path $legacyFile) {
-            Remove-Item $legacyFile -Force
-            Write-Host "[$name → $termName] Removed legacy file at root: $legacyFile"
+        # Remove legacy .ex5 / .mq5 at Experts root (pre-subfolder layout)
+        foreach ($ext in @(".ex5", ".mq5")) {
+            $legacyFile = Join-Path $expertsRoot "$eaBaseName$ext"
+            if (Test-Path $legacyFile) {
+                Remove-Item $legacyFile -Force
+                Write-Host "[$name → $termName] Removed legacy file at root: $legacyFile"
+            }
         }
 
-        $destFile = Join-Path $expertsDir ([System.IO.Path]::GetFileName($ex5File))
+        $destMq5 = Join-Path $expertsDir "$eaBaseName.mq5"
+        $destEx5 = Join-Path $expertsDir "$eaBaseName.ex5"
+        $logFile = Join-Path $expertsDir "$eaBaseName.log"
 
-        # Backup existing file
-        if (Test-Path $destFile) {
-            $backupFile = "$destFile.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            Copy-Item $destFile $backupFile
+        # Backup existing .ex5
+        if (Test-Path $destEx5) {
+            $backupFile = "$destEx5.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item $destEx5 $backupFile
             Write-Host "[$name → $termName] Backup: $backupFile"
         }
 
-        # Copy new .ex5
-        Copy-Item $ex5File $destFile -Force
-        Write-Host "[$name → $termName] ✅ Deployed to $destFile"
+        # Copy source .mq5 into the terminal's Experts subfolder
+        Copy-Item $sourceFile $destMq5 -Force
+        Write-Host "[$name → $termName] 📄 Source copied to $destMq5"
 
-        # Copy source .mq5 alongside (so it shows in MetaEditor / Navigator)
-        if (Test-Path $sourceFile) {
-            $destMq5 = Join-Path $expertsDir ([System.IO.Path]::GetFileName($sourceFile))
-            Copy-Item $sourceFile $destMq5 -Force
-            Write-Host "[$name → $termName] 📄 Source copied to $destMq5"
+        # Compile in-place using THIS terminal's MetaEditor + include dir
+        $MetaEditor = "$($terminal.mt5_install_dir)\metaeditor64.exe"
+        $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5"
+
+        if (-not (Test-Path $MetaEditor)) {
+            Write-Error "[$name → $termName] MetaEditor not found: $MetaEditor"
+            $failed += "$name@$termName"
+            continue
+        }
+
+        Write-Host "[$name → $termName] Compiling in-place: $destMq5"
+        Write-Host "[$name → $termName] MetaEditor: $MetaEditor"
+
+        $compileArgs = "/compile:`"$destMq5`" /include:`"$includeDir`" /log:`"$logFile`""
+        Start-Process -FilePath $MetaEditor -ArgumentList $compileArgs `
+            -Wait -PassThru -NoNewWindow | Out-Null
+
+        if (Test-Path $logFile) {
+            $logContent = Get-Content $logFile -Raw -Encoding Unicode
+            Write-Host $logContent
+
+            if ($logContent -match "(\d+) error\(s\)") {
+                $errorCount = [int]$Matches[1]
+                if ($errorCount -gt 0) {
+                    Write-Error "[$name → $termName] Compilation FAILED with $errorCount error(s)"
+                    $failed += "$name@$termName"
+                    continue
+                }
+            }
+        }
+
+        if (Test-Path $destEx5) {
+            $size = (Get-Item $destEx5).Length
+            Write-Host "[$name → $termName] ✅ Compiled & deployed → $destEx5 ($size bytes)"
+        } else {
+            Write-Error "[$name → $termName] .ex5 not found after compilation"
+            $failed += "$name@$termName"
+            continue
         }
 
         # Setup data symlink if agent is configured
@@ -95,6 +136,11 @@ foreach ($name in $strategyList) {
             }
         }
     }
+}
+
+if ($failed.Count -gt 0) {
+    Write-Error "❌ Failed: $($failed -join ', ')"
+    exit 1
 }
 
 Write-Host "✅ All deployments complete"

@@ -55,8 +55,7 @@ kog_strategy/
 │   └── agent_lib/
 │       └── redis_consumer.py        # Common Redis Stream consumer
 ├── scripts/                         # CI/CD PowerShell scripts (VPS)
-│   ├── compile-ea.ps1               # Compile .mq5 → .ex5
-│   ├── deploy-ea.ps1                # Copy .ex5 to MT5 folders
+│   ├── deploy-ea.ps1                # Copy .mq5 + compile in-place at each terminal
 │   ├── setup-agent.ps1              # venv + pip + service restart
 │   └── link_ea.ps1                  # Legacy symlink helper
 ├── .github/workflows/deploy.yml     # CI/CD pipeline
@@ -83,9 +82,8 @@ kog_strategy/
 ### How it works
 
 1. **Push to `main`** → GitHub Actions detects which strategies changed
-2. **Compile** → `metaeditor64.exe` compiles `.mq5` → `.ex5` on VPS
-3. **Deploy** → `.ex5` copied to configured MT5 terminal(s)
-4. **Agent setup** → venv updated, service restarted (if agent exists)
+2. **Deploy & compile in-place** → `.mq5` copied into each target terminal's `MQL5/Experts/<EAName>/`, then compiled by that terminal's own `metaeditor64.exe`
+3. **Agent setup** → venv updated, service restarted (if agent exists)
 
 ### Configuration
 
@@ -108,10 +106,7 @@ Edit `deploy.json` to map strategies to MT5 terminals:
 ### Manual deploy
 
 ```powershell
-# Compile all
-.\scripts\compile-ea.ps1 -Strategies '["zone_signal","hedge_lock"]'
-
-# Deploy
+# Deploy + compile in-place at each terminal
 .\scripts\deploy-ea.ps1 -Strategies '["zone_signal","hedge_lock"]'
 
 # Setup agents

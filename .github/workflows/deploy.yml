@@ -108,13 +108,7 @@ jobs:
           $config = Get-Content "deploy.json" -Raw | ConvertFrom-Json
           echo "mt5_install=$($config.mt5_install_dir)" >> $env:GITHUB_OUTPUT
 
-      - name: Compile changed EAs
-        shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          .\scripts\compile-ea.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
-
-      - name: Deploy compiled EAs to MT5
+      - name: Deploy & compile EAs in-place at each MT5 terminal
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
