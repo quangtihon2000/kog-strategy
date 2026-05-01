@@ -149,9 +149,20 @@ foreach ($name in $strategyList) {
                         Move-Item -LiteralPath $_.FullName -Destination $dest -Force
                         Write-Host "[$name -> $termName]   migrated $($_.Name) -> data\"
                     } else {
-                        $stash = Join-Path $env:TEMP "kog-stale-$name-$($_.Name).$(Get-Date -Format yyyyMMddHHmmss)"
-                        Move-Item -LiteralPath $_.FullName -Destination $stash -Force
-                        Write-Host "[$name -> $termName]   stashed duplicate $($_.Name) -> $stash"
+                        # Collision: prefer the newer file by LastWriteTime so we don't
+                        # silently lose a live signal that MT5/agent just wrote.
+                        $srcTime = $_.LastWriteTimeUtc
+                        $dstTime = (Get-Item -LiteralPath $dest -Force).LastWriteTimeUtc
+                        if ($srcTime -gt $dstTime) {
+                            $stash = Join-Path $env:TEMP "kog-stale-$name-$($_.Name).$(Get-Date -Format yyyyMMddHHmmss)"
+                            Move-Item -LiteralPath $dest -Destination $stash -Force
+                            Move-Item -LiteralPath $_.FullName -Destination $dest -Force
+                            Write-Host "[$name -> $termName]   replaced stale repo data\$($_.Name) (src newer); old -> $stash"
+                        } else {
+                            $stash = Join-Path $env:TEMP "kog-stale-$name-$($_.Name).$(Get-Date -Format yyyyMMddHHmmss)"
+                            Move-Item -LiteralPath $_.FullName -Destination $stash -Force
+                            Write-Host "[$name -> $termName]   kept repo data\$($_.Name) (newer); MT5 copy -> $stash"
+                        }
                     }
                 }
                 Remove-Item -LiteralPath $filesDir -Force -Recurse
