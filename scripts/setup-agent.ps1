@@ -77,8 +77,14 @@ foreach ($name in $strategyList) {
     Set-Content -Path $envFile -Value $envLines -Encoding ASCII
     Write-Host "[$name] Wrote $envFile ($($envLines.Count) keys)"
 
-    # 1. Create venv if it doesn't exist
-    if (-not (Test-Path $pythonExe)) {
+    # 1. Create venv if missing or corrupt (pyvenv.cfg gone but python.exe present)
+    $pyvenvCfg = Join-Path $venvDir "pyvenv.cfg"
+    $venvBroken = (Test-Path $pythonExe) -and (-not (Test-Path $pyvenvCfg))
+    if (-not (Test-Path $pythonExe) -or $venvBroken) {
+        if ($venvBroken) {
+            Write-Host "[$name] venv corrupt (missing pyvenv.cfg) — rebuilding"
+            Remove-Item $venvDir -Recurse -Force
+        }
         Write-Host "[$name] Creating Python venv..."
         python -m venv $venvDir
         if (-not (Test-Path $pythonExe)) {
