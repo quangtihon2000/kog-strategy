@@ -21,7 +21,8 @@ jobs:
   detect-changes:
     runs-on: self-hosted
     outputs:
-      strategies: ${{ steps.changes.outputs.strategies }}
+      strategies_ea: ${{ steps.changes.outputs.strategies_ea }}
+      strategies_agent: ${{ steps.changes.outputs.strategies_agent }}
       shared_changed: ${{ steps.changes.outputs.shared_changed }}
     steps:
       - name: Stop agent services to release workspace locks
@@ -46,42 +47,73 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Detect changed strategies
+      - name: Detect changed components (EA vs agent)
         id: changes
         shell: powershell
         run: |
+          $config = Get-Content "deploy.json" -Raw | ConvertFrom-Json
+          $allStrats = $config.strategies.PSObject.Properties.Name
+          $allAgentStrats = $config.strategies.PSObject.Properties |
+            Where-Object { $_.Value.agent -and $_.Value.agent.enabled -eq $true } |
+            Select-Object -ExpandProperty Name
+
           if ("${{ github.event.inputs.force_all }}" -eq "true") {
-            $dirs = Get-ChildItem -Path "strategies" -Directory | Select-Object -ExpandProperty Name
-            echo "strategies=$($dirs | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+            echo "strategies_ea=$(,@($allStrats) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+            echo "strategies_agent=$(,@($allAgentStrats) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
             echo "shared_changed=true" >> $env:GITHUB_OUTPUT
             return
           }
 
           $diff = git diff --name-only HEAD~1 HEAD
-          $changed = @()
+          $ea = @()
+          $agent = @()
           foreach ($file in $diff) {
-            if ($file -match "^strategies/([^/]+)/") {
+            if ($file -match "^strategies/([^/]+)/ea/") {
               $name = $Matches[1]
-              if ($changed -notcontains $name) { $changed += $name }
+              if ($ea -notcontains $name) { $ea += $name }
+            }
+            if ($file -match "^strategies/([^/]+)/agent/") {
+              $name = $Matches[1]
+              if ($agent -notcontains $name) { $agent += $name }
             }
           }
 
+          # Shared agent code → all agents
           $sharedChanged = ($diff | Where-Object { $_ -match "^shared/" }).Count -gt 0
           if ($sharedChanged) {
-            # Shared code changed → deploy all strategies that have agents
-            $dirs = Get-ChildItem -Path "strategies" -Directory | Select-Object -ExpandProperty Name
-            $changed = $dirs
+            foreach ($n in $allAgentStrats) {
+              if ($agent -notcontains $n) { $agent += $n }
+            }
           }
 
-          echo "strategies=$($changed | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          # deploy.json or workflow changes → safest to redeploy everything
+          $configChanged = ($diff | Where-Object { $_ -match "^(deploy\.json|\.github/workflows/)" }).Count -gt 0
+          if ($configChanged) {
+            $ea = $allStrats
+            $agent = $allAgentStrats
+          }
+
+          # Per-script change → only that side
+          $eaScriptChanged = ($diff | Where-Object { $_ -match "^scripts/(deploy-ea|link_ea)\.ps1$" }).Count -gt 0
+          if ($eaScriptChanged) { $ea = $allStrats }
+
+          $agentScriptChanged = ($diff | Where-Object { $_ -match "^scripts/setup-agent\.ps1$" }).Count -gt 0
+          if ($agentScriptChanged) { $agent = $allAgentStrats }
+
+          echo "strategies_ea=$(,@($ea) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
+          echo "strategies_agent=$(,@($agent) | ConvertTo-Json -Compress)" >> $env:GITHUB_OUTPUT
           echo "shared_changed=$sharedChanged" >> $env:GITHUB_OUTPUT
+          Write-Host "EA: $($ea -join ',')   Agent: $($agent -join ',')"
 
   compile-and-deploy:
     needs: detect-changes
-    if: needs.detect-changes.outputs.strategies != '[]' && needs.detect-changes.outputs.strategies != ''
+    if: >-
+      (needs.detect-changes.outputs.strategies_ea != '[]' && needs.detect-changes.outputs.strategies_ea != '') ||
+      (needs.detect-changes.outputs.strategies_agent != '[]' && needs.detect-changes.outputs.strategies_agent != '')
     runs-on: self-hosted
     steps:
       - name: Stop agent services to release workspace locks
+        if: needs.detect-changes.outputs.strategies_agent != '[]' && needs.detect-changes.outputs.strategies_agent != ''
         shell: powershell
         run: |
           $nssm = Get-Command nssm -ErrorAction SilentlyContinue
@@ -101,20 +133,15 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Load deploy config
-        id: config
-        shell: powershell
-        run: |
-          $config = Get-Content "deploy.json" -Raw | ConvertFrom-Json
-          echo "mt5_install=$($config.mt5_install_dir)" >> $env:GITHUB_OUTPUT
-
       - name: Deploy & compile EAs in-place at each MT5 terminal
+        if: needs.detect-changes.outputs.strategies_ea != '[]' && needs.detect-changes.outputs.strategies_ea != ''
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          .\scripts\deploy-ea.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
+          .\scripts\deploy-ea.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies_ea }}'
 
       - name: Setup/update agents (if needed)
+        if: needs.detect-changes.outputs.strategies_agent != '[]' && needs.detect-changes.outputs.strategies_agent != ''
         shell: powershell
         env:
           # Shared (fallback when no per-strategy override)
@@ -133,11 +160,13 @@ jobs:
           CONDE_AUTO_ENTRY_REDIS_CONSUMER: ${{ vars.CONDE_AUTO_ENTRY_REDIS_CONSUMER }}
         run: |
           $ErrorActionPreference = "Stop"
-          .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies }}'
+          .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies_agent }}'
 
       - name: Summary
         shell: powershell
         run: |
-          $strategies = '${{ needs.detect-changes.outputs.strategies }}' | ConvertFrom-Json
-          Write-Host "Deployed strategies: $($strategies -join ', ')"
-          Write-Host "Shared code changed: ${{ needs.detect-changes.outputs.shared_changed }}"
+          $ea = '${{ needs.detect-changes.outputs.strategies_ea }}' | ConvertFrom-Json
+          $agent = '${{ needs.detect-changes.outputs.strategies_agent }}' | ConvertFrom-Json
+          Write-Host "EAs deployed:    $(@($ea) -join ', ')"
+          Write-Host "Agents deployed: $(@($agent) -join ', ')"
+          Write-Host "Shared changed:  ${{ needs.detect-changes.outputs.shared_changed }}"
