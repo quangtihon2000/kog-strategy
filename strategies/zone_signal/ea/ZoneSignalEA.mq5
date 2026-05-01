@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //|  ZoneSignalEA.mq5                                                |
 //|  Trades M15 breakouts from a JSON zone signal file               |
+//|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
 #property version     "3.01"
