@@ -4,7 +4,7 @@
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "3.02"
+#property version     "3.03"
 #property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
