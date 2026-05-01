@@ -19,13 +19,13 @@ $failed = @()
 foreach ($name in $strategyList) {
     $strat = $Config.strategies.$name
     if (-not $strat) {
-        Write-Warning "[$name] Not found in deploy.json — skipping"
+        Write-Warning "[$name] Not found in deploy.json - skipping"
         continue
     }
 
     $sourceFile = Join-Path $RepoRoot $strat.ea_source
     if (-not (Test-Path $sourceFile)) {
-        Write-Warning "[$name] Source not found: $sourceFile — skipping"
+        Write-Warning "[$name] Source not found: $sourceFile - skipping"
         continue
     }
 
@@ -34,7 +34,7 @@ foreach ($name in $strategyList) {
     foreach ($termName in $strat.deploy_to) {
         $terminal = $Config.terminals.$termName
         if (-not $terminal) {
-            Write-Warning "[$name] Terminal '$termName' not found in config — skipping"
+            Write-Warning "[$name] Terminal '$termName' not found in config - skipping"
             continue
         }
 
@@ -43,7 +43,7 @@ foreach ($name in $strategyList) {
 
         if (-not (Test-Path $expertsDir)) {
             New-Item -ItemType Directory -Path $expertsDir -Force | Out-Null
-            Write-Host "[$name → $termName] Created subfolder: $expertsDir"
+            Write-Host "[$name -> $termName] Created subfolder: $expertsDir"
         }
 
         # Remove legacy .ex5 / .mq5 at Experts root (pre-subfolder layout)
@@ -51,7 +51,7 @@ foreach ($name in $strategyList) {
             $legacyFile = Join-Path $expertsRoot "$eaBaseName$ext"
             if (Test-Path $legacyFile) {
                 Remove-Item $legacyFile -Force
-                Write-Host "[$name → $termName] Removed legacy file at root: $legacyFile"
+                Write-Host "[$name -> $termName] Removed legacy file at root: $legacyFile"
             }
         }
 
@@ -63,25 +63,25 @@ foreach ($name in $strategyList) {
         if (Test-Path $destEx5) {
             $backupFile = "$destEx5.bak.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
             Copy-Item $destEx5 $backupFile
-            Write-Host "[$name → $termName] Backup: $backupFile"
+            Write-Host "[$name -> $termName] Backup: $backupFile"
         }
 
         # Copy source .mq5 into the terminal's Experts subfolder
         Copy-Item $sourceFile $destMq5 -Force
-        Write-Host "[$name → $termName] 📄 Source copied to $destMq5"
+        Write-Host "[$name -> $termName] Source copied to $destMq5"
 
         # Compile in-place using THIS terminal's MetaEditor + include dir
         $MetaEditor = "$($terminal.mt5_install_dir)\metaeditor64.exe"
         $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5"
 
         if (-not (Test-Path $MetaEditor)) {
-            Write-Error "[$name → $termName] MetaEditor not found: $MetaEditor"
+            Write-Error "[$name -> $termName] MetaEditor not found: $MetaEditor"
             $failed += "$name@$termName"
             continue
         }
 
-        Write-Host "[$name → $termName] Compiling in-place: $destMq5"
-        Write-Host "[$name → $termName] MetaEditor: $MetaEditor"
+        Write-Host "[$name -> $termName] Compiling in-place: $destMq5"
+        Write-Host "[$name -> $termName] MetaEditor: $MetaEditor"
 
         $compileArgs = "/compile:`"$destMq5`" /include:`"$includeDir`" /log:`"$logFile`""
         Start-Process -FilePath $MetaEditor -ArgumentList $compileArgs `
@@ -94,7 +94,7 @@ foreach ($name in $strategyList) {
             if ($logContent -match "(\d+) error\(s\)") {
                 $errorCount = [int]$Matches[1]
                 if ($errorCount -gt 0) {
-                    Write-Error "[$name → $termName] Compilation FAILED with $errorCount error(s)"
+                    Write-Error "[$name -> $termName] Compilation FAILED with $errorCount error(s)"
                     $failed += "$name@$termName"
                     continue
                 }
@@ -103,9 +103,9 @@ foreach ($name in $strategyList) {
 
         if (Test-Path $destEx5) {
             $size = (Get-Item $destEx5).Length
-            Write-Host "[$name → $termName] ✅ Compiled & deployed → $destEx5 ($size bytes)"
+            Write-Host "[$name -> $termName] OK Compiled & deployed: $destEx5 ($size bytes)"
         } else {
-            Write-Error "[$name → $termName] .ex5 not found after compilation"
+            Write-Error "[$name -> $termName] .ex5 not found after compilation"
             $failed += "$name@$termName"
             continue
         }
@@ -120,20 +120,20 @@ foreach ($name in $strategyList) {
                 New-Item -ItemType Directory -Path $agentDataDir -Force | Out-Null
             }
 
-            # Create symlink: MT5 Files/{EAName} → strategies/{name}/data
+            # Create symlink: MT5 Files/{EAName} -> strategies/{name}/data
             if (-not (Test-Path $filesDir)) {
                 cmd /c mklink /D "$filesDir" "$agentDataDir"
-                Write-Host "[$name → $termName] 🔗 Symlink: $filesDir → $agentDataDir"
+                Write-Host "[$name -> $termName] Symlink: $filesDir -> $agentDataDir"
             } else {
-                Write-Host "[$name → $termName] ℹ️  Data dir already exists: $filesDir"
+                Write-Host "[$name -> $termName] Data dir already exists: $filesDir"
             }
         }
     }
 }
 
 if ($failed.Count -gt 0) {
-    Write-Error "❌ Failed: $($failed -join ', ')"
+    Write-Error "FAILED: $($failed -join ', ')"
     exit 1
 }
 
-Write-Host "✅ All deployments complete"
+Write-Host "All deployments complete"
