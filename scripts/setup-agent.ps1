@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
-$Config = Get-Content "$RepoRoot\deploy.json" | ConvertFrom-Json
+$Config = Get-Content "$RepoRoot\deploy.json" -Raw | ConvertFrom-Json
 
 $strategyList = $Strategies | ConvertFrom-Json
 

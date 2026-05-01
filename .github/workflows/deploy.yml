@@ -69,7 +69,7 @@ jobs:
         id: config
         shell: powershell
         run: |
-          $config = Get-Content "deploy.json" | ConvertFrom-Json
+          $config = Get-Content "deploy.json" -Raw | ConvertFrom-Json
           echo "mt5_install=$($config.mt5_install_dir)" >> $env:GITHUB_OUTPUT
 
       - name: Compile changed EAs
