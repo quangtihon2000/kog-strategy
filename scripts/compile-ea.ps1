@@ -46,7 +46,7 @@ foreach ($name in $strategyList) {
     $terminal = $Config.terminals.$firstTerminal
     $termHash = $terminal.hash
     $MetaEditor = "$($terminal.mt5_install_dir)\metaeditor64.exe"
-    $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$termHash\MQL5\Include"
+    $includeDir = "$env:APPDATA\MetaQuotes\Terminal\$termHash\MQL5"
 
     if (-not (Test-Path $MetaEditor)) {
         Write-Error "[$name] MetaEditor not found: $MetaEditor"
