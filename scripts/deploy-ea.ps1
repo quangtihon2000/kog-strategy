@@ -138,8 +138,38 @@ foreach ($name in $strategyList) {
             # If $filesDir already exists as a real directory (not a junction), convert it:
             # back up any files into the agent data dir, remove the real dir, then create the junction.
             # Without this, agent writes never reach MT5 because the EA reads a different folder.
-            $existing = Get-Item $filesDir -Force -ErrorAction SilentlyContinue
-            $isLink = $existing -and ($existing.LinkType -in 'Junction','SymbolicLink')
+            $existing = Get-Item -LiteralPath $filesDir -Force -ErrorAction SilentlyContinue
+
+            # PS 5.1 LinkType is unreliable (returns empty for working junctions in some
+            # cases). Use the ReparsePoint attribute - it is the underlying NTFS flag and
+            # is set for both Junctions and SymbolicLinks. Misdetecting a junction as a
+            # real dir caused data loss: Get-ChildItem follows the junction, and
+            # Move-Item on $_.FullName moves the physical file out of the target
+            # (= repo data/), emptying it.
+            $isLink = $false
+            if ($existing) {
+                try {
+                    $attrs = [System.IO.File]::GetAttributes($filesDir)
+                    $isLink = ($attrs -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+                } catch {
+                    $isLink = $false
+                }
+            }
+
+            # Defensive: if $filesDir resolves to $agentDataDir (already a junction
+            # pointing where we want), force-treat as link to avoid the destructive path.
+            if ($existing -and -not $isLink) {
+                try {
+                    $resolvedFiles = [System.IO.Path]::GetFullPath($filesDir).TrimEnd('\')
+                    $resolvedAgent = [System.IO.Path]::GetFullPath($agentDataDir).TrimEnd('\')
+                    # GetFullPath does not resolve junctions, but try resolve via .NET
+                    $resolvedTarget = (New-Object System.IO.DirectoryInfo $filesDir).FullName.TrimEnd('\')
+                    if ($resolvedFiles -ieq $resolvedAgent -or $resolvedTarget -ieq $resolvedAgent) {
+                        Write-Host "[$name -> $termName] $filesDir resolves to repo data dir - already linked, skipping migration"
+                        $isLink = $true
+                    }
+                } catch {}
+            }
 
             if ($existing -and -not $isLink) {
                 Write-Host "[$name -> $termName] Found real dir at $filesDir - converting to junction"
