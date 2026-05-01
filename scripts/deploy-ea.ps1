@@ -1,16 +1,9 @@
-<#
-.SYNOPSIS
-    Deploy MQL5 EAs to MT5 terminals by copying source and compiling in-place.
-.DESCRIPTION
-    Reads deploy.json. For each strategy → each target terminal:
-      1. Copy .mq5 source into MQL5/Experts/<EAName>/
-      2. Run that terminal's metaeditor64.exe to compile in-place
-      3. Verify .ex5 was produced
-    Compiling against the terminal's own MetaEditor + include dir ensures
-    MT5 picks up the new EA immediately.
-.PARAMETER Strategies
-    JSON array of strategy names to deploy. e.g. '["zone_signal","hedge_lock"]'
-#>
+# Deploy MQL5 EAs to MT5 terminals by copying source and compiling in-place.
+# For each strategy, for each target terminal:
+#   1. Copy .mq5 source into MQL5/Experts/<EAName>/
+#   2. Run that terminal own metaeditor64.exe to compile in-place
+#   3. Verify .ex5 was produced
+# Param Strategies: JSON array of strategy names. Example: ["zone_signal","hedge_lock"]
 param(
     [Parameter(Mandatory)]
     [string]$Strategies
