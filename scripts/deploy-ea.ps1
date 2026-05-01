@@ -162,8 +162,18 @@ foreach ($termName in $terminalsToRestart.Keys) {
         Write-Host "[$termName] No running terminal64.exe at $exePath (nothing to stop)"
     }
 
-    Write-Host "[$termName] Launching $exePath"
-    Start-Process -FilePath $exePath -WorkingDirectory $installDir | Out-Null
+    Write-Host "[$termName] Launching $exePath (detached via WMI)"
+    # Use WMI Win32_Process.Create so the process is parented to wmiprvse and
+    # survives the GitHub Actions job object cleanup (which kills child PIDs).
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = "`"$exePath`""
+        CurrentDirectory = $installDir
+    }
+    if ($result.ReturnValue -ne 0) {
+        Write-Error "[$termName] WMI Create failed with return $($result.ReturnValue)"
+    } else {
+        Write-Host "[$termName] Started PID $($result.ProcessId)"
+    }
 }
 
 if ($failed.Count -gt 0) {
