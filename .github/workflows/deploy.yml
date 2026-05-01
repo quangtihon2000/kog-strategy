@@ -8,6 +8,7 @@ on:
       - 'shared/**'
       - 'deploy.json'
       - 'scripts/**'
+      - '.github/workflows/**'
 
   workflow_dispatch:
     inputs:
