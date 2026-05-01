@@ -40,11 +40,20 @@ foreach ($name in $strategyList) {
             continue
         }
 
-        $expertsDir = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5\Experts"
+        $eaBaseName = [System.IO.Path]::GetFileNameWithoutExtension($ex5File)
+        $expertsRoot = "$env:APPDATA\MetaQuotes\Terminal\$($terminal.hash)\MQL5\Experts"
+        $expertsDir = Join-Path $expertsRoot $eaBaseName
 
         if (-not (Test-Path $expertsDir)) {
-            Write-Warning "[$name] Experts dir not found: $expertsDir — creating"
             New-Item -ItemType Directory -Path $expertsDir -Force | Out-Null
+            Write-Host "[$name → $termName] Created subfolder: $expertsDir"
+        }
+
+        # Remove legacy .ex5 at Experts root (pre-subfolder layout)
+        $legacyFile = Join-Path $expertsRoot ([System.IO.Path]::GetFileName($ex5File))
+        if (Test-Path $legacyFile) {
+            Remove-Item $legacyFile -Force
+            Write-Host "[$name → $termName] Removed legacy file at root: $legacyFile"
         }
 
         $destFile = Join-Path $expertsDir ([System.IO.Path]::GetFileName($ex5File))
