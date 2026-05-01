@@ -69,6 +69,13 @@ foreach ($name in $strategyList) {
         Copy-Item $ex5File $destFile -Force
         Write-Host "[$name → $termName] ✅ Deployed to $destFile"
 
+        # Copy source .mq5 alongside (so it shows in MetaEditor / Navigator)
+        if (Test-Path $sourceFile) {
+            $destMq5 = Join-Path $expertsDir ([System.IO.Path]::GetFileName($sourceFile))
+            Copy-Item $sourceFile $destMq5 -Force
+            Write-Host "[$name → $termName] 📄 Source copied to $destMq5"
+        }
+
         # Setup data symlink if agent is configured
         if ($strat.agent -and $strat.agent.data_subfolder) {
             $dataSubfolder = $strat.agent.data_subfolder
