@@ -94,5 +94,5 @@ jobs:
         shell: powershell
         run: |
           $strategies = '${{ needs.detect-changes.outputs.strategies }}' | ConvertFrom-Json
-          Write-Host "✅ Deployed strategies: $($strategies -join ', ')"
-          Write-Host "📁 Shared code changed: ${{ needs.detect-changes.outputs.shared_changed }}"
+          Write-Host "Deployed strategies: $($strategies -join ', ')"
+          Write-Host "Shared code changed: ${{ needs.detect-changes.outputs.shared_changed }}"
