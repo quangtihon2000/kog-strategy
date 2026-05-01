@@ -103,6 +103,13 @@ foreach ($name in $strategyList) {
         Write-Host "[$name] Created data dir: $dataDir"
     }
 
+    # 3b. Ensure logs directory exists (NSSM AppStdout/AppStderr need it)
+    $logsDir = Join-Path $agentDir "logs"
+    if (-not (Test-Path $logsDir)) {
+        New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+        Write-Host "[$name] Created logs dir: $logsDir"
+    }
+
     # 4. Restart service if NSSM is available
     $nssm = Get-Command nssm -ErrorAction SilentlyContinue
     if ($nssm) {
