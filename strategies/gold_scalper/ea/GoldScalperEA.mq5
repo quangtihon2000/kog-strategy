@@ -49,7 +49,7 @@ input int    InpEMA_M15_Period       = 50;     // EMA filter period on M15
 input double InpTP1_RR               = 1.0;    // TP1 RR (close 50%)
 input double InpTP2_RR               = 2.5;    // TP2 RR (close remainder)
 input double InpTP1_PartialPct       = 50.0;   // % volume closed at TP1
-input bool   InpEnableTP1Partial     = true;   // false → no partial/BE, full position runs to TP2
+input bool   InpEnableTP1Partial     = true;   // Enable TP1 partial close + BE move (false = run full to TP2)
 
 input group "=== Setup B — VWAP Rejection ==="
 input bool   InpEnableSetupB         = true;   // Enable VWAP rejection setup
