@@ -3,6 +3,14 @@
 //|  Scalp XAUUSD M5: Killzone breakout (A) + VWAP rejection (B).    |
 //|  Risk 0.75%/lệnh, max 1 vị thế, 3 lệnh/ngày, dừng nếu -2% ngày.  |
 //+------------------------------------------------------------------+
+//
+// TRIẾT LÝ MỤC TIÊU:
+//   EA này nhắm trung bình 1-1.5%/ngày tính trên 20 ngày giao dịch,
+//   KHÔNG phải mỗi ngày. Có ngày flat, có ngày âm trong giới hạn
+//   daily loss. Việc cố ép profit mỗi ngày sẽ phá vỡ expectancy
+//   của hệ thống.
+//
+//+------------------------------------------------------------------+
 #property copyright "Gold Scalper EA"
 #property version   "1.00"
 #property description "XAUUSD M5: London/NY killzone breakout retest + VWAP mean-reversion."
@@ -17,6 +25,9 @@ input double InpRiskPercent          = 0.75;   // Risk per trade (% balance)
 input double InpDailyLossLimitPct    = 2.0;    // Stop trading if daily PnL <= -X%
 input int    InpMaxTradesPerDay      = 3;      // Max executed trades per broker day
 input int    InpMaxConsecLosses      = 2;      // Stop trading after N losses in a row
+input double InpDailyProfitTargetPct = 1.5;    // Daily profit target (% balance) — block new entries when hit
+input bool   InpEnableGreenDayLock   = true;   // Close open trade if profit retraces below lock threshold
+input double InpGreenDayLockRetracePct = 50.0; // % of target — close open trade to preserve green day
 
 input group "=== Session Times (broker time, HH:MM) ==="
 input string InpAsianStart           = "06:00"; // Asian session start
@@ -43,7 +54,7 @@ input int    InpVWAP_DeviationPips   = 60;     // Min deviation from VWAP to arm
 input double InpVWAP_RR              = 1.5;    // RR for VWAP rejection trades
 
 input group "=== Filters ==="
-input int    InpMaxSpreadPoints      = 25;     // Skip entries when spread > X points
+input int    InpMaxSpreadPoints      = 30;     // Skip entries when spread > X points
 input string InpNewsTimes            = "";     // CSV of HH:MM (broker tz) e.g. "14:30,20:00"
 input int    InpNewsBufferMinutes    = 15;     // Block ± minutes around each news time
 input int    InpEMA_M15_Fast         = 20;     // EMA20 (chart-only when InpDrawLevels)
@@ -91,6 +102,8 @@ int      g_tradesToday     = 0;
 int      g_consecLosses    = 0;
 ulong    g_lastSeenDealId  = 0;   // for closed-trade detection
 bool     g_realAccountAlerted = false;
+bool     g_dailyProfitTargetHit = false;  // set when closed P/L >= target → block new entries
+bool     g_greenDayLockTriggered = false; // set after green day lock fires → block re-entry same day
 
 // Position management state per ticket
 ulong    g_managedTicket = 0;
@@ -318,6 +331,8 @@ void ResetDailyState() {
    g_setupA_takenToday = false;
    g_tradesToday = 0;
    g_consecLosses = 0;   // reset cùng thời điểm với daily loss limit
+   g_dailyProfitTargetHit = false;
+   g_greenDayLockTriggered = false;
    g_dayStartBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    PrintFormat("[GS] Daily reset. startBalance=%.2f", g_dayStartBalance);
 }
@@ -366,7 +381,45 @@ bool ShouldStopTrading() {
       LogV("Consecutive loss kill-switch tripped");
       return true;
    }
+   if (g_dailyProfitTargetHit) {
+      LogV("Daily profit target reached — no new entries until next day");
+      return true;
+   }
    return false;
+}
+
+// Daily profit target + green day lock — gọi mỗi tick (sau ManagePositions).
+// Reason: dùng ACCOUNT_BALANCE (closed P/L) để arm flag, ACCOUNT_EQUITY (closed+floating)
+// để check retrace. Lệnh đang mở tiếp tục được TP/SL/BE quản lý bình thường — chỉ block
+// việc vào lệnh mới sau khi target hit.
+void CheckDailyProfitTarget() {
+   if (InpDailyProfitTargetPct <= 0 || g_dayStartBalance <= 0) return;
+   double targetMoney = g_dayStartBalance * InpDailyProfitTargetPct / 100.0;
+
+   // Arm: closed P/L (balance-only) đã chạm target
+   if (!g_dailyProfitTargetHit) {
+      double closedPnL = AccountInfoDouble(ACCOUNT_BALANCE) - g_dayStartBalance;
+      if (closedPnL >= targetMoney) {
+         g_dailyProfitTargetHit = true;
+         PrintFormat("[GS] Daily profit target HIT closedPnL=%.2f target=%.2f — block new entries until 00:00",
+                     closedPnL, targetMoney);
+      }
+   }
+
+   // Green day lock: target đã hit + có lệnh đang mở + equity-based PnL retrace xuống lock threshold
+   if (g_dailyProfitTargetHit
+       && InpEnableGreenDayLock
+       && !g_greenDayLockTriggered
+       && CountMyPositions() > 0) {
+      double lockMoney = targetMoney * InpGreenDayLockRetracePct / 100.0;
+      double equityPnL = AccountInfoDouble(ACCOUNT_EQUITY) - g_dayStartBalance;
+      if (equityPnL <= lockMoney) {
+         PrintFormat("[GS] Green day lock TRIGGERED equityPnL=%.2f lockAt=%.2f — closing all to preserve green day",
+                     equityPnL, lockMoney);
+         ForceCloseAll();
+         g_greenDayLockTriggered = true;
+      }
+   }
 }
 
 bool IsSpreadOk() {
@@ -671,8 +724,10 @@ int OnInit() {
       }
    }
 
-   PrintFormat("[GS] Init magic=%I64u risk=%.2f%% maxTrades/day=%d dailyLoss=%.2f%% spread<=%d",
-               InpMagic, InpRiskPercent, InpMaxTradesPerDay, InpDailyLossLimitPct, InpMaxSpreadPoints);
+   PrintFormat("[GS] Init magic=%I64u risk=%.2f%% maxTrades/day=%d dailyLoss=%.2f%% target=%.2f%% greenLock=%s@%.0f%% spread<=%d",
+               InpMagic, InpRiskPercent, InpMaxTradesPerDay, InpDailyLossLimitPct,
+               InpDailyProfitTargetPct, (InpEnableGreenDayLock ? "on" : "off"),
+               InpGreenDayLockRetracePct, InpMaxSpreadPoints);
    return INIT_SUCCEEDED;
 }
 
@@ -696,6 +751,7 @@ void OnTick() {
 
    // Per-tick housekeeping
    ManagePositions();
+   CheckDailyProfitTarget();
 
    // Force close window
    if (IsForceCloseTime()) {

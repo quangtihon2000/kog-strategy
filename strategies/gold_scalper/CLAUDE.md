@@ -4,6 +4,10 @@
 
 Scalp XAUUSD M5 with two complementary setups: London/NY killzone breakout (trend-following) and VWAP rejection (mean-reversion). Targets 1-2% equity/day with hard 2% daily loss cap and a 23:30 force-close. Self-contained EA, no Python agent.
 
+## Philosophy
+
+EA này nhắm trung bình **1-1.5%/ngày tính trên 20 ngày giao dịch, KHÔNG phải mỗi ngày**. Có ngày flat, có ngày âm trong giới hạn daily loss. Việc cố ép profit mỗi ngày sẽ phá vỡ expectancy của hệ thống. Daily profit target + green day lock chỉ là cơ chế bảo toàn khi đã đạt mục tiêu — không phải mệnh lệnh phải đạt mỗi ngày.
+
 ## Components
 
 - **EA**: `ea/GoldScalperEA.mq5` — single file, all classes inline
@@ -38,10 +42,15 @@ Scalp XAUUSD M5 with two complementary setups: London/NY killzone breakout (tren
 - Daily PnL ≤ -`InpDailyLossLimitPct` → stop until next day
 - Trades today ≥ `InpMaxTradesPerDay` → stop
 - Consecutive losses ≥ `InpMaxConsecLosses` → stop
+- Daily profit target hit (closed P/L ≥ `InpDailyProfitTargetPct`) → block new entries until 00:00
 - Spread > `InpMaxSpreadPoints` → skip
 - Inside news window (`InpNewsTimes` ± `InpNewsBufferMinutes`) → skip
 - After cutoff time → skip
 - Already 1 position open → skip (max 1 concurrent)
+
+### Daily profit target & green day lock (per-tick, not per-bar)
+- **Arm**: when closed P/L (balance-based) for the day reaches `InpDailyProfitTargetPct` × start balance, set `g_dailyProfitTargetHit = true`. From this point, `ShouldStopTrading()` returns true → no new entries until next 00:00 reset. Open positions continue to be managed normally (TP1 partial, BE move, TP2/SL).
+- **Green day lock** (`InpEnableGreenDayLock = true`): once target is armed AND a position is still open, if equity-based P/L (closed + floating) retraces to `InpGreenDayLockRetracePct`% of target money, immediately `ForceCloseAll()` to preserve the green day. Fires at most once per day.
 
 ### VWAP
 Custom cumulative VWAP, resets at 00:00 broker time. Per closed M5 bar: `cumPV += typical * tickVolume`, `cumV += tickVolume`, `vwap = cumPV / cumV`.
@@ -60,6 +69,9 @@ Up to 3 attempts on requote / price changed / off-quotes; abort on any other err
 | `InpDailyLossLimitPct` | 2.0 | Stop trading if daily PnL ≤ -X% |
 | `InpMaxTradesPerDay` | 3 | Max executed trades per broker day |
 | `InpMaxConsecLosses` | 2 | Stop after N consecutive losses |
+| `InpDailyProfitTargetPct` | 1.5 | Block new entries when closed P/L ≥ X% of start balance |
+| `InpEnableGreenDayLock` | true | Close open trade if profit retraces below lock threshold |
+| `InpGreenDayLockRetracePct` | 50.0 | % of target — close to preserve green day |
 | `InpAsianStart` / `InpAsianEnd` | 06:00 / 13:00 | Asian session window |
 | `InpLondonKZStart` / `InpLondonKZEnd` | 13:00 / 16:00 | London killzone |
 | `InpNYKZStart` / `InpNYKZEnd` | 16:00 / 19:00 | NY killzone |
@@ -71,7 +83,7 @@ Up to 3 attempts on requote / price changed / off-quotes; abort on any other err
 | `InpTP1_PartialPct` | 50 | % volume closed at TP1 |
 | `InpVWAP_DeviationPips` | 60 | Min wick deviation from VWAP for Setup B |
 | `InpVWAP_RR` | 1.5 | Fixed RR for Setup B |
-| `InpMaxSpreadPoints` | 25 | Skip entries when spread > X points |
+| `InpMaxSpreadPoints` | 30 | Skip entries when spread > X points |
 | `InpNewsTimes` | "" | CSV `HH:MM` list (broker tz), e.g. `"14:30,20:00"` |
 | `InpNewsBufferMinutes` | 15 | Window ± minutes around each news time |
 | `InpMagic` | 20260503 | Unique magic number |
