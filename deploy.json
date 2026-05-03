@@ -11,6 +11,12 @@
       "label": "MetaTrader 5 — CondeAutoEntry",
       "mt5_install_dir": "C:\\Program Files\\MetaTrader 5",
       "user_profile": "QuangXAU"
+    },
+    "mt5_2": {
+      "hash": "0696FF550C099AD93E51F997F5A09924",
+      "label": "MetaTrader5_2 — GoldScalper (demo 25318677)",
+      "mt5_install_dir": "C:\\Program Files\\MetaTrader5_2",
+      "user_profile": "QuangXAU"
     }
   },
 
@@ -56,6 +62,11 @@
     "hedge_lock": {
       "ea_source": "strategies/hedge_lock/ea/HedgeLockEA.mq5",
       "deploy_to": [],
+      "agent": null
+    },
+    "gold_scalper": {
+      "ea_source": "strategies/gold_scalper/ea/GoldScalperEA.mq5",
+      "deploy_to": ["mt5_2"],
       "agent": null
     }
   }
