@@ -28,6 +28,8 @@ input int    InpMaxConsecLosses      = 2;      // Stop trading after N losses in
 input double InpDailyProfitTargetPct = 1.5;    // Daily profit target (% balance) — block new entries when hit
 input bool   InpEnableGreenDayLock   = true;   // Close open trade if profit retraces below lock threshold
 input double InpGreenDayLockRetracePct = 50.0; // % of target — close open trade to preserve green day
+input bool   InpEnableLong           = true;   // Allow long entries (Setup A & B)
+input bool   InpEnableShort          = true;   // Allow short entries (Setup A & B)
 
 input group "=== Session Times (broker time, HH:MM) ==="
 input string InpAsianStart           = "06:00"; // Asian session start
@@ -594,7 +596,7 @@ bool TrySetupA() {
 
    // Phase 1: phát hiện break (close M5 vượt qua range Á)
    if (g_breakoutDir == 0) {
-      if (closePrev > g_asianHigh) {
+      if (closePrev > g_asianHigh && InpEnableLong) {
          // Long break candidate — cần EMA50 + VWAP đồng thuận
          if (closePrev > ema50 && closePrev > g_vwapValue) {
             g_breakoutDir = +1;
@@ -605,7 +607,7 @@ bool TrySetupA() {
             PrintFormat("[GS] SetupA LONG break detected close=%.2f asianH=%.2f swingLow=%.2f",
                         closePrev, g_asianHigh, g_swingExtreme);
          }
-      } else if (closePrev < g_asianLow) {
+      } else if (closePrev < g_asianLow && InpEnableShort) {
          if (closePrev < ema50 && closePrev < g_vwapValue) {
             g_breakoutDir = -1;
             g_breakoutBarTime = iTime(_Symbol, PERIOD_M5, 1);
@@ -676,7 +678,7 @@ bool TrySetupB() {
    double devThresh = PipsToPrice(InpVWAP_DeviationPips);
 
    // Long Setup B: giá lệch xa dưới VWAP, retest VWAP từ dưới + nến bullish confirm
-   if (lowPrev < (g_vwapValue - devThresh) && IsBullishConfirm(1) && closePrev > lowPrev) {
+   if (InpEnableLong && lowPrev < (g_vwapValue - devThresh) && IsBullishConfirm(1) && closePrev > lowPrev) {
       double entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double sl = lowPrev - PipsToPrice(20);
       double slDist = entry - sl;
@@ -686,7 +688,7 @@ bool TrySetupB() {
    }
 
    // Short Setup B: lệch xa trên VWAP
-   if (highPrev > (g_vwapValue + devThresh) && IsBearishConfirm(1) && closePrev < highPrev) {
+   if (InpEnableShort && highPrev > (g_vwapValue + devThresh) && IsBearishConfirm(1) && closePrev < highPrev) {
       double entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       double sl = highPrev + PipsToPrice(20);
       double slDist = sl - entry;

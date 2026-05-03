@@ -72,6 +72,8 @@ Up to 3 attempts on requote / price changed / off-quotes; abort on any other err
 | `InpDailyProfitTargetPct` | 1.5 | Block new entries when closed P/L ≥ X% of start balance |
 | `InpEnableGreenDayLock` | true | Close open trade if profit retraces below lock threshold |
 | `InpGreenDayLockRetracePct` | 50.0 | % of target — close to preserve green day |
+| `InpEnableLong` / `InpEnableShort` | true / true | Direction toggles for A/B testing |
+| `InpEnableSetupA` / `InpEnableSetupB` | true / true | Per-setup toggles for A/B testing |
 | `InpAsianStart` / `InpAsianEnd` | 06:00 / 13:00 | Asian session window |
 | `InpLondonKZStart` / `InpLondonKZEnd` | 13:00 / 16:00 | London killzone |
 | `InpNYKZStart` / `InpNYKZEnd` | 16:00 / 19:00 | NY killzone |
