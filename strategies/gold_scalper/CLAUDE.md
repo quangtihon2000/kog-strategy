@@ -83,6 +83,7 @@ Up to 3 attempts on requote / price changed / off-quotes; abort on any other err
 | `InpEMA_M15_Period` | 50 | EMA filter on M15 |
 | `InpTP1_RR` / `InpTP2_RR` | 1.0 / 2.5 | Setup A targets (RR) |
 | `InpTP1_PartialPct` | 50 | % volume closed at TP1 |
+| `InpEnableTP1Partial` | true | false → skip partial close + BE move; full position runs to TP2 |
 | `InpVWAP_DeviationPips` | 60 | Min wick deviation from VWAP for Setup B |
 | `InpVWAP_RR` | 1.5 | Fixed RR for Setup B |
 | `InpMaxSpreadPoints` | 30 | Skip entries when spread > X points |
