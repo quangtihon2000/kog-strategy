@@ -36,11 +36,11 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 
 ### EOD cut
 - **Trigger window**: từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker. Default lead = 5 phút. Set `InpEodCutLeadMins = -1` để disable.
-- **Branch A — total > 0 (`dailyRealized + floating > 0`)**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings, set `g_eodCutDoneAnchor = g_dailyAnchor`, suppress entries đến khi qua ngày. Restart-safe qua `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}`.
-- **Branch B — total < 0**: `PartialEodTrimLosers()`. Sort các vị thế đang lỗ (`profit + swap < 0`) theo P&L tăng dần (lỗ nhiều nhất trước), close lần lượt; trước mỗi close kiểm tra `dailyRealized + Σcuts + next.pnl ≥ 0` — nếu cắt tiếp sẽ kéo realized âm thì dừng. **Không** suppress entries, **không** set anchor → có thể tiếp tục trim ở các tick sau khi realized tăng (do TP hit).
-- **Total = 0** hoặc `g_openCount == 0` → no-op.
-- Nếu broker không expose session (weekend/holiday) → `TodaySessionCloseTime()` return 0, EOD cut skip.
-- Khi day rollover, `g_eodCutDoneAnchor` cleared và GlobalVariable bị xóa.
+- **Branch A — total > 0 (`dailyRealized + floating > 0`)**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings, gọi `ArmEodSuppression()` → suppress entries đến qua ngày.
+- **Branch B — total < 0**: `PartialEodTrimLosers()`. Sort các vị thế đang lỗ (`profit + swap < 0`) theo P&L tăng dần (lỗ nhiều nhất trước), close lần lượt; trước mỗi close kiểm tra `dailyRealized + Σcuts + next.pnl ≥ 0` — nếu cắt tiếp sẽ kéo realized âm thì `break`. Sau khi loop xong, gọi `ArmEodSuppression()` → suppress entries đến qua ngày (dù break sớm hay không).
+- **Suppression**: `ArmEodSuppression()` set `g_eodCutDoneAnchor = g_dailyAnchor` và persist vào `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}` (restart-safe). Day rollover → anchor cleared và GlobalVariable bị xóa.
+- **Total = 0** hoặc `g_openCount == 0` → no-op (không suppress).
+- Nếu broker không expose session (weekend/holiday) → `TodaySessionCloseTime()` return 0, EOD cut skip toàn bộ.
 
 ### Dedup (restart-safe)
 - Position comment: `GVFX_T{timestamp}` (e.g., `GVFX_T1777896356`).
