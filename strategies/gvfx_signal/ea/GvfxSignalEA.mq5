@@ -95,16 +95,24 @@ void OnTick() {
 
    RefreshOpenStats(g_openCount, g_floating);
 
-   //--- EOD cut: during the EOD window, if today's realized + current floating > 0,
-   //    close everything and suppress re-entry until the next server-time day.
+   //--- EOD cut window (only fires within InpEodCutLeadMins of session close):
+   //      total > 0 → close everything; suppress re-entry until next day.
+   //      total < 0 → trim losers (most-negative first) while projected daily
+   //                  realized stays ≥ 0; suppress re-entry until next day.
    if (g_eodCutDoneAnchor != g_dailyAnchor && IsEodWindow() && g_openCount > 0) {
       double total = g_dailyRealized + g_floating;
       if (total > 0) {
          PrintFormat("[GVFX EOD CUT] realized=%.2f floating=%.2f total=%.2f → close all, pause until next day",
                      g_dailyRealized, g_floating, total);
          CloseAllAndCancel();
-         g_eodCutDoneAnchor = g_dailyAnchor;
-         GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
+         ArmEodSuppression();
+         return;
+      }
+      if (total < 0) {
+         PrintFormat("[GVFX EOD trim] realized=%.2f floating=%.2f total=%.2f → trim losers, pause until next day",
+                     g_dailyRealized, g_floating, total);
+         PartialEodTrimLosers();
+         ArmEodSuppression();
          return;
       }
    }
@@ -268,6 +276,16 @@ string EodAnchorVarName() {
 }
 
 //+------------------------------------------------------------------+
+//| Mark today as EOD-cut-done so entries are suppressed until the   |
+//| next server-time day. Persisted via GlobalVariable for restart   |
+//| safety. Used by both the full-close and partial-trim branches.   |
+//+------------------------------------------------------------------+
+void ArmEodSuppression() {
+   g_eodCutDoneAnchor = g_dailyAnchor;
+   GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
+}
+
+//+------------------------------------------------------------------+
 //| Sum profit + swap + commission of closed deals on this magic+sym |
 //+------------------------------------------------------------------+
 double ComputeRealizedSince(const datetime fromTime) {
@@ -342,6 +360,70 @@ void CloseAllAndCancel() {
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
    //--- Signal stays active so EA re-arms next tick (subject to ±step gating)
+}
+
+//+------------------------------------------------------------------+
+//| Trim biggest losers (most-negative first) while the projected    |
+//| daily realized P&L stays ≥ 0. Stops before a cut would push it   |
+//| into the red. Idempotent: safe to re-run each tick.              |
+//+------------------------------------------------------------------+
+void PartialEodTrimLosers() {
+   ulong  losers_t[];
+   double losers_p[];
+   ArrayResize(losers_t, 0);
+   ArrayResize(losers_p, 0);
+
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong t = PositionGetTicket(i);
+      if (!PositionSelectByTicket(t))                              continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      double pnl = PositionGetDouble(POSITION_PROFIT)
+                 + PositionGetDouble(POSITION_SWAP);
+      if (pnl >= 0) continue;
+      int n = ArraySize(losers_t);
+      ArrayResize(losers_t, n + 1);
+      ArrayResize(losers_p, n + 1);
+      losers_t[n] = t;
+      losers_p[n] = pnl;
+   }
+
+   int n = ArraySize(losers_t);
+   if (n == 0) return;
+
+   //--- Insertion sort by P&L ascending (most negative first)
+   for (int i = 1; i < n; i++) {
+      double key_p = losers_p[i];
+      ulong  key_t = losers_t[i];
+      int    j     = i - 1;
+      while (j >= 0 && losers_p[j] > key_p) {
+         losers_p[j + 1] = losers_p[j];
+         losers_t[j + 1] = losers_t[j];
+         j--;
+      }
+      losers_p[j + 1] = key_p;
+      losers_t[j + 1] = key_t;
+   }
+
+   double running = g_dailyRealized;
+   int    closed  = 0;
+   for (int i = 0; i < n; i++) {
+      double candidate = running + losers_p[i];
+      if (candidate < 0) break;
+      bool ok = g_trade.PositionClose(losers_t[i]);
+      if (ok) {
+         running = candidate;
+         closed++;
+         PrintFormat("[GVFX EOD trim] Close #%d pnl=%.2f → projected realized=%.2f",
+                     losers_t[i], losers_p[i], running);
+      } else {
+         PrintFormat("[GVFX EOD trim] FAIL close #%d: %s",
+                     losers_t[i], g_trade.ResultRetcodeDescription());
+      }
+   }
+   if (closed > 0)
+      PrintFormat("[GVFX EOD trim] cut %d/%d losers; projected daily realized=%.2f",
+                  closed, n, running);
 }
 
 //+------------------------------------------------------------------+
