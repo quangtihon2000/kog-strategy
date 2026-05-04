@@ -28,6 +28,8 @@ if __name__ == "__main__" and __package__ in (None, ""):
     sys.exit(0)
 
 
+from telegram import Update
+
 from .bot import build_app
 from .config import load_settings
 
@@ -58,7 +60,9 @@ def main() -> None:
         log.warning("TELEGRAM_ALLOWED_USER_IDS is empty — bot will reject all users")
 
     app = build_app(settings)
-    app.run_polling(allowed_updates=["message"])
+    # Must include callback_query or inline-keyboard taps are dropped by Telegram
+    # (default omits them, leaving the client spinner stuck on "Loading...").
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
