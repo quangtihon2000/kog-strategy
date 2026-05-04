@@ -58,14 +58,21 @@ def format_conde_signal(d: dict) -> str:
 def format_gvfx_signal(d: dict) -> str:
     direction = str(d.get("direction", "?")).upper()
     arrow = "▲" if direction == "BUY" else ("▼" if direction == "SELL" else "·")
-    return (
-        f"symbol     : {d.get('symbol', '?')}\n"
-        f"timestamp  : {_ts_to_str(d.get('timestamp'))}\n"
-        f"direction  : {arrow} {direction}\n"
-        f"target     : {d.get('target', '-')}\n"
-        f"step       : {d.get('step', '-')} pts\n"
-        f"tp         : {d.get('tp', '-')} pts"
-    )
+    low = d.get("low") or 0
+    high = d.get("high") or 0
+    lines = [
+        f"symbol     : {d.get('symbol', '?')}",
+        f"timestamp  : {_ts_to_str(d.get('timestamp'))}",
+        f"direction  : {arrow} {direction}",
+        f"target     : {d.get('target', '-')}",
+        f"step       : {d.get('step', '-')} pts",
+        f"tp         : {d.get('tp', '-')} pts",
+    ]
+    if float(low) > 0:
+        lines.append(f"low        : {low}")
+    if float(high) > 0:
+        lines.append(f"high       : {high}")
+    return "\n".join(lines)
 
 
 def format_generic(d: dict) -> str:

@@ -1,11 +1,14 @@
 """/gvfx — push a GVFX signal onto the Redis stream consumed by gvfx_signal_agent.
 
 Usage:
-    /gvfx <target> [direction] [step] [tp]
+    /gvfx <target> [direction] [step] [tp] [low] [high]
 
-Defaults: direction=BUY, step=500, tp=500. Symbol is fixed to XAUUSD
-(matching gvfx_signal's single-symbol contract). Timestamp is generated
-here (Unix epoch seconds) and acts as the EA's dedup identity.
+Defaults: direction=BUY, step=500, tp=500, low=0, high=0. Symbol is fixed
+to XAUUSD (matching gvfx_signal's single-symbol contract). Timestamp is
+generated here (Unix epoch seconds) and acts as the EA's dedup identity.
+
+low/high are optional price-zone gates (0 = disabled). When set, the EA
+only opens BUY when price > low, and only opens SELL when price < high.
 """
 
 from __future__ import annotations
@@ -29,8 +32,9 @@ DEFAULT_TP = 500
 GVFX_STREAM = "gvfx_signals"
 
 USAGE = (
-    "usage: <code>/gvfx &lt;target&gt; [direction] [step] [tp]</code>\n"
-    "defaults: direction=BUY, step=500, tp=500"
+    "usage: <code>/gvfx &lt;target&gt; [direction] [step] [tp] [low] [high]</code>\n"
+    "defaults: direction=BUY, step=500, tp=500, low=0, high=0\n"
+    "low/high (price): 0 disables. BUY enters only above low; SELL only below high."
 )
 
 
@@ -67,6 +71,19 @@ async def cmd_gvfx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await msg.reply_html("step and tp must be positive")
         return
 
+    try:
+        low = float(args[4]) if len(args) >= 5 else 0.0
+        high = float(args[5]) if len(args) >= 6 else 0.0
+    except ValueError:
+        await msg.reply_html(f"low/high must be numbers\n{USAGE}")
+        return
+    if low < 0 or high < 0:
+        await msg.reply_html("low and high must be >= 0 (use 0 to disable)")
+        return
+    if low > 0 and high > 0 and low >= high:
+        await msg.reply_html("low must be &lt; high when both are set")
+        return
+
     redis: Redis | None = context.application.bot_data.get("redis")
     if redis is None:
         await msg.reply_text("redis client not configured — cannot publish signal")
@@ -79,6 +96,8 @@ async def cmd_gvfx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "direction": direction,
         "step": str(step),
         "tp": str(tp),
+        "low": str(low),
+        "high": str(high),
     }
 
     try:
@@ -100,5 +119,7 @@ async def cmd_gvfx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"target: <code>{target}</code>\n"
         f"step: <code>{step}</code> pts\n"
         f"tp: <code>{tp}</code> pts\n"
+        f"low: <code>{low}</code>\n"
+        f"high: <code>{high}</code>\n"
         f"ts: <code>{payload['timestamp']}</code>"
     )

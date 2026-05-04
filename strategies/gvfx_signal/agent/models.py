@@ -11,6 +11,9 @@ class GvfxSignal:
 
     Producer-supplied timestamp is preserved end-to-end (NOT re-stamped) — the EA
     embeds it in each position comment as `GVFX_T{ts}` for restart-safe dedup.
+
+    Optional `low` / `high` price gates (0 = disabled): the EA only opens BUY when
+    price > low and SELL when price < high.
     """
 
     timestamp: int            # unix seconds — producer-supplied, authoritative
@@ -19,6 +22,8 @@ class GvfxSignal:
     direction: str            # "BUY" or "SELL"
     step: int                 # grid spacing (MT5 points)
     tp: int                   # take-profit distance per order (MT5 points)
+    low: float = 0.0          # BUY entry floor (price). 0 = disabled
+    high: float = 0.0         # SELL entry ceiling (price). 0 = disabled
 
     # ------------------------------------------------------------------
     def validate(self) -> None:
@@ -32,6 +37,12 @@ class GvfxSignal:
             raise ValueError(f"tp must be > 0, got {self.tp}")
         if self.timestamp <= 0:
             raise ValueError(f"timestamp must be > 0, got {self.timestamp}")
+        if self.low < 0:
+            raise ValueError(f"low must be >= 0, got {self.low}")
+        if self.high < 0:
+            raise ValueError(f"high must be >= 0, got {self.high}")
+        if self.low > 0 and self.high > 0 and self.low >= self.high:
+            raise ValueError(f"low ({self.low}) must be < high ({self.high})")
 
     # ------------------------------------------------------------------
     @classmethod
@@ -46,6 +57,8 @@ class GvfxSignal:
             direction : str          "BUY" or "SELL"
             step      : str (int)    e.g. "500"
             tp        : str (int)    e.g. "500"
+            low       : str (float)  optional, default "0"
+            high      : str (float)  optional, default "0"
         """
         return cls(
             timestamp=int(d["timestamp"]),
@@ -54,6 +67,8 @@ class GvfxSignal:
             direction=str(d["direction"]).upper(),
             step=int(d["step"]),
             tp=int(d["tp"]),
+            low=float(d.get("low", 0) or 0),
+            high=float(d.get("high", 0) or 0),
         )
 
     # ------------------------------------------------------------------
