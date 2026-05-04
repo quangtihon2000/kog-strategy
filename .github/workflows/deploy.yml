@@ -27,24 +27,6 @@ jobs:
       strategies_agent: ${{ steps.changes.outputs.strategies_agent }}
       shared_changed: ${{ steps.changes.outputs.shared_changed }}
     steps:
-      - name: Stop agent services to release workspace locks
-        shell: powershell
-        run: |
-          $nssm = Get-Command nssm -ErrorAction SilentlyContinue
-          if (-not $nssm) {
-            Write-Host "NSSM not installed - nothing to stop"
-            return
-          }
-          foreach ($svc in @('zone_signal_agent','conde_signal_agent')) {
-            $status = (& nssm status $svc 2>$null) | Out-String
-            if ($status -match "RUNNING|PAUSED|START_PENDING|STOP_PENDING") {
-              Write-Host "[$svc] stopping (status: $($status.Trim()))"
-              & nssm stop $svc 2>&1 | Write-Host
-            } else {
-              Write-Host "[$svc] not running - skip (status: $($status.Trim()))"
-            }
-          }
-
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
