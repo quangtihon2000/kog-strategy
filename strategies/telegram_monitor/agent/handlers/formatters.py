@@ -55,6 +55,19 @@ def format_conde_signal(d: dict) -> str:
     )
 
 
+def format_gvfx_signal(d: dict) -> str:
+    direction = str(d.get("direction", "?")).upper()
+    arrow = "▲" if direction == "BUY" else ("▼" if direction == "SELL" else "·")
+    return (
+        f"symbol     : {d.get('symbol', '?')}\n"
+        f"timestamp  : {_ts_to_str(d.get('timestamp'))}\n"
+        f"direction  : {arrow} {direction}\n"
+        f"target     : {d.get('target', '-')}\n"
+        f"step       : {d.get('step', '-')} pts\n"
+        f"tp         : {d.get('tp', '-')} pts"
+    )
+
+
 def format_generic(d: dict) -> str:
     return json.dumps(d, indent=2, ensure_ascii=False, sort_keys=True)
 
@@ -62,6 +75,7 @@ def format_generic(d: dict) -> str:
 _FORMATTERS: dict[str, Callable[[dict], str]] = {
     "zone_signal": format_zone_signal,
     "conde_auto_entry": format_conde_signal,
+    "gvfx_signal": format_gvfx_signal,
 }
 
 
