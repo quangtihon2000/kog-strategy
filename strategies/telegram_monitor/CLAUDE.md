@@ -29,16 +29,11 @@ Telegram <──polling──> bot.py (Application)
    (e.g. `kog_fleet_monitor_bot`).
 3. BotFather returns a token like `1234567890:AA...`. Save it — this is
    `TELEGRAM_BOT_TOKEN`.
-4. (Optional) `/setcommands` → paste:
-   ```
-   status - Service state
-   logs - Last N log lines
-   tail - Live tail (5s batched)
-   tailstop - Stop active tail
-   signals - Newest signal files + age
-   whoami - Your Telegram user id
-   help - Show commands
-   ```
+
+The command list (the `/` autocomplete + menu button) is registered
+automatically by `bot.py` on every startup via `set_my_commands`, so you do
+not need to `/setcommands` in BotFather — edit `_BOT_COMMANDS` in `bot.py`
+and redeploy.
 
 ### 2. Find your numeric user id
 
