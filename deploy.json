@@ -49,6 +49,20 @@
         }
       }
     },
+    "gvfx_signal": {
+      "ea_source": "strategies/gvfx_signal/ea/GvfxSignalEA.mq5",
+      "deploy_to": ["mt5_2"],
+      "agent": {
+        "enabled": true,
+        "agent_dir": "strategies/gvfx_signal/agent",
+        "service_name": "gvfx_signal_agent",
+        "data_subfolder": "GvfxSignalEA",
+        "env": {
+          "required": ["MT5_ACCOUNTS", "MT5_SYMBOLS"],
+          "optional": ["REDIS_URL", "REDIS_STREAM", "REDIS_GROUP", "REDIS_CONSUMER", "LOG_LEVEL"]
+        }
+      }
+    },
     "asia_range_breakout": {
       "ea_source": "strategies/asia_range_breakout/ea/AsiaRangeBreakoutEA.mq5",
       "deploy_to": [],
