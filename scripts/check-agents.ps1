@@ -80,12 +80,22 @@ foreach ($name in $agentNames) {
     # 2. Windows service detail
     $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
     if ($svc) {
-        $wmi = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
-        $procPid = if ($wmi) { $wmi.ProcessId } else { 0 }
-        $proc = if ($procPid -gt 0) { Get-Process -Id $procPid -ErrorAction SilentlyContinue } else { $null }
-        $uptime = if ($proc) { Format-Age $proc.StartTime } else { "n/a" }
-        $cpuSec = if ($proc) { "{0:N1}s" -f $proc.CPU } else { "n/a" }
-        $memMB  = if ($proc) { "{0:N1}MB" -f ($proc.WorkingSet64 / 1MB) } else { "n/a" }
+        $filter = 'Name=' + [char]39 + $serviceName + [char]39
+        $wmi = Get-CimInstance Win32_Service -Filter $filter -ErrorAction SilentlyContinue
+        $procPid = 0
+        if ($wmi) { $procPid = $wmi.ProcessId }
+        $proc = $null
+        if ($procPid -gt 0) {
+            $proc = Get-Process -Id $procPid -ErrorAction SilentlyContinue
+        }
+        $uptime = 'n/a'
+        $cpuSec = 'n/a'
+        $memMB  = 'n/a'
+        if ($proc) {
+            $uptime = Format-Age $proc.StartTime
+            $cpuSec = '{0:N1}s' -f $proc.CPU
+            $memMB  = '{0:N1}MB' -f ($proc.WorkingSet64 / 1MB)
+        }
         Write-Host "  Service: $($svc.Status)  PID=$procPid  uptime=$uptime  CPU=$cpuSec  RAM=$memMB"
     } else {
         Write-Host "  Service: not registered" -ForegroundColor Red
