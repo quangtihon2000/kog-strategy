@@ -31,3 +31,13 @@ vpses:
         mt5_logs:
           - account: "25314214"
             log_dir: C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075\MQL5\Logs
+
+      - name: gvfx_signal
+        nssm_service: gvfx_signal_agent
+        agent_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\gvfx_signal\agent
+        log_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\gvfx_signal\agent\logs
+        signal_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\gvfx_signal\data
+        signal_freshness_min: 60
+        mt5_logs:
+          - account: "25318677"
+            log_dir: C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\0696FF550C099AD93E51F997F5A09924\MQL5\Logs
