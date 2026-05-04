@@ -7,9 +7,51 @@ means adding a function here and registering it in `register_handlers`.
 
 from __future__ import annotations
 
-from telegram.ext import Application, CommandHandler
+import logging
 
+from telegram import Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+
+from ..config import Settings
+from ..transports import Transport
 from . import commands, logs, signals, status
+from .auth import auth_required
+
+log = logging.getLogger(__name__)
+
+
+@auth_required
+async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Dispatch inline-keyboard taps from `service_keyboard`.
+
+    callback_data shape: "{action}:{vps_name}:{service_name}".
+    """
+    query = update.callback_query
+    # Always ack so the Telegram client clears the loading spinner.
+    await query.answer()
+
+    parts = (query.data or "").split(":", 2)
+    if len(parts) != 3:
+        return
+    action, vps_name, svc_name = parts
+
+    settings: Settings = context.application.bot_data["settings"]
+    transports: dict[str, Transport] = context.application.bot_data["transports"]
+    found = settings.fleet.find_service(svc_name)
+    if not found or found[0].name != vps_name:
+        await query.message.reply_text(f"unknown service: {vps_name}/{svc_name}")
+        return
+    vps, svc = found
+    transport = transports[vps.name]
+
+    if action == "logs":
+        await logs.send_logs(query.message, transport, vps, svc, logs.DEFAULT_LOG_LINES)
+    elif action == "tail":
+        await logs.start_tail(query.message, context.application, transport, vps, svc)
+    elif action == "signals":
+        await signals.send_signals(query.message, transport, vps, svc)
+    else:
+        log.warning("unknown callback action: %s", action)
 
 
 def register_handlers(app: Application) -> None:
@@ -23,3 +65,4 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("tail", logs.cmd_tail))
     app.add_handler(CommandHandler("tailstop", logs.cmd_tailstop))
     app.add_handler(CommandHandler("signals", signals.cmd_signals))
+    app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|tail|signals):"))

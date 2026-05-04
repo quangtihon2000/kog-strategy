@@ -11,12 +11,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Message, Update
+from telegram.ext import Application, ContextTypes
 
 from ..config import Service, Settings, Vps
 from ..transports import LogFile, Transport
 from .auth import auth_required
+from .keyboards import service_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,56 @@ def _fence(text: str) -> str:
     return f"```\n{text[-TAIL_CHUNK_CHARS:]}\n```"
 
 
+# ---------- inner ops (callable from command + callback paths) ----------
+
+async def send_logs(message: Message, transport: Transport, vps: Vps, svc: Service, n: int) -> None:
+    active = await _pick_active_log(transport, svc.log_dir)
+    if not active:
+        await message.reply_text(f"no log files in {svc.log_dir}")
+        return
+    lines = await transport.read_log_tail(active.path, n)
+    if not lines:
+        await message.reply_text(f"`{active.name}` is empty")
+        return
+    body = "\n".join(lines)
+    await message.reply_markdown(
+        f"_{vps.name}/{svc.name}_ — `{active.name}` (last {len(lines)})\n{_fence(body)}"
+    )
+
+
+async def start_tail(message: Message, application: Application, transport: Transport, vps: Vps, svc: Service) -> None:
+    active = await _pick_active_log(transport, svc.log_dir)
+    if not active:
+        await message.reply_text(f"no log files in {svc.log_dir}")
+        return
+
+    chat_id = message.chat_id
+    sessions: dict[int, TailSession] = application.bot_data.setdefault("tails", {})
+    # Cancel previous tail in this chat — one tail per chat.
+    if chat_id in sessions:
+        prev = sessions.pop(chat_id)
+        for job in application.job_queue.get_jobs_by_name(prev.job_name):
+            job.schedule_removal()
+
+    job_name = f"tail:{chat_id}"
+    session = TailSession(
+        chat_id=chat_id,
+        vps_name=vps.name,
+        service_name=svc.name,
+        log_path=active.path,
+        byte_offset=active.size_bytes,   # only stream new bytes from now
+        job_name=job_name,
+    )
+    sessions[chat_id] = session
+    application.job_queue.run_repeating(
+        _tail_tick, interval=TAIL_INTERVAL_S, first=TAIL_INTERVAL_S,
+        name=job_name, chat_id=chat_id, data=session,
+    )
+    await message.reply_markdown(
+        f"streaming `{active.name}` ({vps.name}/{svc.name}) — /tailstop to end"
+    )
+
+
 # ---------- /logs ----------
 
 @auth_required
@@ -60,7 +111,10 @@ async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     transports: dict[str, Transport] = context.application.bot_data["transports"]
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text("usage: /logs <service> [lines]")
+        await update.effective_message.reply_text(
+            "Pick a service for /logs:",
+            reply_markup=service_keyboard(settings, "logs"),
+        )
         return
     found = _resolve(settings, args[0])
     if not found:
@@ -74,19 +128,7 @@ async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
     vps, svc = found
-    transport = transports[vps.name]
-    active = await _pick_active_log(transport, svc.log_dir)
-    if not active:
-        await update.effective_message.reply_text(f"no log files in {svc.log_dir}")
-        return
-    lines = await transport.read_log_tail(active.path, n)
-    if not lines:
-        await update.effective_message.reply_text(f"`{active.name}` is empty")
-        return
-    body = "\n".join(lines)
-    await update.effective_message.reply_markdown(
-        f"_{vps.name}/{svc.name}_ — `{active.name}` (last {len(lines)})\n{_fence(body)}"
-    )
+    await send_logs(update.effective_message, transports[vps.name], vps, svc, n)
 
 
 # ---------- /tail ----------
@@ -97,41 +139,19 @@ async def cmd_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     transports: dict[str, Transport] = context.application.bot_data["transports"]
     args = context.args or []
     if not args:
-        await update.effective_message.reply_text("usage: /tail <service>")
+        await update.effective_message.reply_text(
+            "Pick a service for /tail:",
+            reply_markup=service_keyboard(settings, "tail"),
+        )
         return
     found = _resolve(settings, args[0])
     if not found:
         await update.effective_message.reply_text(f"unknown service: {args[0]}")
         return
     vps, svc = found
-    transport = transports[vps.name]
-    active = await _pick_active_log(transport, svc.log_dir)
-    if not active:
-        await update.effective_message.reply_text(f"no log files in {svc.log_dir}")
-        return
-
-    chat_id = update.effective_chat.id
-    sessions: dict[int, TailSession] = context.application.bot_data.setdefault("tails", {})
-    # Cancel previous tail in this chat — one tail per chat.
-    if chat_id in sessions:
-        await _stop_session(context, sessions.pop(chat_id))
-
-    job_name = f"tail:{chat_id}"
-    session = TailSession(
-        chat_id=chat_id,
-        vps_name=vps.name,
-        service_name=svc.name,
-        log_path=active.path,
-        byte_offset=active.size_bytes,   # only stream new bytes from now
-        job_name=job_name,
-    )
-    sessions[chat_id] = session
-    context.application.job_queue.run_repeating(
-        _tail_tick, interval=TAIL_INTERVAL_S, first=TAIL_INTERVAL_S,
-        name=job_name, chat_id=chat_id, data=session,
-    )
-    await update.effective_message.reply_markdown(
-        f"📡 streaming `{active.name}` ({vps.name}/{svc.name}) — /tailstop to end"
+    await start_tail(
+        update.effective_message, context.application,
+        transports[vps.name], vps, svc,
     )
 
 
@@ -143,13 +163,9 @@ async def cmd_tailstop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not session:
         await update.effective_message.reply_text("no active tail in this chat")
         return
-    await _stop_session(context, session)
-    await update.effective_message.reply_text("tail stopped")
-
-
-async def _stop_session(context: ContextTypes.DEFAULT_TYPE, session: TailSession) -> None:
     for job in context.application.job_queue.get_jobs_by_name(session.job_name):
         job.schedule_removal()
+    await update.effective_message.reply_text("tail stopped")
 
 
 async def _tail_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
