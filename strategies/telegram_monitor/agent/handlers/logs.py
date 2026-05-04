@@ -8,6 +8,7 @@ Telegram's 30 msg/s limit even with chatty agents. `/tailstop` cancels.
 
 from __future__ import annotations
 
+import html
 import logging
 from dataclasses import dataclass
 
@@ -24,7 +25,7 @@ log = logging.getLogger(__name__)
 DEFAULT_LOG_LINES = 30
 MAX_LOG_LINES = 200
 TAIL_INTERVAL_S = 5.0
-# Telegram hard cap is 4096 chars; leave headroom for the ```code fence```.
+# Telegram hard cap is 4096 chars; leave headroom for the <pre>...</pre> tags.
 TAIL_CHUNK_CHARS = 3500
 
 
@@ -49,8 +50,11 @@ def _resolve(settings: Settings, name: str) -> tuple[Vps, Service] | None:
     return settings.fleet.find_service(name)
 
 
-def _fence(text: str) -> str:
-    return f"```\n{text[-TAIL_CHUNK_CHARS:]}\n```"
+def _pre(text: str) -> str:
+    """HTML <pre> block, tail-trimmed and escaped. Service/file names contain
+    `_` which breaks Telegram's legacy Markdown parser, so the whole bot uses
+    HTML parse mode."""
+    return f"<pre>{html.escape(text[-TAIL_CHUNK_CHARS:])}</pre>"
 
 
 # ---------- inner ops (callable from command + callback paths) ----------
@@ -65,9 +69,11 @@ async def send_logs(message: Message, transport: Transport, vps: Vps, svc: Servi
         await message.reply_text(f"`{active.name}` is empty")
         return
     body = "\n".join(lines)
-    await message.reply_markdown(
-        f"_{vps.name}/{svc.name}_ — `{active.name}` (last {len(lines)})\n{_fence(body)}"
+    header = (
+        f"<i>{html.escape(vps.name)}/{html.escape(svc.name)}</i> — "
+        f"<code>{html.escape(active.name)}</code> (last {len(lines)})"
     )
+    await message.reply_html(f"{header}\n{_pre(body)}")
 
 
 async def start_tail(message: Message, application: Application, transport: Transport, vps: Vps, svc: Service) -> None:
@@ -98,8 +104,9 @@ async def start_tail(message: Message, application: Application, transport: Tran
         _tail_tick, interval=TAIL_INTERVAL_S, first=TAIL_INTERVAL_S,
         name=job_name, chat_id=chat_id, data=session,
     )
-    await message.reply_markdown(
-        f"streaming `{active.name}` ({vps.name}/{svc.name}) — /tailstop to end"
+    await message.reply_html(
+        f"streaming <code>{html.escape(active.name)}</code> "
+        f"({html.escape(vps.name)}/{html.escape(svc.name)}) — /tailstop to end"
     )
 
 
@@ -179,8 +186,8 @@ async def _tail_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await context.bot.send_message(
             chat_id=session.chat_id,
-            text=_fence(new_data),
-            parse_mode="Markdown",
+            text=_pre(new_data),
+            parse_mode="HTML",
         )
     except Exception as e:
         log.warning("tail send failed (chat=%s): %s", session.chat_id, e)

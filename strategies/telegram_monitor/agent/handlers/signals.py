@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import time
 
 from telegram import Message, Update
@@ -31,12 +32,19 @@ async def send_signals(message: Message, transport: Transport, vps: Vps, svc: Se
         return
     now = time.time()
     threshold_s = svc.signal_freshness_min * 60
-    lines = [f"*{vps.name}/{svc.name}* — {svc.signal_dir}"]
+    # HTML parse mode: paths/names contain `_` which break legacy Markdown.
+    lines = [
+        f"<b>{html.escape(vps.name)}/{html.escape(svc.name)}</b> — "
+        f"<code>{html.escape(svc.signal_dir)}</code>"
+    ]
     for f in files[:10]:
         age = now - f.mtime_epoch
         glyph = "🟢" if age <= threshold_s else "🔴"
-        lines.append(f"{glyph} `{f.name}` — {_humanize(age)} ago, {f.size_bytes}B")
-    await message.reply_markdown("\n".join(lines))
+        lines.append(
+            f"{glyph} <code>{html.escape(f.name)}</code> — "
+            f"{_humanize(age)} ago, {f.size_bytes}B"
+        )
+    await message.reply_html("\n".join(lines))
 
 
 @auth_required
