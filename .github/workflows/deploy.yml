@@ -114,7 +114,7 @@ jobs:
             Write-Host "NSSM not installed - nothing to stop"
             return
           }
-          foreach ($svc in @('zone_signal_agent','conde_signal_agent')) {
+          foreach ($svc in @('zone_signal_agent','conde_signal_agent','telegram_monitor_bot')) {
             $status = (& nssm status $svc 2>$null) | Out-String
             if ($status -match "RUNNING|PAUSED|START_PENDING|STOP_PENDING") {
               Write-Host "[$svc] stopping (status: $($status.Trim()))"
@@ -153,6 +153,9 @@ jobs:
           CONDE_AUTO_ENTRY_REDIS_STREAM: ${{ vars.CONDE_AUTO_ENTRY_REDIS_STREAM }}
           CONDE_AUTO_ENTRY_REDIS_GROUP: ${{ vars.CONDE_AUTO_ENTRY_REDIS_GROUP }}
           CONDE_AUTO_ENTRY_REDIS_CONSUMER: ${{ vars.CONDE_AUTO_ENTRY_REDIS_CONSUMER }}
+          # telegram_monitor
+          TELEGRAM_MONITOR_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
+          TELEGRAM_MONITOR_TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
         run: |
           $ErrorActionPreference = "Stop"
           .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies_agent }}'

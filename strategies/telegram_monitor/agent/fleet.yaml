@@ -1,0 +1,27 @@
+# Fleet inventory — list of VPSes and services the bot monitors.
+#
+# Phase 0 supports `transport: local` only (bot runs on the same VPS).
+# Phase 1 will add `transport: ssh` with `host`, `user`, `key_path` keys
+# for fan-out across multiple VPSes. The handler/monitor code does NOT
+# change — only the transports layer is extended.
+#
+# Paths are absolute on the VPS. On the runner they are also resolvable
+# because the repo lives at the same drive layout.
+
+vpses:
+  - name: vps-main
+    transport: local
+    services:
+      - name: zone_signal
+        nssm_service: zone_signal_agent
+        agent_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\agent
+        log_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\agent\logs
+        signal_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\data
+        signal_freshness_min: 30
+
+      - name: conde_auto_entry
+        nssm_service: conde_signal_agent
+        agent_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\agent
+        log_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\agent\logs
+        signal_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\data
+        signal_freshness_min: 5

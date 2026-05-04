@@ -68,6 +68,20 @@
       "ea_source": "strategies/gold_scalper/ea/GoldScalperEA.mq5",
       "deploy_to": ["mt5_2"],
       "agent": null
+    },
+    "telegram_monitor": {
+      "ea_source": null,
+      "deploy_to": [],
+      "agent": {
+        "enabled": true,
+        "agent_dir": "strategies/telegram_monitor/agent",
+        "service_name": "telegram_monitor_bot",
+        "data_subfolder": null,
+        "env": {
+          "required": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS"],
+          "optional": ["REDIS_URL", "LOG_LEVEL", "FLEET_CONFIG"]
+        }
+      }
     }
   }
 }

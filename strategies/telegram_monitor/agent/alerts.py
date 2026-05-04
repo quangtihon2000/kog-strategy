@@ -1,0 +1,53 @@
+"""Alert dispatcher.
+
+Centralizes outbound alerts so monitors don't talk to Telegram directly.
+Two guards prevent floods:
+
+1. **Cooldown** — same `dedup_key` won't re-fire within `min_interval_s`.
+   Useful for "service still down" or repeated regex matches.
+2. **Edge-only** — for boolean state (e.g. RUNNING ↔ STOPPED) the monitor
+   should call `notify` only on transitions; the dispatcher itself stays
+   stateless about meaning.
+
+Sends to every chat id in `Settings.allowed_user_ids` (Phase 0 = personal
+operator chat). A future broadcast list can be added without touching
+monitor code.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+
+from telegram import Bot
+
+log = logging.getLogger(__name__)
+
+DEFAULT_COOLDOWN_S = 300  # 5 min — re-fire window for the same dedup key
+
+
+@dataclass
+class AlertDispatcher:
+    bot: Bot
+    chat_ids: frozenset[int]
+    cooldown_s: int = DEFAULT_COOLDOWN_S
+    _last_sent: dict[str, float] = field(default_factory=dict)
+
+    async def notify(self, dedup_key: str, text: str, *, force: bool = False) -> bool:
+        """Send `text` to every operator. Returns True if actually sent.
+
+        `dedup_key` collapses repeated alerts (e.g. "log_err:zone_signal:Traceback").
+        Pass `force=True` for daily summaries or operator-initiated pings.
+        """
+        now = time.time()
+        last = self._last_sent.get(dedup_key, 0.0)
+        if not force and (now - last) < self.cooldown_s:
+            return False
+        self._last_sent[dedup_key] = now
+        for chat_id in self.chat_ids:
+            try:
+                await self.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+            except Exception as e:
+                log.warning("alert send failed (chat=%s key=%s): %s", chat_id, dedup_key, e)
+        return True

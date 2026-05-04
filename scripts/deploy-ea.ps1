@@ -24,6 +24,11 @@ foreach ($name in $strategyList) {
         continue
     }
 
+    if ([string]::IsNullOrEmpty($strat.ea_source)) {
+        Write-Host "[$name] No ea_source — agent-only strategy, skipping EA deploy"
+        continue
+    }
+
     $sourceFile = Join-Path $RepoRoot $strat.ea_source
     if (-not (Test-Path $sourceFile)) {
         Write-Warning "[$name] Source not found: $sourceFile - skipping"
