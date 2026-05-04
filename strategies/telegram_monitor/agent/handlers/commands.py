@@ -21,6 +21,7 @@ HELP_TEXT = (
     "/tail `<svc>` — live tail, batched every 5s\n"
     "/tailstop — stop the active tail in this chat\n"
     "/signals `<svc>` — newest signal files + age\n"
+    "/gvfx `<target>` `[dir]` `[step]` `[tp]` — publish GVFX signal (defaults: BUY/500/500)\n"
     "/whoami — your Telegram user id\n"
     "/help — this message"
 )

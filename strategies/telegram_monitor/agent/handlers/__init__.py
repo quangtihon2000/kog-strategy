@@ -14,7 +14,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from ..config import Settings
 from ..transports import Transport
-from . import commands, logs, signals, status
+from . import commands, gvfx_signal, logs, signals, status
 from .auth import auth_required
 
 log = logging.getLogger(__name__)
@@ -73,4 +73,5 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("tail", logs.cmd_tail))
     app.add_handler(CommandHandler("tailstop", logs.cmd_tailstop))
     app.add_handler(CommandHandler("signals", signals.cmd_signals))
+    app.add_handler(CommandHandler("gvfx", gvfx_signal.cmd_gvfx))
     app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|tail|signals):"))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from redis.asyncio import Redis
 from telegram import BotCommand
 from telegram.ext import Application, ApplicationBuilder
 
@@ -28,6 +29,7 @@ _BOT_COMMANDS: list[BotCommand] = [
     BotCommand("tail", "Live tail (5s batched)"),
     BotCommand("tailstop", "Stop active tail"),
     BotCommand("signals", "Newest signal files + age"),
+    BotCommand("gvfx", "Publish GVFX signal: /gvfx <target> [dir] [step] [tp]"),
     BotCommand("whoami", "Your Telegram user id"),
     BotCommand("help", "Show commands"),
 ]
@@ -62,11 +64,13 @@ def build_app(settings: Settings) -> Application:
         bot=app.bot,
         chat_ids=settings.allowed_user_ids,
     )
+    redis = Redis.from_url(settings.redis_url, decode_responses=False)
 
     # Stash for handlers (auth decorator + commands pull from here).
     app.bot_data["settings"] = settings
     app.bot_data["transports"] = transports
     app.bot_data["alerts"] = alerts
+    app.bot_data["redis"] = redis
 
     register_handlers(app)
     register_monitors(app, settings, transports, alerts)
