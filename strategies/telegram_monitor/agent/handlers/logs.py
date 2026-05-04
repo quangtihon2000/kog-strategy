@@ -207,13 +207,17 @@ async def cmd_tail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_tailstop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     sessions: dict[int, TailSession] = context.application.bot_data.setdefault("tails", {})
-    session = sessions.pop(chat_id, None)
-    if not session:
+    sessions.pop(chat_id, None)
+
+    job_name = f"tail:{chat_id}"
+    jq = context.application.job_queue
+    jobs = list(jq.get_jobs_by_name(job_name)) if jq is not None else []
+    if not jobs:
         await update.effective_message.reply_text("no active tail in this chat")
         return
-    for job in context.application.job_queue.get_jobs_by_name(session.job_name):
+    for job in jobs:
         job.schedule_removal()
-    await update.effective_message.reply_text("tail stopped")
+    await update.effective_message.reply_text(f"tail stopped ({len(jobs)})")
 
 
 async def _tail_tick(context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 
 from redis.asyncio import Redis
-from telegram import BotCommand
-from telegram.ext import Application, ApplicationBuilder
+from telegram import BotCommand, Update
+from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 from .alerts import AlertDispatcher
 from .config import Settings
@@ -52,6 +52,18 @@ async def _post_init(app: Application) -> None:
         log.warning("set_my_commands failed: %s", e)
 
 
+async def _on_handler_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Without this, PTB swallows handler exceptions — the user sees no reply
+    and the operator only finds out via stderr. Log with a stack trace and tell
+    the caller something failed so the chat doesn't appear hung."""
+    log.error("handler error: %s", context.error, exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(f"error: {context.error}")
+        except Exception:
+            pass
+
+
 def build_app(settings: Settings) -> Application:
     app = (
         ApplicationBuilder()
@@ -74,4 +86,5 @@ def build_app(settings: Settings) -> Application:
 
     register_handlers(app)
     register_monitors(app, settings, transports, alerts)
+    app.add_error_handler(_on_handler_error)
     return app
