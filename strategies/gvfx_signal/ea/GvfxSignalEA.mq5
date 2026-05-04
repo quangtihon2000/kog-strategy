@@ -38,7 +38,6 @@ string   g_signalFile;
 datetime g_lastTickCheck = 0;
 ulong    g_lastSigTs     = 0;
 bool     g_signalActive  = false;
-double   g_lastEntryPrice= 0;
 int      g_openCount     = 0;
 double   g_floating      = 0;
 datetime g_dailyAnchor   = 0;
@@ -56,14 +55,6 @@ int OnInit() {
 
    g_lastSigTs = ScanMaxSeenTimestamp();
 
-   //--- Reconstruct g_lastEntryPrice from worst-adverse open position
-   double lastBuy = 0, lastSell = DBL_MAX;
-   int dummyOpen = 0; double dummyFloat = 0;
-   RefreshOpenStats(dummyOpen, dummyFloat, lastBuy, lastSell);
-   if (lastBuy > 0)              g_lastEntryPrice = lastBuy;
-   else if (lastSell < DBL_MAX)  g_lastEntryPrice = lastSell;
-   else                          g_lastEntryPrice = 0;
-
    //--- If signal file already executed and target not yet reached → keep active
    GvfxSig probe;
    if (LoadSignal(g_signalFile, probe) && probe.timestamp == g_lastSigTs && g_lastSigTs > 0) {
@@ -73,10 +64,10 @@ int OnInit() {
 
    RefreshDailyAnchor();
 
-   PrintFormat("[GVFX] Initialized. Signal=%s lastSigTs=%s active=%s lastEntry=%.5f dailyRealized=%.2f",
+   PrintFormat("[GVFX] Initialized. Signal=%s lastSigTs=%s active=%s dailyRealized=%.2f",
                g_signalFile, IntegerToString(g_lastSigTs),
                g_signalActive ? "true" : "false",
-               g_lastEntryPrice, g_dailyRealized);
+               g_dailyRealized);
    return INIT_SUCCEEDED;
 }
 
@@ -93,17 +84,10 @@ void OnTick() {
 
    RefreshDailyAnchor();
 
-   double lastBuy = 0, lastSell = DBL_MAX;
-   RefreshOpenStats(g_openCount, g_floating, lastBuy, lastSell);
+   RefreshOpenStats(g_openCount, g_floating);
 
-   //--- Daily cut: realized − floating > threshold → close all + cancel pendings
-   if (g_dailyRealized - g_floating > InpDailyCutUsd) {
-      PrintFormat("[GVFX] Daily cut: realized=%.2f floating=%.2f diff=%.2f > %.2f → close all",
-                  g_dailyRealized, g_floating,
-                  g_dailyRealized - g_floating, InpDailyCutUsd);
-      CloseAllAndCancel();
-      return;
-   }
+   //--- Daily cut logic: TBD (will be redefined). Helpers (RefreshDailyAnchor,
+   //    ComputeRealizedSince, CloseAllAndCancel) intentionally retained.
 
    //--- Load current signal
    GvfxSig sig;
@@ -111,10 +95,9 @@ void OnTick() {
 
    //--- New signal detection
    if (sig.timestamp != g_lastSigTs) {
-      g_currentSig     = sig;
-      g_lastSigTs      = sig.timestamp;
-      g_signalActive   = true;
-      g_lastEntryPrice = 0;
+      g_currentSig   = sig;
+      g_lastSigTs    = sig.timestamp;
+      g_signalActive = true;
       PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d",
                   IntegerToString(sig.timestamp), sig.direction,
                   sig.target, sig.step, sig.tp);
@@ -126,40 +109,20 @@ void OnTick() {
       Print("[GVFX] Target reached — signal deactivated; existing positions continue");
    }
 
-   //--- Entry attempt
+   //--- Entry attempt: re-enter freely as long as no existing position is within
+   //    ±step radius of the current price (price-based grid spacing, not last-entry).
    if (!g_signalActive) return;
    if (g_openCount >= InpMaxPositions) return;
    if (!IsSpreadOK("Entry")) return;
 
-   bool   isBuy = (g_currentSig.direction == "BUY");
-   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double stepP = g_currentSig.step * _Point;
+   bool   isBuy      = (g_currentSig.direction == "BUY");
+   double entryPrice = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
+                             : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double stepP      = g_currentSig.step * _Point;
 
-   bool shouldEnter = false;
-   double trigger = 0;
-   if (g_openCount == 0 || g_lastEntryPrice <= 0) {
-      //--- First entry of this signal: price guard against target
-      if (isBuy) {
-         shouldEnter = (ask <= g_currentSig.target - stepP);
-         trigger     = g_currentSig.target;
-      } else {
-         shouldEnter = (bid >= g_currentSig.target + stepP);
-         trigger     = g_currentSig.target;
-      }
-   } else {
-      //--- Subsequent entries: step from last entry, in adverse direction
-      if (isBuy) {
-         shouldEnter = (ask <= g_lastEntryPrice - stepP);
-         trigger     = g_lastEntryPrice;
-      } else {
-         shouldEnter = (bid >= g_lastEntryPrice + stepP);
-         trigger     = g_lastEntryPrice;
-      }
-   }
+   if (HasOpenWithinStep(entryPrice, stepP)) return;
 
-   if (shouldEnter)
-      OpenMarket(isBuy, trigger);
+   OpenMarket(isBuy, entryPrice);
 }
 
 //+------------------------------------------------------------------+
@@ -193,10 +156,7 @@ bool OpenMarket(const bool isBuy, const double triggerRef) {
                isBuy ? "BUY" : "SELL", g_openCount + 1, lot, entry, sl, tp, triggerRef,
                ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
 
-   if (ok) {
-      g_lastEntryPrice = entry;
-      g_openCount++;
-   }
+   if (ok) g_openCount++;
    return ok;
 }
 
@@ -262,12 +222,9 @@ double ComputeRealizedSince(const datetime fromTime) {
 //+------------------------------------------------------------------+
 //| Tally open positions on this magic+symbol; report worst-adverse  |
 //+------------------------------------------------------------------+
-void RefreshOpenStats(int &openCount, double &floating,
-                     double &lastBuy, double &lastSell) {
+void RefreshOpenStats(int &openCount, double &floating) {
    openCount = 0;
    floating  = 0;
-   lastBuy   = 0;
-   lastSell  = DBL_MAX;
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
       if (!PositionSelectByTicket(t))                              continue;
@@ -276,11 +233,23 @@ void RefreshOpenStats(int &openCount, double &floating,
       openCount++;
       floating += PositionGetDouble(POSITION_PROFIT)
                 + PositionGetDouble(POSITION_SWAP);
-      double e = PositionGetDouble(POSITION_PRICE_OPEN);
-      long   typ = PositionGetInteger(POSITION_TYPE);
-      if (typ == POSITION_TYPE_BUY  && e > lastBuy)  lastBuy  = e;
-      if (typ == POSITION_TYPE_SELL && e < lastSell) lastSell = e;
    }
+}
+
+//+------------------------------------------------------------------+
+//| True if any open position on this magic+symbol has open price    |
+//| within ±stepPrice of the candidate price.                        |
+//+------------------------------------------------------------------+
+bool HasOpenWithinStep(const double price, const double stepPrice) {
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong t = PositionGetTicket(i);
+      if (!PositionSelectByTicket(t))                              continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      double e = PositionGetDouble(POSITION_PRICE_OPEN);
+      if (MathAbs(price - e) < stepPrice) return true;
+   }
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -305,8 +274,7 @@ void CloseAllAndCancel() {
       PrintFormat("[GVFX cut] Cancel pending #%d  %s", t,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
-   //--- Reset grid anchor; signal stays active so EA re-arms next tick
-   g_lastEntryPrice = 0;
+   //--- Signal stays active so EA re-arms next tick (subject to ±step gating)
 }
 
 //+------------------------------------------------------------------+

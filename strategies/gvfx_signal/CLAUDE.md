@@ -2,25 +2,26 @@
 
 ## Overview
 
-Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA mở lệnh market đầu tiên rồi DCA về phía bất lợi mỗi khi giá chạy thêm `step` points ngược chiều mong đợi. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). Có daily P&L cut: nếu `realized_today − floating > InpDailyCutUsd` thì đóng all + cancel pendings, không reset realized counter, EA tiếp tục đặt grid cho signal hiện tại (re-arm immediately).
+Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên tục mở lệnh market miễn là (1) chưa chạm target và (2) trong phạm vi ±`step` points quanh giá hiện tại chưa có vị thế nào của EA. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). Daily P&L cut hiện đang **disabled** — sẽ define lại sau (helpers `RefreshDailyAnchor` / `ComputeRealizedSince` / `CloseAllAndCancel` vẫn giữ trong code làm scaffolding).
 
 ## Components
 
-- **EA**: `ea/GvfxSignalEA.mq5` — Market grid DCA với daily P&L cut và spread guard
+- **EA**: `ea/GvfxSignalEA.mq5` — Market grid DCA với spread guard (daily cut tạm disabled)
 - **Agent**: `agent/` — Consume Redis Stream `gvfx_signals`, ghi `{account}_{symbol}.json`
 - **Data**: `data/` — Runtime symlink → `MQL5/Files/GvfxSignalEA/`
 
 ## EA Logic
 
 ### Entry rules
-- **Lệnh đầu** (`open_count == 0`): vào market khi `|target − market| ≥ step` đúng hướng (price guard).
-  - BUY: `ask ≤ target − step*_Point`
-  - SELL: `bid ≥ target + step*_Point`
-- **Lệnh tiếp** (`open_count ≥ 1`): vào market khi giá chạy thêm `step` ngược hướng so với last entry.
-  - BUY: `ask ≤ last_entry − step*_Point`
-  - SELL: `bid ≥ last_entry + step*_Point`
-- **Cap**: 20 OPEN positions max (`InpMaxPositions`). Khi 1 position TP/SL → slot trống, nhưng grid level chỉ extend xuống thêm khi giá chạy thêm `step` so với last entry — không re-place tại level cũ.
-- **Spread guard**: chỉ vào lệnh khi `current_spread_pts ≤ InpMaxSpreadPts` (default 30 pts). Áp dụng cho cả lệnh đầu lẫn các lệnh kế tiếp — nếu spread vượt ngưỡng thì skip tick đó, đợi tick sau.
+- **Gating**: vào market mỗi tick khi tất cả các điều kiện sau thỏa:
+  1. `g_signalActive` (chưa chạm target).
+  2. `open_count < InpMaxPositions` (cap 20).
+  3. `current_spread_pts ≤ InpMaxSpreadPts`.
+  4. `HasOpenWithinStep(entry_price, step*_Point) == false` — không có vị thế EA nào đang mở với `|open_price − entry_price| < step*_Point`.
+- **Entry price**: BUY → `SymbolInfoDouble(_Symbol, SYMBOL_ASK)`; SELL → `SymbolInfoDouble(_Symbol, SYMBOL_BID)`.
+- **No price guard against target**: lệnh được phép mở ngay sát target — chỉ cần signal vẫn active.
+- **Re-entry sau TP/SL**: khi 1 position TP/SL → slot trống. Nếu giá hiện tại không nằm trong ±`step` của bất kỳ vị thế nào còn lại → re-entry ngay tick kế tiếp (kể cả tại level cũ).
+- **Spread guard**: chỉ vào lệnh khi `current_spread_pts ≤ InpMaxSpreadPts` (default 30 pts) — nếu vượt thì skip tick đó.
 
 ### Per-order risk
 - Lot = `InpLotPerOrder` (default 0.01), normalize theo `SYMBOL_VOLUME_STEP`.
@@ -28,24 +29,18 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA mở 
 - Hard SL = entry ∓ `InpMaxLossPtsPerOrder * _Point` (default 10000 pts, clamped).
 
 ### Signal lifecycle
-- New `timestamp` → reset grid anchor (`g_lastEntryPrice = 0`), `g_signalActive = true`.
+- New `timestamp` → `g_signalActive = true`, cache `g_currentSig`.
 - Target reached → `g_signalActive = false`. Positions đang mở vẫn chạy theo TP/SL, không vào thêm.
   - BUY: `bid ≥ target` → inactive
   - SELL: `ask ≤ target` → inactive
 
-### Daily cut
-- Daily anchor = midnight server time (`TimeTradeServer()`).
-- Mỗi tick recompute `g_dailyRealized` từ `HistorySelect(g_dailyAnchor, now)` filter magic + symbol (self-healing sau crash).
-- Nếu `g_dailyRealized − floating > InpDailyCutUsd` → `CloseAllAndCancel()`:
-  - Đóng all positions + cancel pendings của magic + symbol
-  - **KHÔNG reset** `g_dailyRealized` → daily counter có thể trigger lại trong cùng ngày
-  - **KHÔNG disable** signal → EA re-arm grid ngay khi điều kiện entry tiếp theo thỏa
-  - Reset `g_lastEntryPrice = 0`
+### Daily cut — **DISABLED**
+Logic cắt all hiện đang bỏ trong `OnTick`. `RefreshDailyAnchor` + `ComputeRealizedSince` vẫn chạy mỗi tick (g_dailyRealized luôn fresh), `CloseAllAndCancel` còn nguyên — chỉ thiếu trigger condition. Sẽ define lại theo rule mới khi cần.
 
 ### Dedup (restart-safe)
 - Position comment: `GVFX_T{timestamp}` (e.g., `GVFX_T1777896356`).
 - `ScanMaxSeenTimestamp()` scan POSITIONS + ORDERS + DEAL HISTORY (lookback `InpHistoryLookbackDays` ngày), parse `GVFX_T{ts}` từ comment, lấy max → `g_lastSigTs` recovered on restart.
-- Reconstruct `g_lastEntryPrice` từ vị thế bất lợi nhất (max BUY entry hoặc min SELL entry) cùng magic + symbol.
+- Không cần reconstruct grid anchor: `HasOpenWithinStep` đọc trực tiếp từ vị thế đang mở mỗi tick → state-less, restart-safe by construction.
 
 ## Agent Signal Format
 
@@ -82,7 +77,6 @@ LOG_LEVEL=INFO
 
 - Tất cả unit `step` / `tp` / `InpMaxLossPtsPerOrder` theo **MT5 points**, không phải pip / price.
 - `ClampStop()` enforce broker's minimum stop distance (`SYMBOL_TRADE_STOPS_LEVEL`).
-- Daily anchor = server time midnight (không dùng broker timezone hay local time).
-- Daily cut **không reset** realized counter — có thể trigger nhiều lần trong cùng ngày.
+- Daily anchor = server time midnight (không dùng broker timezone hay local time) — vẫn được track dù cut logic đang disabled.
 - Mỗi lệnh đặt cố định lot size từ `InpLotPerOrder`; không có lot scaling theo level grid.
-- Slot trống do TP/SL **không** trigger re-entry tại level cũ — grid chỉ extend khi giá chạy thêm `step` so với last entry hiện tại.
+- Re-entry rule là **state-less**: chỉ phụ thuộc vào set vị thế đang mở của magic+symbol — không cache "last entry price". Slot trống do TP/SL **được phép re-entry tại level cũ** ngay tick kế tiếp nếu ±step radius hiện tại rỗng.
