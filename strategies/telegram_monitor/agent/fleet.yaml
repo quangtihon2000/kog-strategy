@@ -14,14 +14,14 @@ vpses:
     services:
       - name: zone_signal
         nssm_service: zone_signal_agent
-        agent_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\agent
-        log_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\agent\logs
-        signal_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\zone_signal\data
+        agent_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\zone_signal\agent
+        log_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\zone_signal\agent\logs
+        signal_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\zone_signal\data
         signal_freshness_min: 30
 
       - name: conde_auto_entry
         nssm_service: conde_signal_agent
-        agent_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\agent
-        log_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\agent\logs
-        signal_dir: C:\actions-runner\_work\kog_strategy\kog_strategy\strategies\conde_auto_entry\data
+        agent_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\conde_auto_entry\agent
+        log_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\conde_auto_entry\agent\logs
+        signal_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\conde_auto_entry\data
         signal_freshness_min: 5

@@ -168,6 +168,44 @@ jobs:
           $ErrorActionPreference = "Stop"
           .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies_agent }}'
 
+      - name: Start agent services
+        if: needs.detect-changes.outputs.strategies_agent != '[]' && needs.detect-changes.outputs.strategies_agent != ''
+        shell: powershell
+        run: |
+          # Counterpart to the "Stop agent services" step at job start. Without
+          # this, every deploy leaves agents SERVICE_STOPPED until someone RDPs
+          # in to start them — silent signal loss.
+          $nssm = Get-Command nssm -ErrorAction SilentlyContinue
+          if (-not $nssm) {
+            Write-Host "NSSM not installed - nothing to start"
+            return
+          }
+          $failed = @()
+          foreach ($svc in @('zone_signal_agent','conde_signal_agent','telegram_monitor_bot')) {
+            if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
+              Write-Host "[$svc] service not installed - skip"
+              continue
+            }
+            $status = (& nssm status $svc 2>&1) | Out-String
+            if ($status -match "RUNNING|START_PENDING") {
+              Write-Host "[$svc] already running - skip"
+              continue
+            }
+            Write-Host "[$svc] starting (was: $($status.Trim()))"
+            & nssm start $svc 2>&1 | Write-Host
+            Start-Sleep -Seconds 2
+            $post = (& nssm status $svc 2>&1) | Out-String
+            if ($post -notmatch "RUNNING|START_PENDING") {
+              Write-Host "[$svc] FAILED to start (status: $($post.Trim()))"
+              $failed += $svc
+            } else {
+              Write-Host "[$svc] up (status: $($post.Trim()))"
+            }
+          }
+          if ($failed.Count -gt 0) {
+            throw "Services failed to start: $($failed -join ', ')"
+          }
+
       - name: Summary
         shell: powershell
         run: |
