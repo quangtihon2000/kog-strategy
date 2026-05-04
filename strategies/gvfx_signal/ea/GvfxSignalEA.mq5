@@ -95,22 +95,25 @@ void OnTick() {
 
    RefreshOpenStats(g_openCount, g_floating);
 
-   //--- EOD cut window:
-   //      total > 0 → close everything, suppress re-entry until next day.
-   //      total < 0 → trim losers (most-negative first) while daily realized stays ≥ 0;
-   //                  stop before a cut would push realized into the red.
+   //--- EOD cut window (only fires within InpEodCutLeadMins of session close):
+   //      total > 0 → close everything; suppress re-entry until next day.
+   //      total < 0 → trim losers (most-negative first) while projected daily
+   //                  realized stays ≥ 0; suppress re-entry until next day.
    if (g_eodCutDoneAnchor != g_dailyAnchor && IsEodWindow() && g_openCount > 0) {
       double total = g_dailyRealized + g_floating;
       if (total > 0) {
          PrintFormat("[GVFX EOD CUT] realized=%.2f floating=%.2f total=%.2f → close all, pause until next day",
                      g_dailyRealized, g_floating, total);
          CloseAllAndCancel();
-         g_eodCutDoneAnchor = g_dailyAnchor;
-         GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
+         ArmEodSuppression();
          return;
       }
       if (total < 0) {
+         PrintFormat("[GVFX EOD trim] realized=%.2f floating=%.2f total=%.2f → trim losers, pause until next day",
+                     g_dailyRealized, g_floating, total);
          PartialEodTrimLosers();
+         ArmEodSuppression();
+         return;
       }
    }
 
@@ -270,6 +273,16 @@ bool IsEodWindow() {
 //+------------------------------------------------------------------+
 string EodAnchorVarName() {
    return "GVFX_EodCut_" + IntegerToString((long)InpMagic) + "_" + _Symbol;
+}
+
+//+------------------------------------------------------------------+
+//| Mark today as EOD-cut-done so entries are suppressed until the   |
+//| next server-time day. Persisted via GlobalVariable for restart   |
+//| safety. Used by both the full-close and partial-trim branches.   |
+//+------------------------------------------------------------------+
+void ArmEodSuppression() {
+   g_eodCutDoneAnchor = g_dailyAnchor;
+   GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
 }
 
 //+------------------------------------------------------------------+
