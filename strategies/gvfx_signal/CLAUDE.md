@@ -2,11 +2,11 @@
 
 ## Overview
 
-Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên tục mở lệnh market miễn là (1) chưa chạm target và (2) trong phạm vi ±`step` points quanh giá hiện tại chưa có vị thế nào của EA. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). Daily P&L cut hiện đang **disabled** — sẽ define lại sau (helpers `RefreshDailyAnchor` / `ComputeRealizedSince` / `CloseAllAndCancel` vẫn giữ trong code làm scaffolding).
+Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên tục mở lệnh market miễn là (1) chưa chạm target và (2) trong phạm vi ±`step` points quanh giá hiện tại chưa có vị thế nào của EA. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). EOD cut: gần cuối ngày (server time), nếu `dailyRealized + floating > 0` → đóng hết lệnh và pause re-entry đến qua ngày.
 
 ## Components
 
-- **EA**: `ea/GvfxSignalEA.mq5` — Market grid DCA với spread guard (daily cut tạm disabled)
+- **EA**: `ea/GvfxSignalEA.mq5` — Market grid DCA với spread guard + EOD cut
 - **Agent**: `agent/` — Consume Redis Stream `gvfx_signals`, ghi `{account}_{symbol}.json`
 - **Data**: `data/` — Runtime symlink → `MQL5/Files/GvfxSignalEA/`
 
@@ -34,8 +34,13 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   - BUY: `bid ≥ target` → inactive
   - SELL: `ask ≤ target` → inactive
 
-### Daily cut — **DISABLED**
-Logic cắt all hiện đang bỏ trong `OnTick`. `RefreshDailyAnchor` + `ComputeRealizedSince` vẫn chạy mỗi tick (g_dailyRealized luôn fresh), `CloseAllAndCancel` còn nguyên — chỉ thiếu trigger condition. Sẽ define lại theo rule mới khi cần.
+### EOD cut
+- **Trigger window**: server-time `>= InpEodCutHourSrv:InpEodCutMinSrv` (default 23:55) đến hết ngày. Set `InpEodCutHourSrv = -1` để disable.
+- **Trigger condition**: `g_dailyRealized + g_floating > 0` AND còn vị thế đang mở.
+- **Action**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings của magic+symbol.
+- **Suppression**: sau khi cut, set `g_eodCutDoneAnchor = g_dailyAnchor`, gate trong OnTick chặn entry mới đến khi anchor đổi (qua nửa đêm server time).
+- **Restart-safe**: `g_eodCutDoneAnchor` persist qua `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}`. Khi day rollover, anchor bị xóa khỏi GlobalVariable.
+- Nếu total ≤ 0 trong window → KHÔNG cắt, EA tiếp tục chạy bình thường qua đêm.
 
 ### Dedup (restart-safe)
 - Position comment: `GVFX_T{timestamp}` (e.g., `GVFX_T1777896356`).

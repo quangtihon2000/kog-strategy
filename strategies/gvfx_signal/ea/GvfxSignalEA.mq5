@@ -15,7 +15,8 @@ input bool   InpUseCommonDir        = false;         // Use MT5 common Files fol
 input double InpLotPerOrder         = 0.01;          // Lot per grid level
 input int    InpMaxPositions        = 20;            // Max OPEN positions on this magic+symbol
 input int    InpMaxLossPtsPerOrder  = 10000;         // Hard SL distance per order (points)
-input double InpDailyCutUsd         = 100.0;         // (realized - floating) > X → close all
+input int    InpEodCutHourSrv       = 23;            // EOD cut server hour (-1 disables)
+input int    InpEodCutMinSrv        = 55;            // EOD cut server minute
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
 
@@ -42,6 +43,7 @@ int      g_openCount     = 0;
 double   g_floating      = 0;
 datetime g_dailyAnchor   = 0;
 double   g_dailyRealized = 0;
+datetime g_eodCutDoneAnchor = 0;  // == g_dailyAnchor while today's EOD cut is in effect
 GvfxSig  g_currentSig;
 
 //+------------------------------------------------------------------+
@@ -64,10 +66,18 @@ int OnInit() {
 
    RefreshDailyAnchor();
 
-   PrintFormat("[GVFX] Initialized. Signal=%s lastSigTs=%s active=%s dailyRealized=%.2f",
+   string varName = EodAnchorVarName();
+   if (GlobalVariableCheck(varName)) {
+      datetime saved = (datetime)GlobalVariableGet(varName);
+      if (saved >= g_dailyAnchor) g_eodCutDoneAnchor = saved;
+      else                        GlobalVariableDel(varName);
+   }
+
+   PrintFormat("[GVFX] Initialized. Signal=%s lastSigTs=%s active=%s dailyRealized=%.2f eodCutDone=%s",
                g_signalFile, IntegerToString(g_lastSigTs),
                g_signalActive ? "true" : "false",
-               g_dailyRealized);
+               g_dailyRealized,
+               (g_eodCutDoneAnchor == g_dailyAnchor && g_eodCutDoneAnchor > 0) ? "true" : "false");
    return INIT_SUCCEEDED;
 }
 
@@ -86,8 +96,19 @@ void OnTick() {
 
    RefreshOpenStats(g_openCount, g_floating);
 
-   //--- Daily cut logic: TBD (will be redefined). Helpers (RefreshDailyAnchor,
-   //    ComputeRealizedSince, CloseAllAndCancel) intentionally retained.
+   //--- EOD cut: during the EOD window, if today's realized + current floating > 0,
+   //    close everything and suppress re-entry until the next server-time day.
+   if (g_eodCutDoneAnchor != g_dailyAnchor && IsEodWindow() && g_openCount > 0) {
+      double total = g_dailyRealized + g_floating;
+      if (total > 0) {
+         PrintFormat("[GVFX EOD CUT] realized=%.2f floating=%.2f total=%.2f → close all, pause until next day",
+                     g_dailyRealized, g_floating, total);
+         CloseAllAndCancel();
+         g_eodCutDoneAnchor = g_dailyAnchor;
+         GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
+         return;
+      }
+   }
 
    //--- Load current signal
    GvfxSig sig;
@@ -112,6 +133,7 @@ void OnTick() {
    //--- Entry attempt: re-enter freely as long as no existing position is within
    //    ±step radius of the current price (price-based grid spacing, not last-entry).
    if (!g_signalActive) return;
+   if (g_eodCutDoneAnchor == g_dailyAnchor && g_eodCutDoneAnchor > 0) return;
    if (g_openCount >= InpMaxPositions) return;
    if (!IsSpreadOK("Entry")) return;
 
@@ -196,8 +218,31 @@ void RefreshDailyAnchor() {
    datetime midnight = StructToTime(mdt);
    if (midnight != g_dailyAnchor) {
       g_dailyAnchor = midnight;
+      if (g_eodCutDoneAnchor != 0 && g_eodCutDoneAnchor < g_dailyAnchor) {
+         g_eodCutDoneAnchor = 0;
+         GlobalVariableDel(EodAnchorVarName());
+         Print("[GVFX] New day — EOD cut suppression cleared");
+      }
    }
    g_dailyRealized = ComputeRealizedSince(g_dailyAnchor);
+}
+
+//+------------------------------------------------------------------+
+//| Server time-of-day reached the EOD cut threshold                 |
+//+------------------------------------------------------------------+
+bool IsEodWindow() {
+   if (InpEodCutHourSrv < 0) return false;
+   MqlDateTime mdt; TimeToStruct(TimeTradeServer(), mdt);
+   int now_min = mdt.hour * 60 + mdt.min;
+   int cut_min = InpEodCutHourSrv * 60 + InpEodCutMinSrv;
+   return now_min >= cut_min;
+}
+
+//+------------------------------------------------------------------+
+//| Per-instance global var name for EOD-cut anchor persistence      |
+//+------------------------------------------------------------------+
+string EodAnchorVarName() {
+   return "GVFX_EodCut_" + IntegerToString((long)InpMagic) + "_" + _Symbol;
 }
 
 //+------------------------------------------------------------------+
