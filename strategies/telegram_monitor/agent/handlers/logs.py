@@ -22,7 +22,7 @@ from .keyboards import account_keyboard, service_keyboard
 
 log = logging.getLogger(__name__)
 
-DEFAULT_LOG_LINES = 30
+DEFAULT_LOG_LINES = 10
 MAX_LOG_LINES = 200
 TAIL_INTERVAL_S = 5.0
 # Telegram hard cap is 4096 chars; leave headroom for the <pre>...</pre> tags.
