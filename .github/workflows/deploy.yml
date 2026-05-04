@@ -114,7 +114,7 @@ jobs:
             Write-Host "NSSM not installed - nothing to stop"
             return
           }
-          foreach ($svc in @('zone_signal_agent','conde_signal_agent','telegram_monitor_bot')) {
+          foreach ($svc in @('zone_signal_agent','conde_signal_agent','gvfx_signal_agent','telegram_monitor_bot')) {
             # Skip services that haven't been installed yet (first deploy of a new
             # agent — NSSM install is a one-time manual step on the VPS). Without
             # this guard, `nssm status` writes to stderr and PowerShell raises
@@ -161,6 +161,12 @@ jobs:
           CONDE_AUTO_ENTRY_REDIS_STREAM: ${{ vars.CONDE_AUTO_ENTRY_REDIS_STREAM }}
           CONDE_AUTO_ENTRY_REDIS_GROUP: ${{ vars.CONDE_AUTO_ENTRY_REDIS_GROUP }}
           CONDE_AUTO_ENTRY_REDIS_CONSUMER: ${{ vars.CONDE_AUTO_ENTRY_REDIS_CONSUMER }}
+          # gvfx_signal
+          GVFX_SIGNAL_MT5_ACCOUNTS: ${{ secrets.GVFX_SIGNAL_MT5_ACCOUNTS }}
+          GVFX_SIGNAL_MT5_SYMBOLS: ${{ vars.GVFX_SIGNAL_MT5_SYMBOLS }}
+          GVFX_SIGNAL_REDIS_STREAM: ${{ vars.GVFX_SIGNAL_REDIS_STREAM }}
+          GVFX_SIGNAL_REDIS_GROUP: ${{ vars.GVFX_SIGNAL_REDIS_GROUP }}
+          GVFX_SIGNAL_REDIS_CONSUMER: ${{ vars.GVFX_SIGNAL_REDIS_CONSUMER }}
           # telegram_monitor
           TELEGRAM_MONITOR_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
           TELEGRAM_MONITOR_TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
@@ -181,7 +187,7 @@ jobs:
             return
           }
           $failed = @()
-          foreach ($svc in @('zone_signal_agent','conde_signal_agent','telegram_monitor_bot')) {
+          foreach ($svc in @('zone_signal_agent','conde_signal_agent','gvfx_signal_agent','telegram_monitor_bot')) {
             if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
               Write-Host "[$svc] service not installed - skip"
               continue
