@@ -29,6 +29,8 @@ input double InpTrailStepPts        = 100;          // Minimum SL improvement be
 input double InpPendingExpiryHours  = 4;           // Pending order expiry (hours, 0 = GTC)
 input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to place pending; beyond → skip signal
 
+input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -116,6 +118,20 @@ void OnTick() {
 }
 
 //+------------------------------------------------------------------+
+//| Spread gate — refuse entries when broker spread blows out.       |
+//| Returns true if check disabled (InpMaxSpreadPts <= 0).           |
+//+------------------------------------------------------------------+
+bool IsSpreadOK(const string tag) {
+   if (InpMaxSpreadPts <= 0) return true;
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if (spread > InpMaxSpreadPts) {
+      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
 //| Open one position per TP, respecting position and lot caps.      |
 //| Returns true iff every TP either succeeded or was already        |
 //| accounted for (open position / historical deal) or was terminally|
@@ -123,6 +139,7 @@ void OnTick() {
 //| caller retries on the next tick without re-opening prior TPs.    |
 //+------------------------------------------------------------------+
 bool OpenTrades(const CondeSignal &sig, const bool usePending, const double market) {
+   if (!IsSpreadOK("Trades")) return false;
    ENUM_POSITION_TYPE dir = (sig.direction == "BUY") ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
    int    nTps  = ArraySize(sig.tps);
    string tsStr = IntegerToString(sig.timestamp);

@@ -28,6 +28,7 @@ input bool     InpEnableTrailing = true;         // Enable trailing stop (non-sc
 input double   InpTrailStartPts  = 200;          // Profit to activate trailing (points)
 input double   InpTrailDistPts   = 150;          // Trail SL this far behind current price (points)
 input double   InpTrailStepPts   = 20;           // Minimum SL improvement before modify (points)
+input long     InpMaxSpreadPts   = 30;           // Max spread (points) to allow entries; 0 disables check
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -522,9 +523,24 @@ void ProcessNewBar() {
 }
 
 //+------------------------------------------------------------------+
+//| Spread gate — refuse entries when broker spread blows out.       |
+//| Returns true if check disabled (InpMaxSpreadPts <= 0).           |
+//+------------------------------------------------------------------+
+bool IsSpreadOK(const string tag) {
+   if (InpMaxSpreadPts <= 0) return true;
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if (spread > InpMaxSpreadPts) {
+      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
+      return false;
+   }
+   return true;
+}
+
+//+------------------------------------------------------------------+
 //| Open 1 scalp position — can re-enter after TP hit                |
 //+------------------------------------------------------------------+
 void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
+   if (!IsSpreadOK("Scalp")) return;
    double buffer   = InpSlBufferPts * _Point;
    double lotSize  = MathMin(InpLotPerTarget, InpMaxLots);
    double midZone  = NormalizeDouble((g_sig.redbox_upper + g_sig.redbox_lower) / 2.0, _Digits);
@@ -644,6 +660,7 @@ bool ScalpSpacingOk(const ENUM_POSITION_TYPE dir, const double entry, const doub
 //| Open 1 extra position at mid-zone with last target's TP/SL       |
 //+------------------------------------------------------------------+
 void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
+   if (!IsSpreadOK("MidZone")) return;
    double buffer  = InpSlBufferPts * _Point;
    double lotSize = MathMin(InpLotPerTarget, InpMaxLots);
 
@@ -695,6 +712,7 @@ void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
 //| Open one position per target                                     |
 //+------------------------------------------------------------------+
 void OpenTrades(const ENUM_POSITION_TYPE dir) {
+   if (!IsSpreadOK("Trades")) return;
    double buffer  = InpSlBufferPts * _Point;
    double lotSize = MathMin(InpLotPerTarget, InpMaxLots); // respect max lots cap
 
