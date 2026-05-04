@@ -115,7 +115,15 @@ jobs:
             return
           }
           foreach ($svc in @('zone_signal_agent','conde_signal_agent','telegram_monitor_bot')) {
-            $status = (& nssm status $svc 2>$null) | Out-String
+            # Skip services that haven't been installed yet (first deploy of a new
+            # agent — NSSM install is a one-time manual step on the VPS). Without
+            # this guard, `nssm status` writes to stderr and PowerShell raises
+            # NativeCommandError, failing the whole step.
+            if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
+              Write-Host "[$svc] service not installed - skip"
+              continue
+            }
+            $status = (& nssm status $svc 2>&1) | Out-String
             if ($status -match "RUNNING|PAUSED|START_PENDING|STOP_PENDING") {
               Write-Host "[$svc] stopping (status: $($status.Trim()))"
               & nssm stop $svc 2>&1 | Write-Host
