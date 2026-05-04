@@ -42,12 +42,18 @@ if ($agentNames.Count -eq 0) {
 $nssm = Get-Command nssm -ErrorAction SilentlyContinue
 
 function Format-Age($lastWrite) {
-    if (-not $lastWrite) { return "n/a" }
+    if (-not $lastWrite) { return 'n/a' }
     $age = (Get-Date) - $lastWrite
-    if ($age.TotalSeconds -lt 60)   { return "{0:N0}s ago" -f $age.TotalSeconds }
-    if ($age.TotalMinutes -lt 60)   { return "{0:N1}m ago" -f $age.TotalMinutes }
-    if ($age.TotalHours -lt 24)     { return "{0:N1}h ago" -f $age.TotalHours }
-    return "{0:N1}d ago" -f $age.TotalDays
+    if ($age.TotalSeconds -lt 60) {
+        return ([math]::Round($age.TotalSeconds, 0)).ToString() + 's ago'
+    }
+    if ($age.TotalMinutes -lt 60) {
+        return ([math]::Round($age.TotalMinutes, 1)).ToString() + 'm ago'
+    }
+    if ($age.TotalHours -lt 24) {
+        return ([math]::Round($age.TotalHours, 1)).ToString() + 'h ago'
+    }
+    return ([math]::Round($age.TotalDays, 1)).ToString() + 'd ago'
 }
 
 foreach ($name in $agentNames) {
@@ -93,8 +99,8 @@ foreach ($name in $agentNames) {
         $memMB  = 'n/a'
         if ($proc) {
             $uptime = Format-Age $proc.StartTime
-            $cpuSec = '{0:N1}s' -f $proc.CPU
-            $memMB  = '{0:N1}MB' -f ($proc.WorkingSet64 / 1MB)
+            $cpuSec = ([math]::Round($proc.CPU, 1)).ToString() + 's'
+            $memMB  = ([math]::Round($proc.WorkingSet64 / 1048576, 1)).ToString() + 'MB'
         }
         Write-Host "  Service: $($svc.Status)  PID=$procPid  uptime=$uptime  CPU=$cpuSec  RAM=$memMB"
     } else {
@@ -109,9 +115,12 @@ foreach ($name in $agentNames) {
             Write-Host "  Logs:    no .log files in $logsDir" -ForegroundColor Yellow
         } else {
             foreach ($log in $logs) {
-                $sizeKB = "{0:N1}KB" -f ($log.Length / 1KB)
+                $sizeKB = ([math]::Round($log.Length / 1024, 1)).ToString() + 'KB'
                 $age    = Format-Age $log.LastWriteTime
-                $stale  = if (((Get-Date) - $log.LastWriteTime).TotalMinutes -gt 5) { " [STALE]" } else { "" }
+                $stale  = ''
+                if (((Get-Date) - $log.LastWriteTime).TotalMinutes -gt 5) {
+                    $stale = ' [STALE]'
+                }
                 Write-Host "  Log:     $($log.Name)  $sizeKB  ($age)$stale"
 
                 if ($log.Length -gt 0) {
