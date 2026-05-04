@@ -59,7 +59,7 @@ function Format-Age($lastWrite) {
 foreach ($name in $agentNames) {
     $strat = $Config.strategies.$name
     if (-not $strat -or -not $strat.agent) {
-        Write-Host "[$name] No agent configured — skipping" -ForegroundColor Yellow
+        Write-Host "[$name] No agent configured - skipping" -ForegroundColor Yellow
         continue
     }
 
