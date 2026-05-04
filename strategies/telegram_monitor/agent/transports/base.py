@@ -60,6 +60,12 @@ class Transport(ABC):
     @abstractmethod
     async def list_log_files(self, log_dir: str) -> list[LogFile]: ...
 
+    async def latest_log_file(self, log_dir: str) -> LogFile | None:
+        """Newest log file in `log_dir`, or None. Default falls back to the
+        full listing; transports may override for an O(N) single-pass scan."""
+        files = await self.list_log_files(log_dir)
+        return files[0] if files else None
+
     @abstractmethod
     async def list_signal_files(self, signal_dir: str) -> list[SignalFile]: ...
 

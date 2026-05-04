@@ -42,8 +42,7 @@ class TailSession:
 # ---------- helpers ----------
 
 async def _pick_active_log(transport: Transport, log_dir: str) -> LogFile | None:
-    files = await transport.list_log_files(log_dir)
-    return files[0] if files else None
+    return await transport.latest_log_file(log_dir)
 
 
 def _resolve(settings: Settings, name: str) -> tuple[Vps, Service] | None:
