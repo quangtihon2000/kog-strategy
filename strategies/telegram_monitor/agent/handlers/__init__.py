@@ -22,18 +22,21 @@ log = logging.getLogger(__name__)
 
 @auth_required
 async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Dispatch inline-keyboard taps from `service_keyboard`.
+    """Dispatch inline-keyboard taps.
 
-    callback_data shape: "{action}:{vps_name}:{service_name}".
+    callback_data shapes:
+      - "{action}:{vps}:{service}"           — service_keyboard (logs/tail/signals)
+      - "logs_acct:{vps}:{service}:{acct}"   — account_keyboard (logs only)
     """
     query = update.callback_query
     # Always ack so the Telegram client clears the loading spinner.
     await query.answer()
 
-    parts = (query.data or "").split(":", 2)
-    if len(parts) != 3:
+    parts = (query.data or "").split(":")
+    if len(parts) < 3:
         return
-    action, vps_name, svc_name = parts
+    action, vps_name, svc_name = parts[0], parts[1], parts[2]
+    mt5_account = parts[3] if action == "logs_acct" and len(parts) >= 4 else None
 
     settings: Settings = context.application.bot_data["settings"]
     transports: dict[str, Transport] = context.application.bot_data["transports"]
@@ -46,6 +49,11 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     if action == "logs":
         await logs.send_logs(query.message, transport, vps, svc, logs.DEFAULT_LOG_LINES)
+    elif action == "logs_acct":
+        await logs.send_logs(
+            query.message, transport, vps, svc, logs.DEFAULT_LOG_LINES,
+            mt5_account=mt5_account,
+        )
     elif action == "tail":
         await logs.start_tail(query.message, context.application, transport, vps, svc)
     elif action == "signals":
@@ -65,4 +73,4 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("tail", logs.cmd_tail))
     app.add_handler(CommandHandler("tailstop", logs.cmd_tailstop))
     app.add_handler(CommandHandler("signals", signals.cmd_signals))
-    app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|tail|signals):"))
+    app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|tail|signals):"))

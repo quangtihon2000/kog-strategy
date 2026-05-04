@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from telegram import Message, Update
 from telegram.ext import Application, ContextTypes
 
-from ..config import Service, Settings, Vps
+from ..config import Mt5LogTarget, Service, Settings, Vps
 from ..transports import LogFile, Transport
 from .auth import auth_required
-from .keyboards import service_keyboard
+from .keyboards import account_keyboard, service_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -59,21 +59,63 @@ def _pre(text: str) -> str:
 
 # ---------- inner ops (callable from command + callback paths) ----------
 
-async def send_logs(message: Message, transport: Transport, vps: Vps, svc: Service, n: int) -> None:
-    active = await _pick_active_log(transport, svc.log_dir)
+async def _render_log_block(
+    transport: Transport, label: str, log_dir: str, n: int,
+) -> str:
+    """One <pre> block for a single log_dir; returns header+body or a stub."""
+    active = await _pick_active_log(transport, log_dir)
     if not active:
-        await message.reply_text(f"no log files in {svc.log_dir}")
-        return
+        return f"<i>{html.escape(label)}</i> — <code>(no log files in {html.escape(log_dir)})</code>"
     lines = await transport.read_log_tail(active.path, n)
-    if not lines:
-        await message.reply_text(f"`{active.name}` is empty")
-        return
-    body = "\n".join(lines)
     header = (
-        f"<i>{html.escape(vps.name)}/{html.escape(svc.name)}</i> — "
+        f"<i>{html.escape(label)}</i> — "
         f"<code>{html.escape(active.name)}</code> (last {len(lines)})"
     )
-    await message.reply_html(f"{header}\n{_pre(body)}")
+    if not lines:
+        return f"{header}\n<i>(empty)</i>"
+    return f"{header}\n{_pre(chr(10).join(lines))}"
+
+
+async def send_logs(
+    message: Message, transport: Transport, vps: Vps, svc: Service, n: int,
+    *, mt5_account: str | None = None,
+) -> None:
+    """Show Python agent log + (optionally) MT5 Expert log for the same strategy.
+
+    - 0 mt5_logs            → agent log only.
+    - 1 mt5_log             → agent + that account's MT5 log.
+    - N and `mt5_account`   → agent + the picked account's MT5 log.
+    - N and no `mt5_account`→ reply with an account picker, no logs sent.
+    """
+    if svc.mt5_logs and mt5_account is None and len(svc.mt5_logs) > 1:
+        await message.reply_text(
+            f"{vps.name}/{svc.name} runs on multiple accounts — pick one:",
+            reply_markup=account_keyboard(vps.name, svc.name, svc.mt5_logs),
+        )
+        return
+
+    target: Mt5LogTarget | None = None
+    if svc.mt5_logs:
+        if mt5_account is not None:
+            target = next((m for m in svc.mt5_logs if m.account == mt5_account), None)
+            if target is None:
+                await message.reply_text(f"unknown account: {mt5_account}")
+                return
+        else:
+            target = svc.mt5_logs[0]
+
+    py_label = f"{vps.name}/{svc.name} agent"
+    py_block = await _render_log_block(transport, py_label, svc.log_dir, n)
+
+    if target is None:
+        await message.reply_html(py_block)
+        return
+
+    mt5_label = f"{vps.name}/{svc.name} MT5 acct {target.account}"
+    mt5_block = await _render_log_block(transport, mt5_label, target.log_dir, n)
+    # Two messages — each <pre> is independently size-bounded by TAIL_CHUNK_CHARS.
+    await message.reply_html(py_block)
+    await message.reply_html(mt5_block)
 
 
 async def start_tail(message: Message, application: Application, transport: Transport, vps: Vps, svc: Service) -> None:

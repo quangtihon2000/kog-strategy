@@ -23,13 +23,22 @@ DEFAULT_FLEET_PATH = Path(__file__).parent / "fleet.yaml"
 
 
 @dataclass(frozen=True)
+class Mt5LogTarget:
+    account: str                 # MT5 account number, used as account picker label
+    log_dir: str                 # absolute path to MQL5/Logs on the VPS
+
+
+@dataclass(frozen=True)
 class Service:
     name: str                    # e.g. "zone_signal" — used in commands
     nssm_service: str            # e.g. "zone_signal_agent"
     agent_dir: str
     log_dir: str
     signal_dir: str
-    signal_freshness_min: int    # alert if newest *.json older than this
+    signal_freshness_min: int    # /status flags red when newest *.json older than this
+    # MT5 Expert log dirs per account this service drives. /logs combines
+    # them with the Python agent log: 0 → agent only, 1 → both, N → picker.
+    mt5_logs: tuple[Mt5LogTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,7 +99,11 @@ def load_fleet(path: Path = DEFAULT_FLEET_PATH) -> Fleet:
         raw = yaml.safe_load(f)
     vpses = []
     for v in raw.get("vpses", []):
-        services = [Service(**s) for s in v.get("services", [])]
+        services = []
+        for s in v.get("services", []):
+            mt5_logs_raw = s.pop("mt5_logs", None) or []
+            mt5_logs = tuple(Mt5LogTarget(**m) for m in mt5_logs_raw)
+            services.append(Service(mt5_logs=mt5_logs, **s))
         vpses.append(Vps(
             name=v["name"],
             transport=v["transport"],

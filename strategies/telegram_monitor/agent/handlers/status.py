@@ -1,19 +1,26 @@
 """/status — fleet-wide service health snapshot.
 
-Bare /status walks the whole fleet in parallel. /status <svc> gives the
-raw nssm output for one service, useful when state==UNKNOWN.
+Bare /status walks the whole fleet in parallel and shows, per service:
+service state + age of the newest signal file (with a freshness glyph
+based on `signal_freshness_min`). The signal column replaces the old
+auto-paging freshness monitor — same info, on demand.
+
+/status <svc> gives the raw nssm output for one service, useful when
+state==UNKNOWN.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from ..config import Settings
+from ..config import Service, Settings, Vps
 from ..transports import ServiceState, Transport
 from .auth import auth_required
+from .signals import _humanize
 
 _STATE_GLYPH = {
     ServiceState.RUNNING: "🟢",
@@ -38,20 +45,44 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _status_all(update, settings, transports)
 
 
+async def _signal_age_s(transport: Transport, svc: Service, now: float) -> float | None:
+    """Age (seconds) of newest signal file, or None if dir is empty/unreadable."""
+    try:
+        files = await transport.list_signal_files(svc.signal_dir)
+    except Exception:
+        return None
+    if not files:
+        return None
+    return now - files[0].mtime_epoch
+
+
+def _signal_segment(age_s: float | None, svc: Service) -> str:
+    if age_s is None:
+        return ""
+    threshold_s = svc.signal_freshness_min * 60
+    glyph = "🟢" if age_s <= threshold_s else "🔴"
+    suffix = "" if age_s <= threshold_s else f" >{svc.signal_freshness_min}m"
+    return f" · signal {_humanize(age_s)} {glyph}{suffix}"
+
+
 async def _status_all(update, settings: Settings, transports: dict[str, Transport]) -> None:
     pairs = settings.fleet.all_services()
+    now = time.time()
 
-    async def probe(vps, svc):
-        st = await transports[vps.name].get_service_status(svc.nssm_service)
-        return vps, svc, st
+    async def probe(vps: Vps, svc: Service):
+        st_task = transports[vps.name].get_service_status(svc.nssm_service)
+        sig_task = _signal_age_s(transports[vps.name], svc, now)
+        st, age = await asyncio.gather(st_task, sig_task)
+        return vps, svc, st, age
 
     results = await asyncio.gather(*(probe(v, s) for v, s in pairs))
 
     lines = ["*Fleet status*"]
     by_vps: dict[str, list[str]] = {}
-    for vps, svc, st in results:
+    for vps, svc, st, age in results:
         glyph = _STATE_GLYPH.get(st.state, "❓")
-        by_vps.setdefault(vps.name, []).append(f"{glyph} `{svc.name}` — {st.state.value}")
+        line = f"{glyph} `{svc.name}` — {st.state.value}{_signal_segment(age, svc)}"
+        by_vps.setdefault(vps.name, []).append(line)
     for vps_name, items in by_vps.items():
         lines.append(f"\n_{vps_name}_")
         lines.extend(items)

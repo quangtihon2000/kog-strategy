@@ -8,6 +8,7 @@ event loop never stalls when a log file is large or a disk is slow.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import subprocess
 from pathlib import Path
@@ -53,14 +54,31 @@ def _run_nssm_status(nssm_service: str) -> ServiceStatus:
     return ServiceStatus(_parse_nssm_status(raw), raw.strip())
 
 
+def _detect_encoding(p: Path) -> str:
+    """Sniff BOM. MT5 daily logs are written as UTF-16 LE; agent logs UTF-8."""
+    try:
+        with p.open("rb") as f:
+            head = f.read(4)
+    except OSError:
+        return "utf-8"
+    if head.startswith(b"\xff\xfe"):
+        return "utf-16-le"
+    if head.startswith(b"\xfe\xff"):
+        return "utf-16-be"
+    if head.startswith(b"\xef\xbb\xbf"):
+        return "utf-8-sig"
+    return "utf-8"
+
+
 def _read_tail(log_path: str, n_lines: int) -> list[str]:
     p = Path(log_path)
     if not p.exists():
         return []
     # Small log files dominate; a naive read is fine and avoids encoding
     # surprises that arise with seek-based tail on UTF-16 / CRLF logs.
+    enc = _detect_encoding(p)
     try:
-        with p.open("r", encoding="utf-8", errors="replace") as f:
+        with p.open("r", encoding=enc, errors="replace") as f:
             lines = f.readlines()
     except OSError as e:
         log.warning("read_log_tail failed for %s: %s", log_path, e)
@@ -103,6 +121,19 @@ def _list_logs(log_dir: str) -> list[LogFile]:
     return out
 
 
+def _read_signal_json(signal_dir: str, name: str) -> dict | None:
+    p = Path(signal_dir) / name
+    if not p.is_file():
+        return None
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        log.warning("read_signal_json failed for %s: %s", p, e)
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _list_signals(signal_dir: str) -> list[SignalFile]:
     d = Path(signal_dir)
     if not d.is_dir():
@@ -135,3 +166,6 @@ class LocalTransport(Transport):
 
     async def list_signal_files(self, signal_dir: str) -> list[SignalFile]:
         return await asyncio.to_thread(_list_signals, signal_dir)
+
+    async def read_signal_json(self, signal_dir: str, name: str) -> dict | None:
+        return await asyncio.to_thread(_read_signal_json, signal_dir, name)

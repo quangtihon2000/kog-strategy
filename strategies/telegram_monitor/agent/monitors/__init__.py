@@ -12,7 +12,7 @@ from telegram.ext import Application
 from ..alerts import AlertDispatcher
 from ..config import Settings
 from ..transports import Transport
-from . import heartbeat, log_errors, service_edges, signal_freshness
+from . import heartbeat, log_errors, service_edges
 
 
 def register_monitors(
@@ -30,9 +30,8 @@ def register_monitors(
     # Log error scan — slightly slower; reads only new bytes.
     jq.run_repeating(log_errors.tick, interval=30, first=20,
                      name="mon:log_errors", data=ctx)
-    # Signal freshness — minute resolution is plenty for a 5/30-min threshold.
-    jq.run_repeating(signal_freshness.tick, interval=60, first=30,
-                     name="mon:signal_freshness", data=ctx)
+    # Signal freshness is surfaced on-demand via /status (no auto-alert) —
+    # service_edges already pages when the agent process is the actual problem.
     # Heartbeat (opt-in) — only fires for services that have ever published one.
     jq.run_repeating(heartbeat.tick, interval=60, first=45,
                      name="mon:heartbeat", data=ctx)

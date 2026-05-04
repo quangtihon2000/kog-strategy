@@ -9,7 +9,7 @@ cannot start, stop, or modify anything.
 ```
 Telegram <──polling──> bot.py (Application)
                          ├── handlers/   /status, /logs, /tail, /signals, /help, /whoami
-                         ├── monitors/   service_edges, log_errors, signal_freshness, heartbeat
+                         ├── monitors/   service_edges, log_errors, heartbeat
                          ├── transports/ local (Phase 0) | ssh (Phase 1)
                          └── alerts.py   chat fan-out + cooldown dedup
 ```
@@ -116,7 +116,7 @@ key disappears after having been seen at least once.
 | Add a new monitor | Drop a module in `agent/monitors/`, register it in `register_monitors()` in `bot.py`. Use the JobQueue, push via `AlertDispatcher`. |
 | Add a new command | Drop a handler in `agent/handlers/`, decorate with `@auth_required`, register in `register_handlers()`. |
 | Change alert cooldown | `AlertDispatcher(cooldown_s=...)` in `bot.py`. |
-| Change freshness threshold | Per-service `signal_freshness_min` in `fleet.yaml`. |
+| Change freshness threshold | Per-service `signal_freshness_min` in `fleet.yaml` (drives the red/green glyph in `/status`). |
 
 ## Why bare-script entrypoint
 

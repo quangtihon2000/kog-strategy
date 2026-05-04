@@ -11,6 +11,7 @@ from telegram.ext import ContextTypes
 from ..config import Service, Settings, Vps
 from ..transports import Transport
 from .auth import auth_required
+from .formatters import format_signal
 from .keyboards import service_keyboard
 
 
@@ -32,19 +33,31 @@ async def send_signals(message: Message, transport: Transport, vps: Vps, svc: Se
         return
     now = time.time()
     threshold_s = svc.signal_freshness_min * 60
+    newest = files[0]
+    age = now - newest.mtime_epoch
+    glyph = "🟢" if age <= threshold_s else "🔴"
     # HTML parse mode: paths/names contain `_` which break legacy Markdown.
-    lines = [
+    parts = [
         f"<b>{html.escape(vps.name)}/{html.escape(svc.name)}</b> — "
-        f"<code>{html.escape(svc.signal_dir)}</code>"
+        f"<code>{html.escape(svc.signal_dir)}</code>",
+        f"{glyph} <b>{html.escape(newest.name)}</b> — "
+        f"{_humanize(age)} ago, {newest.size_bytes}B",
     ]
-    for f in files[:10]:
-        age = now - f.mtime_epoch
-        glyph = "🟢" if age <= threshold_s else "🔴"
-        lines.append(
-            f"{glyph} <code>{html.escape(f.name)}</code> — "
-            f"{_humanize(age)} ago, {f.size_bytes}B"
-        )
-    await message.reply_html("\n".join(lines))
+    data = await transport.read_signal_json(svc.signal_dir, newest.name)
+    if data is None:
+        parts.append("<i>(could not read newest signal)</i>")
+    else:
+        body = format_signal(svc.name, data)
+        parts.append(f"<pre>{html.escape(body)}</pre>")
+    if len(files) > 1:
+        older = ["<b>older:</b>"]
+        for f in files[1:6]:
+            f_age = now - f.mtime_epoch
+            older.append(
+                f"• <code>{html.escape(f.name)}</code> — {_humanize(f_age)} ago"
+            )
+        parts.append("\n".join(older))
+    await message.reply_html("\n".join(parts))
 
 
 @auth_required

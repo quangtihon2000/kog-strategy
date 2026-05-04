@@ -18,6 +18,9 @@ vpses:
         log_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\zone_signal\agent\logs
         signal_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\zone_signal\data
         signal_freshness_min: 30
+        mt5_logs:
+          - account: "25312392"
+            log_dir: C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\7D70CC401B91FAC031C1DD6731E80E7A\MQL5\Logs
 
       - name: conde_auto_entry
         nssm_service: conde_signal_agent
@@ -25,3 +28,6 @@ vpses:
         log_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\conde_auto_entry\agent\logs
         signal_dir: C:\actions-runner\_work\kog-strategy\kog-strategy\strategies\conde_auto_entry\data
         signal_freshness_min: 5
+        mt5_logs:
+          - account: "25314214"
+            log_dir: C:\Users\QuangXAU\AppData\Roaming\MetaQuotes\Terminal\D0E8209F77C8CF37AD8BF550E51FF075\MQL5\Logs
