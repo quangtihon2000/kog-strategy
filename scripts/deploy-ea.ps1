@@ -25,7 +25,7 @@ foreach ($name in $strategyList) {
     }
 
     if ([string]::IsNullOrEmpty($strat.ea_source)) {
-        Write-Host "[$name] No ea_source — agent-only strategy, skipping EA deploy"
+        Write-Host "[$name] No ea_source - agent-only strategy, skipping EA deploy"
         continue
     }
 

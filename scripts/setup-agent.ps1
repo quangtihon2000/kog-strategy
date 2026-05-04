@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Setup Python agents — venv, pip install, and register as Windows service.
+    Setup Python agents - venv, pip install, and register as Windows service.
 .DESCRIPTION
     For each strategy with an agent, creates a Python venv, installs deps,
     and optionally restarts the agent service using NSSM.
@@ -21,7 +21,7 @@ $strategyList = $Strategies | ConvertFrom-Json
 foreach ($name in $strategyList) {
     $strat = $Config.strategies.$name
     if (-not $strat -or -not $strat.agent -or -not $strat.agent.enabled) {
-        Write-Host "[$name] No agent configured — skipping"
+        Write-Host "[$name] No agent configured - skipping"
         continue
     }
 
@@ -34,7 +34,7 @@ foreach ($name in $strategyList) {
     Write-Host "[$name] Setting up agent in: $agentDir"
 
     # 0. Generate .env from GitHub secrets/variables
-    #    Lookup order per key: ${STRATEGY_UPPER}_${KEY} (override) → ${KEY} (shared)
+    #    Lookup order per key: ${STRATEGY_UPPER}_${KEY} (override) -> ${KEY} (shared)
     $prefix = $name.ToUpper()
     $dataDir = Join-Path (Split-Path $agentDir -Parent) "data"
     $envLines = @("MT5_SIGNAL_DIR=$dataDir")
@@ -82,7 +82,7 @@ foreach ($name in $strategyList) {
     $venvBroken = (Test-Path $pythonExe) -and (-not (Test-Path $pyvenvCfg))
     if (-not (Test-Path $pythonExe) -or $venvBroken) {
         if ($venvBroken) {
-            Write-Host "[$name] venv corrupt (missing pyvenv.cfg) — rebuilding"
+            Write-Host "[$name] venv corrupt (missing pyvenv.cfg) - rebuilding"
             Remove-Item $venvDir -Recurse -Force
         }
         Write-Host "[$name] Creating Python venv..."
@@ -91,7 +91,7 @@ foreach ($name in $strategyList) {
             Write-Error "[$name] Failed to create venv"
             continue
         }
-        Write-Host "[$name] ✅ venv created"
+        Write-Host "[$name] OK venv created"
     }
 
     # 2. Install/update requirements
@@ -99,7 +99,7 @@ foreach ($name in $strategyList) {
         Write-Host "[$name] Installing requirements..."
         & $pythonExe -m pip install --upgrade pip --quiet
         & $pythonExe -m pip install -r $requirementsFile --quiet
-        Write-Host "[$name] ✅ Requirements installed"
+        Write-Host "[$name] OK Requirements installed"
     }
 
     # 3. Ensure data directory exists
@@ -119,24 +119,27 @@ foreach ($name in $strategyList) {
     # 4. Restart service if NSSM is available
     $nssm = Get-Command nssm -ErrorAction SilentlyContinue
     if ($nssm) {
-        $serviceExists = (nssm status $serviceName 2>&1) -notmatch "can't open"
+        # Probe with Get-Service first - `nssm status` writes to stderr when the
+        # service does not exist, which under $ErrorActionPreference="Stop"
+        # escalates to NativeCommandError and aborts the whole script.
+        $serviceExists = [bool](Get-Service -Name $serviceName -ErrorAction SilentlyContinue)
 
         if ($serviceExists) {
             Write-Host "[$name] Restarting service: $serviceName"
             nssm restart $serviceName
-            Write-Host "[$name] ✅ Service restarted"
+            Write-Host "[$name] OK Service restarted"
         } else {
-            Write-Host "[$name] ⚠️  Service '$serviceName' not installed."
+            Write-Host "[$name] WARN Service '$serviceName' not installed."
             Write-Host "[$name] To install, run:"
             Write-Host "  nssm install $serviceName `"$pythonExe`" `"$(Join-Path $agentDir 'main.py')`""
             Write-Host "  nssm set $serviceName AppDirectory `"$agentDir`""
             Write-Host "  nssm start $serviceName"
         }
     } else {
-        Write-Host "[$name] ℹ️  NSSM not found. To run agent manually:"
+        Write-Host "[$name] INFO NSSM not found. To run agent manually:"
         Write-Host "  cd $agentDir"
         Write-Host "  .venv\Scripts\python.exe main.py"
     }
 }
 
-Write-Host "✅ Agent setup complete"
+Write-Host "OK Agent setup complete"
