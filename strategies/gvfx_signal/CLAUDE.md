@@ -36,12 +36,11 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 
 ### EOD cut
 - **Trigger window**: từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker. Default lead = 5 phút. Set `InpEodCutLeadMins = -1` để disable.
-- **Trigger condition**: `g_dailyRealized + g_floating > 0` AND còn vị thế đang mở.
-- **Action**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings của magic+symbol.
-- **Suppression**: sau khi cut, set `g_eodCutDoneAnchor = g_dailyAnchor`, gate trong OnTick chặn entry mới đến khi anchor đổi (qua nửa đêm server time).
-- **Restart-safe**: `g_eodCutDoneAnchor` persist qua `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}`. Khi day rollover, anchor bị xóa khỏi GlobalVariable.
+- **Branch A — total > 0 (`dailyRealized + floating > 0`)**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings, set `g_eodCutDoneAnchor = g_dailyAnchor`, suppress entries đến khi qua ngày. Restart-safe qua `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}`.
+- **Branch B — total < 0**: `PartialEodTrimLosers()`. Sort các vị thế đang lỗ (`profit + swap < 0`) theo P&L tăng dần (lỗ nhiều nhất trước), close lần lượt; trước mỗi close kiểm tra `dailyRealized + Σcuts + next.pnl ≥ 0` — nếu cắt tiếp sẽ kéo realized âm thì dừng. **Không** suppress entries, **không** set anchor → có thể tiếp tục trim ở các tick sau khi realized tăng (do TP hit).
+- **Total = 0** hoặc `g_openCount == 0` → no-op.
 - Nếu broker không expose session (weekend/holiday) → `TodaySessionCloseTime()` return 0, EOD cut skip.
-- Nếu total ≤ 0 trong window → KHÔNG cắt, EA tiếp tục chạy bình thường qua đêm.
+- Khi day rollover, `g_eodCutDoneAnchor` cleared và GlobalVariable bị xóa.
 
 ### Dedup (restart-safe)
 - Position comment: `GVFX_T{timestamp}` (e.g., `GVFX_T1777896356`).
