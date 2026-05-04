@@ -35,11 +35,12 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   - SELL: `ask ≤ target` → inactive
 
 ### EOD cut
-- **Trigger window**: server-time `>= InpEodCutHourSrv:InpEodCutMinSrv` (default 23:55) đến hết ngày. Set `InpEodCutHourSrv = -1` để disable.
+- **Trigger window**: từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker. Default lead = 5 phút. Set `InpEodCutLeadMins = -1` để disable.
 - **Trigger condition**: `g_dailyRealized + g_floating > 0` AND còn vị thế đang mở.
 - **Action**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings của magic+symbol.
 - **Suppression**: sau khi cut, set `g_eodCutDoneAnchor = g_dailyAnchor`, gate trong OnTick chặn entry mới đến khi anchor đổi (qua nửa đêm server time).
 - **Restart-safe**: `g_eodCutDoneAnchor` persist qua `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}`. Khi day rollover, anchor bị xóa khỏi GlobalVariable.
+- Nếu broker không expose session (weekend/holiday) → `TodaySessionCloseTime()` return 0, EOD cut skip.
 - Nếu total ≤ 0 trong window → KHÔNG cắt, EA tiếp tục chạy bình thường qua đêm.
 
 ### Dedup (restart-safe)
