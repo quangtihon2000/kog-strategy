@@ -25,6 +25,13 @@ PATTERNS = [
     re.compile(r"\b(ERROR|CRITICAL|FATAL)\b"),
     re.compile(r"\bUnhandled exception\b", re.IGNORECASE),
 ]
+# Lines whose presence makes the whole snippet "expected shutdown noise" —
+# CI deploy stops services with Ctrl+C-equivalent, which surfaces as a
+# KeyboardInterrupt traceback. Not a real error.
+BENIGN_PATTERNS = [
+    re.compile(r"^KeyboardInterrupt\b", re.MULTILINE),
+    re.compile(r"^SystemExit\b", re.MULTILINE),
+]
 MAX_SNIPPET = 800
 
 # (vps, service, log_path) -> byte offset
@@ -59,6 +66,11 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             if not new_data.strip():
                 continue
             if not any(p.search(new_data) for p in PATTERNS):
+                continue
+            if any(p.search(new_data) for p in BENIGN_PATTERNS):
+                # Deploy-time SIGINT etc. — log locally but don't page.
+                log.info("log scan: benign shutdown trace skipped (%s/%s)",
+                         vps.name, svc.name)
                 continue
             snippet = new_data[-MAX_SNIPPET:]
             await alerts.notify(
