@@ -220,3 +220,60 @@ jobs:
           Write-Host "EAs deployed:    $(@($ea) -join ', ')"
           Write-Host "Agents deployed: $(@($agent) -join ', ')"
           Write-Host "Shared changed:  ${{ needs.detect-changes.outputs.shared_changed }}"
+
+  notify:
+    needs: [detect-changes, compile-and-deploy]
+    # Run on success or failure, but skip when nothing was deployed (no signal worth pinging).
+    if: always() && needs.compile-and-deploy.result != 'skipped'
+    runs-on: self-hosted
+    steps:
+      - name: Notify Telegram
+        shell: powershell
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
+          CHAT_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
+          STATUS: ${{ needs.compile-and-deploy.result }}
+          STRATEGIES_EA: ${{ needs.detect-changes.outputs.strategies_ea }}
+          STRATEGIES_AGENT: ${{ needs.detect-changes.outputs.strategies_agent }}
+        run: |
+          if (-not $env:BOT_TOKEN -or -not $env:CHAT_IDS) {
+            Write-Host "Telegram notify skipped — BOT_TOKEN or CHAT_IDS not configured"
+            return
+          }
+
+          $tag   = if ($env:STATUS -eq 'success') { '[OK]' } else { '[FAIL]' }
+          $ea    = (@($env:STRATEGIES_EA    | ConvertFrom-Json)) -join ', '
+          $agent = (@($env:STRATEGIES_AGENT | ConvertFrom-Json)) -join ', '
+          if (-not $ea)    { $ea = '(none)' }
+          if (-not $agent) { $agent = '(none)' }
+          $sha    = '${{ github.sha }}'.Substring(0, 7)
+          $runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+
+          # PowerShell here-strings require the closing "@ at column 0, which
+          # collides with YAML's indented block scalar — build the message via
+          # array + -join "`n" instead so the script stays well-indented.
+          $msg = @(
+            "$tag deploy $($env:STATUS)",
+            "branch: ${{ github.ref_name }}@$sha",
+            "actor: ${{ github.actor }}",
+            "EAs: $ea",
+            "Agents: $agent",
+            $runUrl
+          ) -join "`n"
+
+          foreach ($id in $env:CHAT_IDS.Split(',')) {
+            $id = $id.Trim()
+            if (-not $id) { continue }
+            try {
+              Invoke-RestMethod -Method Post `
+                -Uri "https://api.telegram.org/bot$($env:BOT_TOKEN)/sendMessage" `
+                -Body @{
+                  chat_id = $id
+                  text = $msg
+                  disable_web_page_preview = 'true'
+                } | Out-Null
+              Write-Host "notified $id"
+            } catch {
+              Write-Host "notify $id failed: $_"
+            }
+          }
