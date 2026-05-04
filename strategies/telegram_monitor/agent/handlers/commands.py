@@ -17,7 +17,7 @@ HELP_TEXT = (
     "\n"
     "/status — service state for every agent\n"
     "/status `<svc>` — verbose state for one service\n"
-    "/logs `<svc>` `[N]` — last N lines (default 30)\n"
+    "/logs `<svc>` `[N]` — last N lines per log type (default 10)\n"
     "/tail `<svc>` — live tail, batched every 5s\n"
     "/tailstop — stop the active tail in this chat\n"
     "/signals `<svc>` — newest signal files + age\n"
