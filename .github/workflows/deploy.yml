@@ -255,8 +255,12 @@ jobs:
           }
 
           $tag   = if ($env:STATUS -eq 'success') { '[OK]' } else { '[FAIL]' }
-          $ea    = (@($env:STRATEGIES_EA    | ConvertFrom-Json)) -join ', '
-          $agent = (@($env:STRATEGIES_AGENT | ConvertFrom-Json)) -join ', '
+          # ConvertFrom-Json emits Object[] as a single atomic pipeline output
+          # (does NOT enumerate). Wrapping with @(...) produces Object[1]
+          # containing the array, so -join would call .ToString() on the inner
+          # array → "System.Object[]". Drop @() and -join the array directly.
+          $ea    = ($env:STRATEGIES_EA    | ConvertFrom-Json) -join ', '
+          $agent = ($env:STRATEGIES_AGENT | ConvertFrom-Json) -join ', '
           if (-not $ea)    { $ea = '(none)' }
           if (-not $agent) { $agent = '(none)' }
           $sha    = '${{ github.sha }}'.Substring(0, 7)
