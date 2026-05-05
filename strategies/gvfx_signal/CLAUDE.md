@@ -36,7 +36,7 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - Fallback về `signal.step` / `signal.tp` khi: handle invalid (init failed) hoặc `CopyBuffer()` chưa có data (indicator còn warming up sau restart).
 - Khi `signal.use_atr = false`: EA dùng thẳng `signal.step` / `signal.tp` — không gọi iATR.
 - Handle `iATR` được tạo 1 lần trong `OnInit`, release trong `OnDeinit` qua `IndicatorRelease`.
-- ATR-related inputs: `InpAtrTimeframe` (default `PERIOD_M15`), `InpAtrPeriod` (14), `InpAtrStepMult` / `InpAtrTpMult` (1.0), `InpAtrMinPts` (500), `InpAtrMaxPts` (5000).
+- ATR-related inputs: `InpAtrTimeframe` (default `PERIOD_M15`), `InpAtrPeriod` (14), `InpAtrStepMult` (1.0), `InpAtrTpMult` (0.95), `InpAtrMinPts` (500), `InpAtrMaxPts` (5000).
 
 ### Signal lifecycle
 - New `timestamp` → `g_signalActive = true`, cache `g_currentSig`.

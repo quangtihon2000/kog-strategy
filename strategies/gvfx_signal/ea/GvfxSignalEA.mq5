@@ -21,7 +21,7 @@ input int    InpHistoryLookbackDays = 7;             // History window for resta
 input ENUM_TIMEFRAMES InpAtrTimeframe = PERIOD_M15;  // ATR timeframe (used when signal.use_atr=true)
 input int    InpAtrPeriod           = 14;            // ATR period
 input double InpAtrStepMult         = 1.0;           // step = ATR * mult (when use_atr)
-input double InpAtrTpMult           = 1.0;           // tp   = ATR * mult (when use_atr)
+input double InpAtrTpMult           = 0.95;          // tp   = ATR * mult (when use_atr)
 input int    InpAtrMinPts           = 500;           // ATR-derived step/tp floor (points)
 input int    InpAtrMaxPts           = 5000;          // ATR-derived step/tp ceiling (points)
 
