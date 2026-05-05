@@ -29,7 +29,7 @@ _BOT_COMMANDS: list[BotCommand] = [
     BotCommand("tail", "Live tail (5s batched)"),
     BotCommand("tailstop", "Stop active tail"),
     BotCommand("signals", "Newest signal files + age"),
-    BotCommand("gvfx", "Publish GVFX signal: /gvfx <target> [dir] [step] [tp]"),
+    BotCommand("gvfx", "Publish GVFX signal (no args = wizard, or <target> [dir] [step] [tp] [low] [high])"),
     BotCommand("whoami", "Your Telegram user id"),
     BotCommand("help", "Show commands"),
 ]

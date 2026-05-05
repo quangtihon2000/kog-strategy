@@ -21,7 +21,10 @@ HELP_TEXT = (
     "/tail `<svc>` — live tail, batched every 5s\n"
     "/tailstop — stop the active tail in this chat\n"
     "/signals `<svc>` — newest signal files + age\n"
-    "/gvfx `<target>` `[dir]` `[step]` `[tp]` — publish GVFX signal (defaults: BUY/500/500)\n"
+    "/gvfx — publish GVFX signal; no args = wizard with buttons,\n"
+    "         or `<target>` `[dir]` `[step]` `[tp]` `[low]` `[high]` (defaults: BUY/500/500/0/0)\n"
+    "         low/high are price-zone gates: BUY only above low, SELL only below high (0 = disabled)\n"
+    "/cancel — abort the GVFX wizard mid-flow\n"
     "/whoami — your Telegram user id\n"
     "/help — this message"
 )
