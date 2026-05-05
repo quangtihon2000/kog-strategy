@@ -1,15 +1,19 @@
 """/gvfx — push a GVFX signal onto the Redis stream consumed by gvfx_signal_agent.
 
 Two modes:
-  - Fast path:  /gvfx <target> [direction] [step] [tp] [low] [high]
+  - Fast path:  /gvfx <target> [direction] [step] [tp] [low] [high] [atr]
   - Wizard:     /gvfx           (no args → guided flow with inline buttons)
 
-Defaults: direction=BUY, step=500, tp=500, low=0, high=0. Symbol is fixed
-to XAUUSD (matching gvfx_signal's single-symbol contract). Timestamp is
-generated here (Unix epoch seconds) and acts as the EA's dedup identity.
+Defaults: direction=BUY, step=500, tp=500, low=0, high=0, atr=true. Symbol
+is fixed to XAUUSD (matching gvfx_signal's single-symbol contract). Timestamp
+is generated here (Unix epoch seconds) and acts as the EA's dedup identity.
 
 low/high are optional price-zone gates (0 = disabled). When set, the EA
 only opens BUY when price > low, and only opens SELL when price < high.
+
+atr (bool): when true the EA derives effective step/tp from a cached iATR
+handle; signal-supplied step/tp become fallback values used only when the
+ATR buffer is unavailable.
 """
 
 from __future__ import annotations
@@ -37,14 +41,28 @@ DEFAULT_SYMBOL = "XAUUSD"
 DEFAULT_DIRECTION = "BUY"
 DEFAULT_STEP = 500
 DEFAULT_TP = 500
+DEFAULT_USE_ATR = True
 GVFX_STREAM = "gvfx_signals"
 
 USAGE = (
-    "usage: <code>/gvfx &lt;target&gt; [direction] [step] [tp] [low] [high]</code>\n"
+    "usage: <code>/gvfx &lt;target&gt; [direction] [step] [tp] [low] [high] [atr]</code>\n"
     "or send <code>/gvfx</code> alone for the wizard\n"
-    "defaults: direction=BUY, step=500, tp=500, low=0, high=0\n"
-    "low/high (price): 0 disables. BUY enters only above low; SELL only below high."
+    "defaults: direction=BUY, step=500, tp=500, low=0, high=0, atr=true\n"
+    "low/high (price): 0 disables. BUY enters only above low; SELL only below high.\n"
+    "atr (true/false): EA uses ATR-derived step/tp; signal step/tp become fallback."
 )
+
+_ATR_TRUE = frozenset({"1", "true", "yes", "on", "y", "t"})
+_ATR_FALSE = frozenset({"0", "false", "no", "off", "n", "f"})
+
+
+def _parse_atr_arg(s: str) -> bool | None:
+    v = s.strip().lower()
+    if v in _ATR_TRUE:
+        return True
+    if v in _ATR_FALSE:
+        return False
+    return None
 
 W_DIRECTION, W_TARGET, W_REVIEW, W_STEPTP, W_LOWHIGH = range(5)
 WIZARD_KEY = "gvfx_wizard"
@@ -60,13 +78,15 @@ def _direction_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-def _review_keyboard() -> InlineKeyboardMarkup:
+def _review_keyboard(use_atr: bool = DEFAULT_USE_ATR) -> InlineKeyboardMarkup:
+    atr_label = f"ATR: {'ON' if use_atr else 'OFF'}"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Publish", callback_data="gvfxw:publish")],
         [
             InlineKeyboardButton("✏ Edit step/tp", callback_data="gvfxw:edit_steptp"),
             InlineKeyboardButton("✏ Edit low/high", callback_data="gvfxw:edit_lowhigh"),
         ],
+        [InlineKeyboardButton(atr_label, callback_data="gvfxw:toggle_atr")],
         [InlineKeyboardButton("✖ Cancel", callback_data="gvfxw:cancel")],
     ])
 
@@ -78,6 +98,7 @@ def _review_text(state: dict) -> str:
     tp = state.get("tp", DEFAULT_TP)
     low = state.get("low", 0.0)
     high = state.get("high", 0.0)
+    use_atr = state.get("use_atr", DEFAULT_USE_ATR)
     gate = ""
     if low > 0 or high > 0:
         gate = (
@@ -90,13 +111,16 @@ def _review_text(state: dict) -> str:
         )
     else:
         gate = "low/high: <code>disabled</code>\n"
+    atr_label = "ON (signal step/tp = fallback)" if use_atr else "OFF"
+    step_tp_suffix = " (fallback)" if use_atr else ""
     return (
         "<b>review:</b>\n"
         f"direction: <b>{direction}</b>\n"
         f"target: <code>{target}</code>\n"
-        f"step: <code>{step}</code> pts\n"
-        f"tp: <code>{tp}</code> pts\n"
+        f"step: <code>{step}</code> pts{step_tp_suffix}\n"
+        f"tp: <code>{tp}</code> pts{step_tp_suffix}\n"
         f"{gate}"
+        f"atr: <b>{atr_label}</b>\n"
     )
 
 
@@ -110,6 +134,7 @@ async def _publish(
     tp: int,
     low: float,
     high: float,
+    use_atr: bool,
 ) -> None:
     payload = {
         "timestamp": str(int(time.time())),
@@ -120,6 +145,7 @@ async def _publish(
         "tp": str(tp),
         "low": str(low),
         "high": str(high),
+        "use_atr": "true" if use_atr else "false",
     }
     try:
         entry_id = await redis.xadd(GVFX_STREAM, payload)
@@ -142,6 +168,7 @@ async def _publish(
         f"tp: <code>{tp}</code> pts\n"
         f"low: <code>{low}</code>\n"
         f"high: <code>{high}</code>\n"
+        f"atr: <code>{'ON' if use_atr else 'OFF'}</code>\n"
         f"ts: <code>{payload['timestamp']}</code>"
     )
 
@@ -197,6 +224,14 @@ async def cmd_gvfx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await msg.reply_html("low must be &lt; high when both are set")
         return ConversationHandler.END
 
+    use_atr = DEFAULT_USE_ATR
+    if len(args) >= 7:
+        parsed = _parse_atr_arg(args[6])
+        if parsed is None:
+            await msg.reply_html(f"atr must be true/false (or 1/0, yes/no)\n{USAGE}")
+            return ConversationHandler.END
+        use_atr = parsed
+
     redis: Redis | None = context.application.bot_data.get("redis")
     if redis is None:
         await msg.reply_text("redis client not configured — cannot publish signal")
@@ -206,6 +241,7 @@ async def cmd_gvfx(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         msg, redis,
         target=target, direction=direction,
         step=step, tp=tp, low=low, high=high,
+        use_atr=use_atr,
     )
     return ConversationHandler.END
 
@@ -252,10 +288,11 @@ async def _w_target(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     state.setdefault("tp", DEFAULT_TP)
     state.setdefault("low", 0.0)
     state.setdefault("high", 0.0)
+    state.setdefault("use_atr", DEFAULT_USE_ATR)
 
     await msg.reply_html(
         "step 3/3 — " + _review_text(state),
-        reply_markup=_review_keyboard(),
+        reply_markup=_review_keyboard(state["use_atr"]),
     )
     return W_REVIEW
 
@@ -287,6 +324,16 @@ async def _w_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return W_LOWHIGH
 
+    if action == "toggle_atr":
+        state = context.user_data.setdefault(WIZARD_KEY, {})
+        state["use_atr"] = not state.get("use_atr", DEFAULT_USE_ATR)
+        await query.edit_message_text(
+            _review_text(state),
+            parse_mode="HTML",
+            reply_markup=_review_keyboard(state["use_atr"]),
+        )
+        return W_REVIEW
+
     if action == "publish":
         state = context.user_data.get(WIZARD_KEY, {})
         if "target" not in state:
@@ -307,6 +354,7 @@ async def _w_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             tp=state.get("tp", DEFAULT_TP),
             low=state.get("low", 0.0),
             high=state.get("high", 0.0),
+            use_atr=state.get("use_atr", DEFAULT_USE_ATR),
         )
         context.user_data.pop(WIZARD_KEY, None)
         return ConversationHandler.END
@@ -337,7 +385,7 @@ async def _w_steptp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     state["tp"] = tp
     await msg.reply_html(
         _review_text(state),
-        reply_markup=_review_keyboard(),
+        reply_markup=_review_keyboard(state.get("use_atr", DEFAULT_USE_ATR)),
     )
     return W_REVIEW
 
@@ -368,7 +416,7 @@ async def _w_lowhigh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     state["high"] = high
     await msg.reply_html(
         _review_text(state),
-        reply_markup=_review_keyboard(),
+        reply_markup=_review_keyboard(state.get("use_atr", DEFAULT_USE_ATR)),
     )
     return W_REVIEW
 
