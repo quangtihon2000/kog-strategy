@@ -170,6 +170,22 @@ def _read_signal_json(signal_dir: str, name: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+# Cap raw reads so a runaway/corrupted file can't blow up an alert message.
+_SIGNAL_TEXT_MAX = 4096
+
+
+def _read_signal_text(signal_dir: str, name: str) -> str | None:
+    p = Path(signal_dir) / name
+    if not p.is_file():
+        return None
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            return f.read(_SIGNAL_TEXT_MAX)
+    except OSError as e:
+        log.warning("read_signal_text failed for %s: %s", p, e)
+        return None
+
+
 def _list_signals(signal_dir: str) -> list[SignalFile]:
     d = Path(signal_dir)
     if not d.is_dir():
@@ -231,3 +247,6 @@ class LocalTransport(Transport):
 
     async def read_signal_json(self, signal_dir: str, name: str) -> dict | None:
         return await asyncio.to_thread(_read_signal_json, signal_dir, name)
+
+    async def read_signal_text(self, signal_dir: str, name: str) -> str | None:
+        return await asyncio.to_thread(_read_signal_text, signal_dir, name)

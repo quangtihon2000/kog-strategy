@@ -73,6 +73,11 @@ class Transport(ABC):
     async def read_signal_json(self, signal_dir: str, name: str) -> dict | None:
         """Read and parse a signal JSON file. Returns None if missing/invalid."""
 
+    @abstractmethod
+    async def read_signal_text(self, signal_dir: str, name: str) -> str | None:
+        """Read raw signal file content (truncated). Returns None if missing.
+        Used by error alerts to surface the offending payload to operators."""
+
     async def restart_service(self, nssm_service: str) -> str:
         # Phase 0 = read-only. Override in a write-capable transport later.
         raise NotImplementedError("restart is disabled in read-only Phase 0")
