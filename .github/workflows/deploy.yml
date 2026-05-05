@@ -236,14 +236,31 @@ jobs:
           STRATEGIES_EA: ${{ needs.detect-changes.outputs.strategies_ea }}
           STRATEGIES_AGENT: ${{ needs.detect-changes.outputs.strategies_agent }}
         run: |
-          if (-not $env:BOT_TOKEN -or -not $env:CHAT_IDS) {
-            Write-Host "Telegram notify skipped — BOT_TOKEN or CHAT_IDS not configured"
-            return
+          $hasToken = -not [string]::IsNullOrWhiteSpace($env:BOT_TOKEN)
+          $rawIds   = if ($env:CHAT_IDS) { $env:CHAT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } } else { @() }
+          Write-Host "Notify diag: token_set=$hasToken chat_id_count=$($rawIds.Count) status=$($env:STATUS)"
+
+          # Windows PowerShell 5.1 defaults to TLS 1.0/1.1 — Telegram requires
+          # TLS 1.2+. Without this, Invoke-RestMethod fails with
+          # "Could not create SSL/TLS secure channel".
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          if (-not $hasToken) {
+            Write-Host "::warning::secrets.TELEGRAM_MONITOR_BOT_TOKEN is not set — cannot notify"
+            exit 0
+          }
+          if ($rawIds.Count -eq 0) {
+            Write-Host "::warning::vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS is empty — cannot notify"
+            exit 0
           }
 
           $tag   = if ($env:STATUS -eq 'success') { '[OK]' } else { '[FAIL]' }
-          $ea    = (@($env:STRATEGIES_EA    | ConvertFrom-Json)) -join ', '
-          $agent = (@($env:STRATEGIES_AGENT | ConvertFrom-Json)) -join ', '
+          # ConvertFrom-Json emits Object[] as a single atomic pipeline output
+          # (does NOT enumerate). Wrapping with @(...) produces Object[1]
+          # containing the array, so -join would call .ToString() on the inner
+          # array → "System.Object[]". Drop @() and -join the array directly.
+          $ea    = ($env:STRATEGIES_EA    | ConvertFrom-Json) -join ', '
+          $agent = ($env:STRATEGIES_AGENT | ConvertFrom-Json) -join ', '
           if (-not $ea)    { $ea = '(none)' }
           if (-not $agent) { $agent = '(none)' }
           $sha    = '${{ github.sha }}'.Substring(0, 7)
@@ -261,19 +278,36 @@ jobs:
             $runUrl
           ) -join "`n"
 
-          foreach ($id in $env:CHAT_IDS.Split(',')) {
-            $id = $id.Trim()
-            if (-not $id) { continue }
+          $sent = 0
+          $errs = @()
+          foreach ($id in $rawIds) {
             try {
-              Invoke-RestMethod -Method Post `
+              $resp = Invoke-RestMethod -Method Post `
                 -Uri "https://api.telegram.org/bot$($env:BOT_TOKEN)/sendMessage" `
                 -Body @{
                   chat_id = $id
                   text = $msg
                   disable_web_page_preview = 'true'
-                } | Out-Null
-              Write-Host "notified $id"
+                }
+              if ($resp.ok) {
+                Write-Host "notified $id (msg_id=$($resp.result.message_id))"
+                $sent++
+              } else {
+                $err = "$id : api ok=false desc=$($resp.description)"
+                Write-Host "::error::$err"
+                $errs += $err
+              }
             } catch {
-              Write-Host "notify $id failed: $_"
+              # Telegram puts its rejection JSON in ErrorDetails.Message — surface it.
+              $body = ''
+              try { $body = $_.ErrorDetails.Message } catch {}
+              $err = "$id : $($_.Exception.Message) body=$body"
+              Write-Host "::error::$err"
+              $errs += $err
             }
+          }
+
+          Write-Host "Notify summary: sent=$sent failed=$($errs.Count)"
+          if ($sent -eq 0) {
+            throw "All Telegram notifications failed: $($errs -join ' | ')"
           }

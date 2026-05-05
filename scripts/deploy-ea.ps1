@@ -3,7 +3,7 @@
 #   1. Copy .mq5 source into MQL5/Experts/<EAName>/
 #   2. Run that terminal own metaeditor64.exe to compile in-place
 #   3. Verify .ex5 was produced
-# Param Strategies: JSON array of strategy names. Example: ["zone_signal","hedge_lock"]
+# Param Strategies: JSON array of strategy names. Example: ["zone_signal","gvfx_signal"]
 param(
     [Parameter(Mandatory)]
     [string]$Strategies
