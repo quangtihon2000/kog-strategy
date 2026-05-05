@@ -12,7 +12,9 @@ redeploy doesn't replay yesterday's signals.
 
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import logging
 
 import redis.asyncio as redis
@@ -24,6 +26,36 @@ from ..handlers.formatters import format_signal
 from ..transports import Transport
 
 log = logging.getLogger(__name__)
+
+# Truncate raw payload in alert body so a malformed/huge file can't blow past
+# Telegram's 4096-char message limit. The whole file is still on disk.
+_ALERT_SNIPPET_MAX = 1500
+
+
+def _payload_hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8", errors="replace")).hexdigest()[:10]
+
+
+def _snippet(text: str) -> str:
+    if len(text) <= _ALERT_SNIPPET_MAX:
+        return text
+    return text[:_ALERT_SNIPPET_MAX] + f"\n... [truncated {len(text) - _ALERT_SNIPPET_MAX} chars]"
+
+
+async def _alert_bad_signal(
+    alerts: AlertDispatcher, vps_name: str, svc_name: str, fname: str,
+    reason: str, raw: str | None,
+) -> None:
+    body = _snippet(raw) if raw else "(file unreadable)"
+    digest = _payload_hash(raw or reason)
+    await alerts.notify(
+        dedup_key=f"sig_bad:{vps_name}:{svc_name}:{fname}:{digest}",
+        text=(
+            f"⚠️ *{vps_name}/{svc_name}* — bad signal `{fname}`\n"
+            f"reason: {reason}\n"
+            f"```\n{body}\n```"
+        ),
+    )
 
 # (vps, service, filename) -> last seen timestamp (as string for redis parity)
 _SEEN: dict[tuple[str, str, str], str] = {}
@@ -106,15 +138,30 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         for f in files:
             key = (vps.name, svc.name, f.name)
             try:
-                data = await transport.read_signal_json(svc.signal_dir, f.name)
+                raw = await transport.read_signal_text(svc.signal_dir, f.name)
             except Exception as e:
                 log.warning("signals_new: read failed (%s/%s/%s): %s",
                             vps.name, svc.name, f.name, e)
                 continue
-            if data is None:
+            if raw is None:
                 continue
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError as e:
+                log.warning("signals_new: parse failed (%s/%s/%s): %s",
+                            vps.name, svc.name, f.name, e)
+                await _alert_bad_signal(alerts, vps.name, svc.name, f.name,
+                                        f"json decode: {e}", raw)
+                continue
+            if not isinstance(parsed, dict):
+                await _alert_bad_signal(alerts, vps.name, svc.name, f.name,
+                                        f"top-level is {type(parsed).__name__}, expected object", raw)
+                continue
+            data = parsed
             ts = _signal_ts(data)
             if ts is None:
+                await _alert_bad_signal(alerts, vps.name, svc.name, f.name,
+                                        "missing `timestamp` field", raw)
                 continue
             prev = _SEEN.get(key)
             if prev == ts:
