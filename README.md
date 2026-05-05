@@ -18,14 +18,15 @@ A monorepo containing multiple MetaTrader 5 Expert Advisors (EAs) and their supp
 │                                                         │
 │  [metaeditor64.exe] ─── compile .mq5 → .ex5            │
 │                                                         │
-│  MT5 Terminal 1                MT5 Terminal 2            │
-│  ├─ ZoneSignalEA.ex5          ├─ AsiaRangeBreakoutEA    │
-│  ├─ CondeAutoEntryEA.ex5      └─ WyckoffSpringEA        │
-│  └─ HedgeLockEA.ex5                                    │
-│                                                         │
-│  [Python agents]                                        │
-│  ├─ zone_signal_agent   (Redis → JSON → EA reads)       │
-│  └─ conde_signal_agent  (Redis → JSON → EA reads)       │
+│  MT5 Terminal 1                MT5 Terminal 2                 │
+│  ├─ ZoneSignalEA.ex5           └─ GvfxSignalEA.ex5             │
+│  └─ CondeAutoEntryEA.ex5                                       │
+│                                                                │
+│  [Python agents]                                               │
+│  ├─ zone_signal_agent   (Redis → JSON → EA reads)              │
+│  ├─ conde_signal_agent  (Redis → JSON → EA reads)              │
+│  ├─ gvfx_signal_agent   (Redis → JSON → EA reads)              │
+│  └─ telegram_monitor_bot (read-only fleet monitor)             │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -45,12 +46,12 @@ kog_strategy/
 │   │   ├── ea/CondeAutoEntryEA.mq5
 │   │   ├── agent/                   # Python: Redis → JSON signal writer
 │   │   └── data/
-│   ├── asia_range_breakout/         # Asia session breakout (standalone)
-│   │   └── ea/AsiaRangeBreakoutEA.mq5
-│   ├── wyckoff_spring/              # Wyckoff spring/upthrust (standalone)
-│   │   └── ea/WyckoffSpringEA.mq5
-│   └── hedge_lock/                  # Hedge lock pair (standalone)
-│       └── ea/HedgeLockEA.mq5
+│   ├── gvfx_signal/                 # Grid DCA from target-price signal
+│   │   ├── ea/GvfxSignalEA.mq5
+│   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   └── data/
+│   └── telegram_monitor/            # Read-only Telegram fleet monitor
+│       └── agent/
 ├── shared/                          # Shared Python code
 │   └── agent_lib/
 │       └── redis_consumer.py        # Common Redis Stream consumer
@@ -71,9 +72,8 @@ kog_strategy/
 |---|---|---|---|
 | `zone_signal` | ZoneSignalEA | ✅ `zone_signal_agent` | Three-tier entry on M15 zone breakout |
 | `conde_auto_entry` | CondeAutoEntryEA | ✅ `conde_signal_agent` | Pre-computed entry/SL/TP auto execution |
-| `asia_range_breakout` | AsiaRangeBreakoutEA | ❌ | Scalp breakout of Asia session range |
-| `wyckoff_spring` | WyckoffSpringEA | ❌ | Wyckoff spring/upthrust reversal |
-| `hedge_lock` | HedgeLockEA | ❌ | Buy+Sell pair recycling on profit |
+| `gvfx_signal` | GvfxSignalEA | ✅ `gvfx_signal_agent` | Grid DCA from target-price signal with EOD cut |
+| `telegram_monitor` | — | ✅ `telegram_monitor_bot` | Read-only Telegram bot for fleet monitoring |
 
 ---
 
@@ -107,7 +107,7 @@ Edit `deploy.json` to map strategies to MT5 terminals:
 
 ```powershell
 # Deploy + compile in-place at each terminal
-.\scripts\deploy-ea.ps1 -Strategies '["zone_signal","hedge_lock"]'
+.\scripts\deploy-ea.ps1 -Strategies '["zone_signal","gvfx_signal"]'
 
 # Setup agents
 .\scripts\setup-agent.ps1 -Strategies '["zone_signal"]'

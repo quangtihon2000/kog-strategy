@@ -23,9 +23,8 @@ kog_strategy/
 ├── strategies/              # Each strategy = EA + optional Python agent
 │   ├── zone_signal/         # Zone breakout M15 (EA + agent)
 │   ├── conde_auto_entry/    # JSON signal auto entry (EA + agent)
-│   ├── asia_range_breakout/ # Asia session breakout (EA only)
-│   ├── wyckoff_spring/      # Wyckoff spring/upthrust (EA only)
-│   └── hedge_lock/          # Hedge lock pair (EA only)
+│   ├── gvfx_signal/         # Grid DCA from target-price signal (EA + agent)
+│   └── telegram_monitor/    # Read-only Telegram fleet monitor (agent only)
 ├── shared/agent_lib/        # Shared Python code (RedisConsumer)
 ├── scripts/                 # PowerShell CI/CD scripts (run on VPS)
 ├── .github/workflows/       # GitHub Actions pipeline
