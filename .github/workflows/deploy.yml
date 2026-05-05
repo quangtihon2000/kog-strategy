@@ -240,6 +240,11 @@ jobs:
           $rawIds   = if ($env:CHAT_IDS) { $env:CHAT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } } else { @() }
           Write-Host "Notify diag: token_set=$hasToken chat_id_count=$($rawIds.Count) status=$($env:STATUS)"
 
+          # Windows PowerShell 5.1 defaults to TLS 1.0/1.1 — Telegram requires
+          # TLS 1.2+. Without this, Invoke-RestMethod fails with
+          # "Could not create SSL/TLS secure channel".
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
           if (-not $hasToken) {
             Write-Host "::warning::secrets.TELEGRAM_MONITOR_BOT_TOKEN is not set — cannot notify"
             exit 0
