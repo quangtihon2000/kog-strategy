@@ -14,7 +14,7 @@
     },
     "mt5_2": {
       "hash": "0696FF550C099AD93E51F997F5A09924",
-      "label": "MetaTrader5_2 — GoldScalper (demo 25318677)",
+      "label": "MetaTrader5_2 — GvfxSignal (demo 25318677)",
       "mt5_install_dir": "C:\\Program Files\\MetaTrader5_2",
       "user_profile": "QuangXAU"
     }
@@ -62,26 +62,6 @@
           "optional": ["REDIS_URL", "REDIS_STREAM", "REDIS_GROUP", "REDIS_CONSUMER", "LOG_LEVEL"]
         }
       }
-    },
-    "asia_range_breakout": {
-      "ea_source": "strategies/asia_range_breakout/ea/AsiaRangeBreakoutEA.mq5",
-      "deploy_to": [],
-      "agent": null
-    },
-    "wyckoff_spring": {
-      "ea_source": "strategies/wyckoff_spring/ea/WyckoffSpringEA.mq5",
-      "deploy_to": [],
-      "agent": null
-    },
-    "hedge_lock": {
-      "ea_source": "strategies/hedge_lock/ea/HedgeLockEA.mq5",
-      "deploy_to": [],
-      "agent": null
-    },
-    "gold_scalper": {
-      "ea_source": "strategies/gold_scalper/ea/GoldScalperEA.mq5",
-      "deploy_to": ["mt5_2"],
-      "agent": null
     },
     "telegram_monitor": {
       "ea_source": null,
