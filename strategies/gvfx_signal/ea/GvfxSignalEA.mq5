@@ -105,15 +105,18 @@ void OnDeinit(const int reason) {
 }
 
 //+------------------------------------------------------------------+
-//| Effective step/tp (points) for the current signal.               |
-//| When sig.use_atr=true, derive from cached iATR handle clamped to |
-//| [InpAtrMinPts, InpAtrMaxPts]. Falls back to sig.step/sig.tp when |
-//| ATR is unavailable (handle invalid or buffer not yet filled).    |
+//| Effective step/tp (points) for the current signal + mode tag:    |
+//|   "S" — sig.use_atr=false (signal step/tp used directly)         |
+//|   "A" — sig.use_atr=true  and ATR-derived values applied         |
+//|   "F" — sig.use_atr=true  but ATR unavailable → fallback to      |
+//|         sig.step/sig.tp (handle invalid or buffer warming up)    |
+//| Mode is embedded in the per-position comment for post-hoc audit. |
 //+------------------------------------------------------------------+
-void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts) {
+void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mode) {
    if (!sig.use_atr) {
       stepPts = sig.step;
       tpPts   = sig.tp;
+      mode    = "S";
       return;
    }
    double buf[];
@@ -122,6 +125,7 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts) {
        || buf[0] <= 0) {
       stepPts = sig.step;
       tpPts   = sig.tp;
+      mode    = "F";
       return;
    }
    double atrPrice = buf[0];
@@ -132,6 +136,7 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts) {
    int    hi       = MathMax(lo, InpAtrMaxPts);
    stepPts = MathMax(lo, MathMin(hi, stepRaw));
    tpPts   = MathMax(lo, MathMin(hi, tpRaw));
+   mode    = "A";
 }
 
 //+------------------------------------------------------------------+
@@ -175,12 +180,13 @@ void OnTick() {
       g_currentSig   = sig;
       g_lastSigTs    = sig.timestamp;
       g_signalActive = true;
-      int effStep, effTp;
-      EffectiveStepTpPts(g_currentSig, effStep, effTp);
-      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f atr=%s effStep=%d effTp=%d",
+      int    effStep, effTp;
+      string effMode;
+      EffectiveStepTpPts(g_currentSig, effStep, effTp, effMode);
+      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f atr=%s effStep=%d effTp=%d mode=%s",
                   IntegerToString(sig.timestamp), sig.direction,
                   sig.target, sig.step, sig.tp, sig.low, sig.high,
-                  sig.use_atr ? "true" : "false", effStep, effTp);
+                  sig.use_atr ? "true" : "false", effStep, effTp, effMode);
    }
 
    //--- Target reached → deactivate signal (don't enter more)
@@ -199,8 +205,9 @@ void OnTick() {
    bool   isBuy      = (g_currentSig.direction == "BUY");
    double entryPrice = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                              : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   int effStepPts, effTpPts;
-   EffectiveStepTpPts(g_currentSig, effStepPts, effTpPts);
+   int    effStepPts, effTpPts;
+   string mode;
+   EffectiveStepTpPts(g_currentSig, effStepPts, effTpPts, mode);
    double stepP      = effStepPts * _Point;
 
    //--- High/low price-zone gate (optional per signal):
@@ -211,13 +218,13 @@ void OnTick() {
 
    if (HasOpenWithinStep(entryPrice, stepP)) return;
 
-   OpenMarket(isBuy, entryPrice, effTpPts);
+   OpenMarket(isBuy, entryPrice, effTpPts, mode);
 }
 
 //+------------------------------------------------------------------+
 //| Open one market position with hard SL + TP per signal             |
 //+------------------------------------------------------------------+
-bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts) {
+bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, const string mode) {
    double lot = NormalizeLot(InpLotPerOrder);
    if (lot <= 0) {
       Print("[GVFX] lot normalized to 0 — skip");
@@ -236,13 +243,16 @@ bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts) {
    double sl = ClampStop(dir, slRaw, true);
    double tp = ClampStop(dir, tpRaw, false);
 
-   string comment = StringFormat("GVFX_T%s", IntegerToString(g_currentSig.timestamp));
+   //--- Comment carries dedup ts + execution-mode suffix (A/F/S) for post-hoc audit.
+   //--- ParseTsFromComment() reads the ts via StringToInteger which stops at the
+   //--- first non-digit, so the trailing "_X" is naturally ignored on restart scan.
+   string comment = StringFormat("GVFX_T%s_%s", IntegerToString(g_currentSig.timestamp), mode);
 
    bool ok = isBuy ? g_trade.Buy (lot, _Symbol, 0.0, sl, tp, comment)
                    : g_trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
 
-   PrintFormat("[GVFX %s] level=%d lot=%.2f entry=%.5f sl=%.5f tp=%.5f trig=%.5f  %s",
-               isBuy ? "BUY" : "SELL", g_openCount + 1, lot, entry, sl, tp, triggerRef,
+   PrintFormat("[GVFX %s] mode=%s level=%d lot=%.2f entry=%.5f sl=%.5f tp=%.5f trig=%.5f  %s",
+               isBuy ? "BUY" : "SELL", mode, g_openCount + 1, lot, entry, sl, tp, triggerRef,
                ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
 
    if (ok) g_openCount++;
@@ -529,7 +539,7 @@ double ClampStop(const ENUM_POSITION_TYPE dir, const double rawPrice, const bool
 }
 
 //+------------------------------------------------------------------+
-//| Max ts seen in any GVFX_T{ts} comment — restart-safe dedup       |
+//| Max ts seen in any GVFX_T{ts}[_X] comment — restart-safe dedup   |
 //+------------------------------------------------------------------+
 ulong ScanMaxSeenTimestamp() {
    ulong maxTs = 0;
@@ -577,7 +587,10 @@ ulong ScanMaxSeenTimestamp() {
 }
 
 //+------------------------------------------------------------------+
-//| Extract trailing ts from "GVFX_T{ts}"; 0 if not our format       |
+//| Extract ts from "GVFX_T{ts}" or "GVFX_T{ts}_{A|F|S}". 0 if not   |
+//| our format. StringToInteger stops at the first non-digit so the  |
+//| trailing "_X" mode suffix is ignored — older positions written    |
+//| before the suffix existed still parse identically.                |
 //+------------------------------------------------------------------+
 ulong ParseTsFromComment(const string comment) {
    if (StringFind(comment, "GVFX_T") != 0) return 0;

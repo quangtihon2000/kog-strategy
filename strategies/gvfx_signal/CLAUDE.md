@@ -53,8 +53,11 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - Nếu broker không expose session (weekend/holiday) → `TodaySessionCloseTime()` return 0, EOD cut skip toàn bộ.
 
 ### Dedup (restart-safe)
-- Position comment: `GVFX_T{timestamp}` (e.g., `GVFX_T1777896356`).
-- `ScanMaxSeenTimestamp()` scan POSITIONS + ORDERS + DEAL HISTORY (lookback `InpHistoryLookbackDays` ngày), parse `GVFX_T{ts}` từ comment, lấy max → `g_lastSigTs` recovered on restart.
+- Position comment: `GVFX_T{timestamp}_{mode}` — e.g., `GVFX_T1777896356_A`. Mode tag distinguishes how step/tp được chọn tại thời điểm vào lệnh:
+  - `S` — `signal.use_atr=false` → dùng thẳng `signal.step` / `signal.tp`.
+  - `A` — `signal.use_atr=true` + ATR ready → step/tp derive từ ATR.
+  - `F` — `signal.use_atr=true` nhưng ATR chưa sẵn (handle invalid hoặc buffer warming up) → fallback về `signal.step` / `signal.tp`.
+- `ScanMaxSeenTimestamp()` scan POSITIONS + ORDERS + DEAL HISTORY (lookback `InpHistoryLookbackDays` ngày), parse ts từ comment, lấy max → `g_lastSigTs` recovered on restart. `StringToInteger()` dừng ở ký tự non-digit đầu tiên nên cả format mới (`GVFX_T{ts}_X`) lẫn legacy (`GVFX_T{ts}`) đều parse cùng kết quả.
 - Không cần reconstruct grid anchor: `HasOpenWithinStep` đọc trực tiếp từ vị thế đang mở mỗi tick → state-less, restart-safe by construction.
 
 ## Agent Signal Format
