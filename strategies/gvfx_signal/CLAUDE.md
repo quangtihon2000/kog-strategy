@@ -43,6 +43,7 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - Target reached → `g_signalActive = false`. Positions đang mở vẫn chạy theo TP/SL, không vào thêm.
   - BUY: `bid ≥ target` → inactive
   - SELL: `ask ≤ target` → inactive
+- **Restart-safe deactivation**: khi target reached, EA persist ts vào GlobalVariable `GVFX_Reached_{magic}_{symbol}`. `OnInit` check biến này khi recover signal active state — nếu `probe.timestamp == GVFX_Reached_*` thì giữ `g_signalActive = false` bất kể giá hiện tại đã rút khỏi target hay chưa. Tránh kịch bản: BUY target chạm rồi bid hồi lại dưới target, redeploy EA → tưởng signal còn active và mở lệnh mới trên signal đã chết. Biến này tự overwrite khi signal mới reached, không cần cleanup.
 
 ### EOD cut
 - **Trigger window**: từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker. Default lead = 5 phút. Set `InpEodCutLeadMins = -1` để disable.

@@ -71,11 +71,14 @@ int OnInit() {
 
    g_lastSigTs = ScanMaxSeenTimestamp();
 
-   //--- If signal file already executed and target not yet reached → keep active
+   //--- If signal file already executed and target not yet reached → keep active.
+   //    `SignalAlreadyReached` reads the persistent reached-ts marker so a
+   //    deactivated signal stays dead across restarts even if price has since
+   //    retreated to the unfavorable side of target.
    GvfxSig probe;
    if (LoadSignal(g_signalFile, probe) && probe.timestamp == g_lastSigTs && g_lastSigTs > 0) {
       g_currentSig    = probe;
-      g_signalActive  = !TargetReached(probe);
+      g_signalActive  = !TargetReached(probe) && !SignalAlreadyReached(probe.timestamp);
    }
 
    RefreshDailyAnchor();
@@ -189,9 +192,12 @@ void OnTick() {
                   sig.use_atr ? "true" : "false", effStep, effTp, effMode);
    }
 
-   //--- Target reached → deactivate signal (don't enter more)
+   //--- Target reached → deactivate signal (don't enter more). Persist the
+   //    reached-ts so a redeploy doesn't resurrect the signal when price
+   //    retreats to the unfavorable side of target.
    if (g_signalActive && TargetReached(g_currentSig)) {
       g_signalActive = false;
+      MarkSignalReached(g_currentSig.timestamp);
       Print("[GVFX] Target reached — signal deactivated; existing positions continue");
    }
 
@@ -353,6 +359,28 @@ string EodAnchorVarName() {
 void ArmEodSuppression() {
    g_eodCutDoneAnchor = g_dailyAnchor;
    GlobalVariableSet(EodAnchorVarName(), (double)g_eodCutDoneAnchor);
+}
+
+//+------------------------------------------------------------------+
+//| Per-instance global var name for "target was reached" marker.    |
+//| Stores the timestamp of the most recent signal that hit target;  |
+//| OnInit compares against probe.timestamp to keep the signal dead  |
+//| across restarts even if price has since retreated.               |
+//+------------------------------------------------------------------+
+string ReachedTsVarName() {
+   return "GVFX_Reached_" + IntegerToString((long)InpMagic) + "_" + _Symbol;
+}
+
+bool SignalAlreadyReached(const ulong ts) {
+   if (ts == 0) return false;
+   string n = ReachedTsVarName();
+   if (!GlobalVariableCheck(n)) return false;
+   return (ulong)GlobalVariableGet(n) == ts;
+}
+
+void MarkSignalReached(const ulong ts) {
+   if (ts == 0) return;
+   GlobalVariableSet(ReachedTsVarName(), (double)ts);
 }
 
 //+------------------------------------------------------------------+
