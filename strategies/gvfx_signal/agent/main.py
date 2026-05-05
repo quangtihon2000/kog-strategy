@@ -44,13 +44,15 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         try:
             writer.write(sig)
             log.info(
-                "[%s/%s] Written  dir=%s  target=%.5f  step=%d  tp=%d  ts=%d",
+                "[%s/%s] Written  dir=%s  target=%.5f  step=%d  tp=%d  low=%.5f  high=%.5f  ts=%d",
                 writer.account_id,
                 writer.symbol,
                 sig.direction,
                 sig.target,
                 sig.step,
                 sig.tp,
+                sig.low,
+                sig.high,
                 sig.timestamp,
             )
         except Exception as exc:

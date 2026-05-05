@@ -17,7 +17,8 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   1. `g_signalActive` (chưa chạm target).
   2. `open_count < InpMaxPositions` (cap 20).
   3. `current_spread_pts ≤ InpMaxSpreadPts`.
-  4. `HasOpenWithinStep(entry_price, step*_Point) == false` — không có vị thế EA nào đang mở với `|open_price − entry_price| < step*_Point`.
+  4. Price-zone gate (nếu signal có `low`/`high`): BUY chỉ vào khi `entryPrice > low`; SELL chỉ vào khi `entryPrice < high`.
+  5. `HasOpenWithinStep(entry_price, step*_Point) == false` — không có vị thế EA nào đang mở với `|open_price − entry_price| < step*_Point`.
 - **Entry price**: BUY → `SymbolInfoDouble(_Symbol, SYMBOL_ASK)`; SELL → `SymbolInfoDouble(_Symbol, SYMBOL_BID)`.
 - **No price guard against target**: lệnh được phép mở ngay sát target — chỉ cần signal vẫn active.
 - **Re-entry sau TP/SL**: khi 1 position TP/SL → slot trống. Nếu giá hiện tại không nằm trong ±`step` của bất kỳ vị thế nào còn lại → re-entry ngay tick kế tiếp (kể cả tại level cũ).
@@ -56,14 +57,21 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   "target": 4860.0,
   "direction": "BUY",
   "step": 500,
-  "tp": 500
+  "tp": 500,
+  "low": 0.0,
+  "high": 0.0
 }
 ```
 
 - `step`, `tp`: integer, đơn vị **MT5 points** (1pt = `_Point`; với XAUUSD 2-digit → 500 pts = 5.00 price).
+- `low`, `high`: float, đơn vị **price**. Optional price-zone gate (0 = disabled).
+  - BUY: chỉ vào lệnh khi `entryPrice > low`.
+  - SELL: chỉ vào lệnh khi `entryPrice < high`.
+  - Nếu cả hai > 0 thì phải `low < high`.
 - `timestamp` **NOT re-stamped** — producer-supplied, preserved end-to-end. Đây là dedup identity nhúng vào position comment.
 - File path: `data/{account}_{symbol}.json` (e.g., `data/5100000_XAUUSD.json`).
 - EA reads from `MQL5/Files/GvfxSignalEA/{account}_{symbol}.json`.
+- Backward compat: nếu file không có field `low`/`high` (hoặc là `null`), EA mặc định 0 (disabled).
 
 ## Agent Config (`.env`)
 

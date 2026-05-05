@@ -29,6 +29,8 @@ struct GvfxSig {
    double   target;
    int      step;        // points
    int      tp;          // points
+   double   low;         // BUY entry floor (price). 0 = disabled
+   double   high;        // SELL entry ceiling (price). 0 = disabled
    bool     valid;
 };
 
@@ -126,9 +128,9 @@ void OnTick() {
       g_currentSig   = sig;
       g_lastSigTs    = sig.timestamp;
       g_signalActive = true;
-      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d",
+      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f",
                   IntegerToString(sig.timestamp), sig.direction,
-                  sig.target, sig.step, sig.tp);
+                  sig.target, sig.step, sig.tp, sig.low, sig.high);
    }
 
    //--- Target reached → deactivate signal (don't enter more)
@@ -148,6 +150,12 @@ void OnTick() {
    double entryPrice = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                              : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double stepP      = g_currentSig.step * _Point;
+
+   //--- High/low price-zone gate (optional per signal):
+   //      BUY  → only enter when price > low  (floor)
+   //      SELL → only enter when price < high (ceiling)
+   if ( isBuy && g_currentSig.low  > 0 && entryPrice <= g_currentSig.low)  return;
+   if (!isBuy && g_currentSig.high > 0 && entryPrice >= g_currentSig.high) return;
 
    if (HasOpenWithinStep(entryPrice, stepP)) return;
 
@@ -540,6 +548,8 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    string tgt_str  = JsonGetString(json, "target");
    string step_str = JsonGetString(json, "step");
    string tp_str   = JsonGetString(json, "tp");
+   string low_str  = JsonGetString(json, "low");
+   string high_str = JsonGetString(json, "high");
 
    if (ts_str   == "") { Print("[Validation] Missing: timestamp"); return false; }
    if (sym_str  == "") { Print("[Validation] Missing: symbol");    return false; }
@@ -566,6 +576,16 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    if (step   <= 0) { Print("[Validation] step <= 0");   return false; }
    if (tp     <= 0) { Print("[Validation] tp <= 0");     return false; }
 
+   //--- low/high are optional. Missing field or "null" → 0 (disabled).
+   double low  = (low_str  == "" || low_str  == "null") ? 0.0 : StringToDouble(low_str);
+   double high = (high_str == "" || high_str == "null") ? 0.0 : StringToDouble(high_str);
+   if (low  < 0) { Print("[Validation] low < 0");  return false; }
+   if (high < 0) { Print("[Validation] high < 0"); return false; }
+   if (low > 0 && high > 0 && low >= high) {
+      PrintFormat("[Validation] low (%.5f) must be < high (%.5f)", low, high);
+      return false;
+   }
+
    ulong ts = (ulong)StringToInteger(ts_str);
    if (ts == 0) { Print("[Validation] timestamp == 0"); return false; }
 
@@ -575,6 +595,8 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    sig.target    = target;
    sig.step      = step;
    sig.tp        = tp;
+   sig.low       = low;
+   sig.high      = high;
    sig.valid     = true;
    return true;
 }

@@ -73,5 +73,5 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("tail", logs.cmd_tail))
     app.add_handler(CommandHandler("tailstop", logs.cmd_tailstop))
     app.add_handler(CommandHandler("signals", signals.cmd_signals))
-    app.add_handler(CommandHandler("gvfx", gvfx_signal.cmd_gvfx))
+    app.add_handler(gvfx_signal.conversation_handler())
     app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|tail|signals):"))
