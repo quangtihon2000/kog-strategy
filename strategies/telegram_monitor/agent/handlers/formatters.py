@@ -60,13 +60,18 @@ def format_gvfx_signal(d: dict) -> str:
     arrow = "▲" if direction == "BUY" else ("▼" if direction == "SELL" else "·")
     low = d.get("low") or 0
     high = d.get("high") or 0
+    use_atr = d.get("use_atr", True)
+    if isinstance(use_atr, str):
+        use_atr = use_atr.strip().lower() in ("1", "true", "yes", "on", "y", "t")
+    fb_suffix = " (fallback)" if use_atr else ""
     lines = [
         f"symbol     : {d.get('symbol', '?')}",
         f"timestamp  : {_ts_to_str(d.get('timestamp'))}",
         f"direction  : {arrow} {direction}",
         f"target     : {d.get('target', '-')}",
-        f"step       : {d.get('step', '-')} pts",
-        f"tp         : {d.get('tp', '-')} pts",
+        f"use_atr    : {'ON' if use_atr else 'OFF'}",
+        f"step       : {d.get('step', '-')} pts{fb_suffix}",
+        f"tp         : {d.get('tp', '-')} pts{fb_suffix}",
     ]
     if float(low) > 0:
         lines.append(f"low        : {low}")
