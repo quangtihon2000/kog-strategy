@@ -26,8 +26,17 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 
 ### Per-order risk
 - Lot = `InpLotPerOrder` (default 0.01), normalize theo `SYMBOL_VOLUME_STEP`.
-- TP = entry ± `signal.tp * _Point` (clamped via broker stops level).
+- TP = entry ± `effTp * _Point` (clamped via broker stops level), với `effTp` từ `EffectiveStepTpPts()` (ATR hoặc fallback).
 - Hard SL = entry ∓ `InpMaxLossPtsPerOrder * _Point` (default 10000 pts, clamped).
+
+### ATR-derived step/tp (`use_atr`)
+- Khi `signal.use_atr = true` (default): EA derive `effStep` / `effTp` từ cached `iATR(_Symbol, InpAtrTimeframe, InpAtrPeriod)`:
+  - `effStep = round(ATR_pts * InpAtrStepMult)`, `effTp = round(ATR_pts * InpAtrTpMult)`.
+  - Clamp vào `[InpAtrMinPts, InpAtrMaxPts]` (default 100..5000 pts).
+- Fallback về `signal.step` / `signal.tp` khi: handle invalid (init failed) hoặc `CopyBuffer()` chưa có data (indicator còn warming up sau restart).
+- Khi `signal.use_atr = false`: EA dùng thẳng `signal.step` / `signal.tp` — không gọi iATR.
+- Handle `iATR` được tạo 1 lần trong `OnInit`, release trong `OnDeinit` qua `IndicatorRelease`.
+- ATR-related inputs: `InpAtrTimeframe` (default `PERIOD_M15`), `InpAtrPeriod` (14), `InpAtrStepMult` / `InpAtrTpMult` (1.0), `InpAtrMinPts` (100), `InpAtrMaxPts` (5000).
 
 ### Signal lifecycle
 - New `timestamp` → `g_signalActive = true`, cache `g_currentSig`.
@@ -59,19 +68,21 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   "step": 500,
   "tp": 500,
   "low": 0.0,
-  "high": 0.0
+  "high": 0.0,
+  "use_atr": true
 }
 ```
 
-- `step`, `tp`: integer, đơn vị **MT5 points** (1pt = `_Point`; với XAUUSD 2-digit → 500 pts = 5.00 price).
+- `step`, `tp`: integer, đơn vị **MT5 points** (1pt = `_Point`; với XAUUSD 2-digit → 500 pts = 5.00 price). Khi `use_atr=true` → đây là **fallback** dùng khi ATR buffer chưa sẵn sàng.
 - `low`, `high`: float, đơn vị **price**. Optional price-zone gate (0 = disabled).
   - BUY: chỉ vào lệnh khi `entryPrice > low`.
   - SELL: chỉ vào lệnh khi `entryPrice < high`.
   - Nếu cả hai > 0 thì phải `low < high`.
+- `use_atr`: bool, default `true`. Khi true → EA derive step/tp từ iATR; signal `step`/`tp` thành fallback. Xem section _ATR-derived step/tp_.
 - `timestamp` **NOT re-stamped** — producer-supplied, preserved end-to-end. Đây là dedup identity nhúng vào position comment.
 - File path: `data/{account}_{symbol}.json` (e.g., `data/5100000_XAUUSD.json`).
 - EA reads from `MQL5/Files/GvfxSignalEA/{account}_{symbol}.json`.
-- Backward compat: nếu file không có field `low`/`high` (hoặc là `null`), EA mặc định 0 (disabled).
+- Backward compat: nếu file không có field `low`/`high` (hoặc là `null`), EA mặc định 0 (disabled). Field `use_atr` missing/null → default `true`.
 
 ## Agent Config (`.env`)
 

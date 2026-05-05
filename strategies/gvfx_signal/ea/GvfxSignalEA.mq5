@@ -18,6 +18,12 @@ input int    InpMaxLossPtsPerOrder  = 10000;         // Hard SL distance per ord
 input int    InpEodCutLeadMins      = 5;             // Cut N minutes before broker's last session close (-1 disables)
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
+input ENUM_TIMEFRAMES InpAtrTimeframe = PERIOD_M15;  // ATR timeframe (used when signal.use_atr=true)
+input int    InpAtrPeriod           = 14;            // ATR period
+input double InpAtrStepMult         = 1.0;           // step = ATR * mult (when use_atr)
+input double InpAtrTpMult           = 1.0;           // tp   = ATR * mult (when use_atr)
+input int    InpAtrMinPts           = 100;           // ATR-derived step/tp floor (points)
+input int    InpAtrMaxPts           = 5000;          // ATR-derived step/tp ceiling (points)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -27,10 +33,11 @@ struct GvfxSig {
    string   symbol;
    string   direction;   // "BUY" or "SELL"
    double   target;
-   int      step;        // points
-   int      tp;          // points
+   int      step;        // points (fallback when use_atr and ATR unavailable)
+   int      tp;          // points (fallback when use_atr and ATR unavailable)
    double   low;         // BUY entry floor (price). 0 = disabled
    double   high;        // SELL entry ceiling (price). 0 = disabled
+   bool     use_atr;     // true → EA derives step/tp from ATR (signal step/tp = fallback)
    bool     valid;
 };
 
@@ -46,11 +53,17 @@ datetime g_dailyAnchor   = 0;
 double   g_dailyRealized = 0;
 datetime g_eodCutDoneAnchor = 0;  // == g_dailyAnchor while today's EOD cut is in effect
 GvfxSig  g_currentSig;
+int      g_atrHandle    = INVALID_HANDLE;
 
 //+------------------------------------------------------------------+
 int OnInit() {
    g_trade.SetExpertMagicNumber(InpMagic);
    ZeroMemory(g_currentSig);
+
+   g_atrHandle = iATR(_Symbol, InpAtrTimeframe, InpAtrPeriod);
+   if (g_atrHandle == INVALID_HANDLE)
+      PrintFormat("[GVFX] iATR(%s, tf=%d, period=%d) failed — fallback to signal step/tp",
+                  _Symbol, (int)InpAtrTimeframe, InpAtrPeriod);
 
    g_signalFile = InpSignalSubdir + "\\"
                 + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))
@@ -84,7 +97,41 @@ int OnInit() {
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
+   if (g_atrHandle != INVALID_HANDLE) {
+      IndicatorRelease(g_atrHandle);
+      g_atrHandle = INVALID_HANDLE;
+   }
    PrintFormat("[GVFX] Removed. Reason: %d", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Effective step/tp (points) for the current signal.               |
+//| When sig.use_atr=true, derive from cached iATR handle clamped to |
+//| [InpAtrMinPts, InpAtrMaxPts]. Falls back to sig.step/sig.tp when |
+//| ATR is unavailable (handle invalid or buffer not yet filled).    |
+//+------------------------------------------------------------------+
+void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts) {
+   if (!sig.use_atr) {
+      stepPts = sig.step;
+      tpPts   = sig.tp;
+      return;
+   }
+   double buf[];
+   if (g_atrHandle == INVALID_HANDLE
+       || CopyBuffer(g_atrHandle, 0, 0, 1, buf) <= 0
+       || buf[0] <= 0) {
+      stepPts = sig.step;
+      tpPts   = sig.tp;
+      return;
+   }
+   double atrPrice = buf[0];
+   int    pt       = (_Point > 0) ? (int)MathRound(atrPrice / _Point) : 0;
+   int    stepRaw  = (int)MathRound(pt * InpAtrStepMult);
+   int    tpRaw    = (int)MathRound(pt * InpAtrTpMult);
+   int    lo       = MathMax(1, InpAtrMinPts);
+   int    hi       = MathMax(lo, InpAtrMaxPts);
+   stepPts = MathMax(lo, MathMin(hi, stepRaw));
+   tpPts   = MathMax(lo, MathMin(hi, tpRaw));
 }
 
 //+------------------------------------------------------------------+
@@ -128,9 +175,12 @@ void OnTick() {
       g_currentSig   = sig;
       g_lastSigTs    = sig.timestamp;
       g_signalActive = true;
-      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f",
+      int effStep, effTp;
+      EffectiveStepTpPts(g_currentSig, effStep, effTp);
+      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f atr=%s effStep=%d effTp=%d",
                   IntegerToString(sig.timestamp), sig.direction,
-                  sig.target, sig.step, sig.tp, sig.low, sig.high);
+                  sig.target, sig.step, sig.tp, sig.low, sig.high,
+                  sig.use_atr ? "true" : "false", effStep, effTp);
    }
 
    //--- Target reached → deactivate signal (don't enter more)
@@ -149,7 +199,9 @@ void OnTick() {
    bool   isBuy      = (g_currentSig.direction == "BUY");
    double entryPrice = isBuy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                              : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   double stepP      = g_currentSig.step * _Point;
+   int effStepPts, effTpPts;
+   EffectiveStepTpPts(g_currentSig, effStepPts, effTpPts);
+   double stepP      = effStepPts * _Point;
 
    //--- High/low price-zone gate (optional per signal):
    //      BUY  → only enter when price > low  (floor)
@@ -159,13 +211,13 @@ void OnTick() {
 
    if (HasOpenWithinStep(entryPrice, stepP)) return;
 
-   OpenMarket(isBuy, entryPrice);
+   OpenMarket(isBuy, entryPrice, effTpPts);
 }
 
 //+------------------------------------------------------------------+
 //| Open one market position with hard SL + TP per signal             |
 //+------------------------------------------------------------------+
-bool OpenMarket(const bool isBuy, const double triggerRef) {
+bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts) {
    double lot = NormalizeLot(InpLotPerOrder);
    if (lot <= 0) {
       Print("[GVFX] lot normalized to 0 — skip");
@@ -178,8 +230,8 @@ bool OpenMarket(const bool isBuy, const double triggerRef) {
 
    double slRaw = isBuy ? entry - InpMaxLossPtsPerOrder * _Point
                         : entry + InpMaxLossPtsPerOrder * _Point;
-   double tpRaw = isBuy ? entry + g_currentSig.tp * _Point
-                        : entry - g_currentSig.tp * _Point;
+   double tpRaw = isBuy ? entry + tpPts * _Point
+                        : entry - tpPts * _Point;
 
    double sl = ClampStop(dir, slRaw, true);
    double tp = ClampStop(dir, tpRaw, false);
@@ -550,6 +602,7 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    string tp_str   = JsonGetString(json, "tp");
    string low_str  = JsonGetString(json, "low");
    string high_str = JsonGetString(json, "high");
+   string atr_str  = JsonGetString(json, "use_atr");
 
    if (ts_str   == "") { Print("[Validation] Missing: timestamp"); return false; }
    if (sym_str  == "") { Print("[Validation] Missing: symbol");    return false; }
@@ -597,6 +650,16 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    sig.tp        = tp;
    sig.low       = low;
    sig.high      = high;
+
+   //--- use_atr is optional. Missing field or "null" → true (default).
+   //--- Accepts "true"/"false"/"1"/"0" (case-insensitive).
+   bool useAtr = true;
+   if (atr_str != "" && atr_str != "null") {
+      string a = atr_str;
+      StringToLower(a);
+      useAtr = !(a == "false" || a == "0" || a == "no");
+   }
+   sig.use_atr   = useAtr;
    sig.valid     = true;
    return true;
 }
