@@ -73,7 +73,7 @@
         "data_subfolder": null,
         "env": {
           "required": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS"],
-          "optional": ["REDIS_URL", "LOG_LEVEL", "FLEET_CONFIG"]
+          "optional": ["TELEGRAM_ALERT_CHAT_IDS", "REDIS_URL", "LOG_LEVEL", "FLEET_CONFIG"]
         }
       }
     }
