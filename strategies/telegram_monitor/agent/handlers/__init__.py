@@ -88,6 +88,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("start", commands.cmd_start))
     app.add_handler(CommandHandler("help", commands.cmd_help))
     app.add_handler(CommandHandler("whoami", commands.cmd_whoami))
+    app.add_handler(CommandHandler("chatid", commands.cmd_chatid))
     app.add_handler(CommandHandler("status", status.cmd_status))
     app.add_handler(CommandHandler("logs", logs.cmd_logs))
     app.add_handler(CommandHandler("tail", logs.cmd_tail))
