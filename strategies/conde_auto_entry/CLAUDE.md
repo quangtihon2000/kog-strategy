@@ -12,6 +12,9 @@ Reads pre-computed trade signals (entry, SL, TPs) from a JSON file and executes 
 
 ## EA Logic
 
+### TP policy
+All positions opened from one signal target **TP1** (`sig.tps[0]`), regardless of slot index. The number of positions still equals `len(tps[])` — that controls position count + lot sizing — but every position exits together when price first touches TP1. TP2/TP3 in the JSON are effectively ignored as TP destinations.
+
 ### Order Mode Selection
 ```
 distance = |market_price - entry_price|

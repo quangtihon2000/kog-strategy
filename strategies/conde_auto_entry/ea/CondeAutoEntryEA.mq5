@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
 #property version     "1.02"
-#property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP"
+#property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
 
@@ -192,7 +192,9 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
       double buffer = InpSlBufferPts * _Point;
       double slRaw  = (dir == POSITION_TYPE_BUY) ? sig.sl - buffer : sig.sl + buffer;
       double sl     = ClampStop(dir, slRaw,       true);
-      double tp     = ClampStop(dir, sig.tps[i],  false);
+      // All positions target TP1 — exit together when the first TP prints.
+      // Position count still tracks tps[] length for sizing/dedup purposes.
+      double tp     = ClampStop(dir, sig.tps[0],  false);
 
       bool ok;
       if (usePending) {
