@@ -9,9 +9,9 @@ Two guards prevent floods:
    should call `notify` only on transitions; the dispatcher itself stays
    stateless about meaning.
 
-Sends to every chat id in `Settings.allowed_user_ids` (Phase 0 = personal
-operator chat). A future broadcast list can be added without touching
-monitor code.
+Sends to every chat id in `Settings.alert_chat_ids` — user ids (DM) or
+negative group/channel ids. Defaults to `allowed_user_ids` when the
+`TELEGRAM_ALERT_CHAT_IDS` env var is unset.
 """
 
 from __future__ import annotations

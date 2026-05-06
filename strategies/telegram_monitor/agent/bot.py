@@ -74,7 +74,7 @@ def build_app(settings: Settings) -> Application:
     transports = _build_transports(settings)
     alerts = AlertDispatcher(
         bot=app.bot,
-        chat_ids=settings.allowed_user_ids,
+        chat_ids=settings.alert_chat_ids,
     )
     redis = Redis.from_url(settings.redis_url, decode_responses=False)
 

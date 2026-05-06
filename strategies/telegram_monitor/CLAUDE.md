@@ -47,6 +47,11 @@ In the repo settings:
 - **Secret** `TELEGRAM_MONITOR_BOT_TOKEN` — the BotFather token.
 - **Variable** `TELEGRAM_MONITOR_ALLOWED_USER_IDS` — comma-separated user ids,
   e.g. `123456789,987654321`. Empty = bot rejects everyone.
+- **Variable** `TELEGRAM_MONITOR_ALERT_CHAT_IDS` *(optional)* — where monitor
+  pages fan out. User ids (DM) or negative group/channel ids
+  (e.g. `-1001234567890`). Unset = fall back to `ALLOWED_USER_IDS`.
+  Use this to send alerts into a shared ops group while keeping commands
+  scoped to individual operators.
 
 Naming follows `setup-agent.ps1`'s `${PREFIX}_${KEY}` convention
 (`PREFIX = TELEGRAM_MONITOR`). The workflow at
