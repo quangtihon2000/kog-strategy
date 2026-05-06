@@ -243,17 +243,41 @@ foreach ($termName in $terminalsToRestart.Keys) {
         Write-Host "[$termName] No running terminal64.exe at $exePath (nothing to stop)"
     }
 
-    Write-Host "[$termName] Launching $exePath (detached via WMI)"
-    # Use WMI Win32_Process.Create so the process is parented to wmiprvse and
-    # survives the GitHub Actions job object cleanup (which kills child PIDs).
-    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-        CommandLine = "`"$exePath`""
-        CurrentDirectory = $installDir
-    }
-    if ($result.ReturnValue -ne 0) {
-        Write-Error "[$termName] WMI Create failed with return $($result.ReturnValue)"
+    # Launch path: prefer Windows Scheduled Task so MT5 spawns inside the
+    # interactive session of the user that owns the MT5 install (QuangXAU),
+    # not Session 0. WMI Create from the runner (Administrator/LocalSystem)
+    # spawns into Session 0 -> invisible zombie (see PID 1960 incident
+    # 2026-05-06). Fallback to WMI only if the task is missing, so deploys
+    # don't break before scripts/setup-mt5-tasks.ps1 has been run on a host.
+    $taskName = "KOG_MT5_$termName"
+    # *>$null suppresses both stdout and stderr; with $ErrorActionPreference=Stop
+    # at script scope the older `2>$null` form still escalates schtasks' stderr
+    # ("task not found") to NativeCommandError and aborts the loop.
+    $taskExists = $false
+    try {
+        & schtasks.exe /query /tn $taskName *> $null
+        $taskExists = ($LASTEXITCODE -eq 0)
+    } catch { $taskExists = $false }
+
+    if ($taskExists) {
+        Write-Host "[$termName] Triggering scheduled task '$taskName'"
+        & schtasks.exe /run /tn $taskName *> $null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "[$termName] schtasks /run failed (exit $LASTEXITCODE)"
+        } else {
+            Write-Host "[$termName] OK Task triggered (MT5 will start in target user's session)"
+        }
     } else {
-        Write-Host "[$termName] Started PID $($result.ProcessId)"
+        Write-Warning "[$termName] Scheduled task '$taskName' not found - falling back to WMI Create (will spawn in Session 0, invisible). Run scripts/setup-mt5-tasks.ps1 on the VPS to fix."
+        $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+            CommandLine = "`"$exePath`""
+            CurrentDirectory = $installDir
+        }
+        if ($result.ReturnValue -ne 0) {
+            Write-Error "[$termName] WMI Create failed with return $($result.ReturnValue)"
+        } else {
+            Write-Host "[$termName] Started PID $($result.ProcessId) (Session 0)"
+        }
     }
 }
 
