@@ -127,6 +127,15 @@ jobs:
             if ($status -match "RUNNING|PAUSED|START_PENDING|STOP_PENDING") {
               Write-Host "[$svc] stopping (status: $($status.Trim()))"
               & nssm stop $svc 2>&1 | Write-Host
+              # Poll until SCM reports SERVICE_STOPPED. Without this the next
+              # `nssm start` (post setup) raced an in-flight stop and SCM
+              # responded SERVICE_PAUSED — see run 25419001413 (2026-05-06).
+              for ($i = 0; $i -lt 15; $i++) {
+                Start-Sleep -Seconds 1
+                $post = (& nssm status $svc 2>&1) | Out-String
+                if ($post -match "SERVICE_STOPPED") { break }
+              }
+              Write-Host "[$svc] post-stop status: $($post.Trim())"
             } else {
               Write-Host "[$svc] not running - skip (status: $($status.Trim()))"
             }
@@ -206,15 +215,29 @@ jobs:
               & nssm stop $svc 2>&1 | Write-Host
               Start-Sleep -Seconds 2
             }
-            Write-Host "[$svc] starting (was: $($status.Trim()))"
-            & nssm start $svc 2>&1 | Write-Host
-            Start-Sleep -Seconds 2
-            $post = (& nssm status $svc 2>&1) | Out-String
-            if ($post -notmatch "RUNNING|START_PENDING") {
-              Write-Host "[$svc] FAILED to start (status: $($post.Trim()))"
+            # Retry start up to 3 times with backoff. NSSM's AppThrottle
+            # (1500ms default) plus SCM's internal pending state can make a
+            # single `nssm start` from a freshly-stopped service return
+            # SERVICE_PAUSED even when status BEFORE was SERVICE_STOPPED.
+            $up = $false
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              Write-Host "[$svc] starting attempt $attempt (was: $($status.Trim()))"
+              & nssm start $svc 2>&1 | Write-Host
+              Start-Sleep -Seconds 3
+              $post = (& nssm status $svc 2>&1) | Out-String
+              if ($post -match "RUNNING|START_PENDING") {
+                Write-Host "[$svc] up (status: $($post.Trim()))"
+                $up = $true
+                break
+              }
+              Write-Host "[$svc] attempt $attempt failed (status: $($post.Trim())) — unsticking"
+              & nssm stop $svc 2>&1 | Write-Host
+              Start-Sleep -Seconds 3
+              $status = (& nssm status $svc 2>&1) | Out-String
+            }
+            if (-not $up) {
+              Write-Host "[$svc] FAILED to start after 3 attempts"
               $failed += $svc
-            } else {
-              Write-Host "[$svc] up (status: $($post.Trim()))"
             }
           }
           if ($failed.Count -gt 0) {
