@@ -1,8 +1,9 @@
-"""Generic commands: /start, /help, /whoami.
+"""Generic commands: /start, /help, /whoami, /chatid.
 
-/whoami is unauthed on purpose — operators need their numeric user id
-*before* they can be added to the whitelist. It only echoes back what
-Telegram already tells the bot.
+/whoami and /chatid are unauthed on purpose — operators need the numeric
+ids *before* they can be added to TELEGRAM_ALLOWED_USER_IDS or
+TELEGRAM_ALERT_CHAT_IDS. They only echo back what Telegram already
+tells the bot.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ HELP_TEXT = (
     "         low/high are price-zone gates: BUY only above low, SELL only below high (0 = disabled)\n"
     "/cancel — abort the GVFX wizard mid-flow\n"
     "/whoami — your Telegram user id\n"
+    "/chatid — this chat's id (for TELEGRAM_ALERT_CHAT_IDS)\n"
     "/help — this message"
 )
 
@@ -46,4 +48,14 @@ async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     await update.effective_message.reply_text(
         f"user_id: {user.id}\nusername: @{user.username or '-'}"
+    )
+
+
+async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    if not chat:
+        return
+    title = chat.title or chat.username or "(private)"
+    await update.effective_message.reply_text(
+        f"chat_id: {chat.id}\ntype: {chat.type}\ntitle: {title}"
     )
