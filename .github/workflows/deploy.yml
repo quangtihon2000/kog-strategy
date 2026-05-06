@@ -42,7 +42,7 @@ jobs:
             Where-Object { $_.Value.agent -and $_.Value.agent.enabled -eq $true } |
             Select-Object -ExpandProperty Name
 
-          # Build a JSON array literal manually — PS 5.1's `,@(...) | ConvertTo-Json`
+          # Build a JSON array literal manually -- PS 5.1's `,@(...) | ConvertTo-Json`
           # serializes the PSObject wrapper ({"value":[...],"Count":N}) instead of
           # the array. Strategy names are bare identifiers, so this is safe.
           function ConvertTo-JsonArray($items) {
@@ -116,7 +116,7 @@ jobs:
           }
           foreach ($svc in @('zone_signal_agent','conde_signal_agent','gvfx_signal_agent','telegram_monitor_bot')) {
             # Skip services that haven't been installed yet (first deploy of a new
-            # agent — NSSM install is a one-time manual step on the VPS). Without
+            # agent -- NSSM install is a one-time manual step on the VPS). Without
             # this guard, `nssm status` writes to stderr and PowerShell raises
             # NativeCommandError, failing the whole step.
             if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
@@ -129,7 +129,7 @@ jobs:
               & nssm stop $svc 2>&1 | Write-Host
               # Poll until SCM reports SERVICE_STOPPED. Without this the next
               # `nssm start` (post setup) raced an in-flight stop and SCM
-              # responded SERVICE_PAUSED — see run 25419001413 (2026-05-06).
+              # responded SERVICE_PAUSED -- see run 25419001413 (2026-05-06).
               for ($i = 0; $i -lt 15; $i++) {
                 Start-Sleep -Seconds 1
                 $post = (& nssm status $svc 2>&1) | Out-String
@@ -190,7 +190,7 @@ jobs:
         run: |
           # Counterpart to the "Stop agent services" step at job start. Without
           # this, every deploy leaves agents SERVICE_STOPPED until someone RDPs
-          # in to start them — silent signal loss.
+          # in to start them -- silent signal loss.
           $nssm = Get-Command nssm -ErrorAction SilentlyContinue
           if (-not $nssm) {
             Write-Host "NSSM not installed - nothing to start"
@@ -230,7 +230,7 @@ jobs:
                 $up = $true
                 break
               }
-              Write-Host "[$svc] attempt $attempt failed (status: $($post.Trim())) — unsticking"
+              Write-Host "[$svc] attempt $attempt failed (status: $($post.Trim())) -- unsticking"
               & nssm stop $svc 2>&1 | Write-Host
               Start-Sleep -Seconds 3
               $status = (& nssm status $svc 2>&1) | Out-String
@@ -272,17 +272,17 @@ jobs:
           $rawIds   = if ($env:CHAT_IDS) { $env:CHAT_IDS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } } else { @() }
           Write-Host "Notify diag: token_set=$hasToken chat_id_count=$($rawIds.Count) status=$($env:STATUS)"
 
-          # Windows PowerShell 5.1 defaults to TLS 1.0/1.1 — Telegram requires
+          # Windows PowerShell 5.1 defaults to TLS 1.0/1.1 -- Telegram requires
           # TLS 1.2+. Without this, Invoke-RestMethod fails with
           # "Could not create SSL/TLS secure channel".
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
           if (-not $hasToken) {
-            Write-Host "::warning::secrets.TELEGRAM_MONITOR_BOT_TOKEN is not set — cannot notify"
+            Write-Host "::warning::secrets.TELEGRAM_MONITOR_BOT_TOKEN is not set -- cannot notify"
             exit 0
           }
           if ($rawIds.Count -eq 0) {
-            Write-Host "::warning::vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS is empty — cannot notify"
+            Write-Host "::warning::vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS is empty -- cannot notify"
             exit 0
           }
 
@@ -299,7 +299,7 @@ jobs:
           $runUrl = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
 
           # PowerShell here-strings require the closing "@ at column 0, which
-          # collides with YAML's indented block scalar — build the message via
+          # collides with YAML's indented block scalar -- build the message via
           # array + -join "`n" instead so the script stays well-indented.
           $msg = @(
             "$tag deploy $($env:STATUS)",
@@ -330,7 +330,7 @@ jobs:
                 $errs += $err
               }
             } catch {
-              # Telegram puts its rejection JSON in ErrorDetails.Message — surface it.
+              # Telegram puts its rejection JSON in ErrorDetails.Message -- surface it.
               $body = ''
               try { $body = $_.ErrorDetails.Message } catch {}
               $err = "$id : $($_.Exception.Message) body=$body"
