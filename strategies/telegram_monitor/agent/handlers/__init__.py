@@ -16,6 +16,7 @@ from ..config import Settings
 from ..transports import Transport
 from . import commands, gvfx_signal, logs, signals, status
 from .auth import auth_required
+from .keyboards import account_keyboard, lines_keyboard
 
 log = logging.getLogger(__name__)
 
@@ -25,8 +26,9 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Dispatch inline-keyboard taps.
 
     callback_data shapes:
-      - "{action}:{vps}:{service}"           — service_keyboard (logs/tail/signals)
-      - "logs_acct:{vps}:{service}:{acct}"   — account_keyboard (logs only)
+      - "{action}:{vps}:{service}"               — service_keyboard (logs/tail/signals)
+      - "logs_acct:{vps}:{service}:{acct}"       — account_keyboard (logs only)
+      - "logs_n:{vps}:{service}:{acct}:{n}"      — lines_keyboard (acct may be empty)
     """
     query = update.callback_query
     # Always ack so the Telegram client clears the loading spinner.
@@ -48,12 +50,30 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     transport = transports[vps.name]
 
     if action == "logs":
-        await logs.send_logs(query.message, transport, vps, svc, logs.DEFAULT_LOG_LINES)
+        if svc.mt5_logs and len(svc.mt5_logs) > 1:
+            await query.message.reply_text(
+                f"{vps.name}/{svc.name} runs on multiple accounts — pick one:",
+                reply_markup=account_keyboard(vps.name, svc.name, svc.mt5_logs),
+            )
+        else:
+            await query.message.reply_text(
+                f"{vps.name}/{svc.name} — how many lines?",
+                reply_markup=lines_keyboard(vps.name, svc.name, None),
+            )
     elif action == "logs_acct":
-        await logs.send_logs(
-            query.message, transport, vps, svc, logs.DEFAULT_LOG_LINES,
-            mt5_account=mt5_account,
+        await query.message.reply_text(
+            f"{vps.name}/{svc.name} acct {mt5_account} — how many lines?",
+            reply_markup=lines_keyboard(vps.name, svc.name, mt5_account),
         )
+    elif action == "logs_n":
+        if len(parts) < 5:
+            return
+        try:
+            n = max(1, min(logs.MAX_LOG_LINES, int(parts[4])))
+        except ValueError:
+            return
+        acct = parts[3] or None
+        await logs.send_logs(query.message, transport, vps, svc, n, mt5_account=acct)
     elif action == "tail":
         await logs.start_tail(query.message, context.application, transport, vps, svc)
     elif action == "signals":
@@ -74,4 +94,4 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("tailstop", logs.cmd_tailstop))
     app.add_handler(CommandHandler("signals", signals.cmd_signals))
     app.add_handler(gvfx_signal.conversation_handler())
-    app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|tail|signals):"))
+    app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|logs_n|tail|signals):"))
