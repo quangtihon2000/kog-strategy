@@ -222,6 +222,15 @@ void OnTick() {
    if ( isBuy && g_currentSig.low  > 0 && entryPrice <= g_currentSig.low)  return;
    if (!isBuy && g_currentSig.high > 0 && entryPrice >= g_currentSig.high) return;
 
+   //--- Target proximity guard: skip when entry is within one grid step of
+   //    target. Otherwise the position's TP (≈ effStep * 0.95) lands past
+   //    target — when target is hit, signal deactivates but the position
+   //    keeps a TP it may never reach, dangling until SL or oscillation.
+   double stepDistP = effStepPts * _Point;
+   double targetGap = isBuy ? (g_currentSig.target - entryPrice)
+                            : (entryPrice - g_currentSig.target);
+   if (targetGap < stepDistP) return;
+
    if (HasOpenWithinStep(entryPrice, stepP)) return;
 
    OpenMarket(isBuy, entryPrice, effTpPts, mode);
