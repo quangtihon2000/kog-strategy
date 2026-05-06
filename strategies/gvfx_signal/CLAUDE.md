@@ -18,9 +18,9 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   2. `open_count < InpMaxPositions` (cap 20).
   3. `current_spread_pts ≤ InpMaxSpreadPts`.
   4. Price-zone gate (nếu signal có `low`/`high`): BUY chỉ vào khi `entryPrice > low`; SELL chỉ vào khi `entryPrice < high`.
-  5. `HasOpenWithinStep(entry_price, step*_Point) == false` — không có vị thế EA nào đang mở với `|open_price − entry_price| < step*_Point`.
+  5. **Target proximity gate**: BUY chỉ vào khi `target − entry ≥ effStep*_Point`; SELL chỉ vào khi `entry − target ≥ effStep*_Point`. Tránh mở lệnh quá gần target — TP = effStep × 0.95 sẽ rơi qua target, signal deactivate trước khi position chạm TP → dangle đến khi SL/oscillation.
+  6. `HasOpenWithinStep(entry_price, step*_Point) == false` — không có vị thế EA nào đang mở với `|open_price − entry_price| < step*_Point`.
 - **Entry price**: BUY → `SymbolInfoDouble(_Symbol, SYMBOL_ASK)`; SELL → `SymbolInfoDouble(_Symbol, SYMBOL_BID)`.
-- **No price guard against target**: lệnh được phép mở ngay sát target — chỉ cần signal vẫn active.
 - **Re-entry sau TP/SL**: khi 1 position TP/SL → slot trống. Nếu giá hiện tại không nằm trong ±`step` của bất kỳ vị thế nào còn lại → re-entry ngay tick kế tiếp (kể cả tại level cũ).
 - **Spread guard**: chỉ vào lệnh khi `current_spread_pts ≤ InpMaxSpreadPts` (default 30 pts) — nếu vượt thì skip tick đó.
 
