@@ -46,11 +46,16 @@ async def _fetch_signals(r: Redis, since_ms: int) -> list[dict]:
     out: list[dict] = []
     for _msg_id, fields in raw:
         f = {_decode(k): _decode(v) for k, v in fields.items()}
+        # Skip legacy entries published before channel_name became required —
+        # they'd just clutter the report as a permanent "unknown" row with exec=0.
+        channel = (f.get("channel_name") or "").strip()
+        if not channel:
+            continue
         try:
             tps = [float(x) for x in f.get("tps", "").split(",") if x.strip()]
             out.append({
                 "signal_ts":    int(f.get("timestamp", 0)),
-                "channel_name": f.get("channel_name") or "unknown",
+                "channel_name": channel,
                 "symbol":       f.get("symbol", ""),
                 "direction":    f.get("direction", ""),
                 "entry_price":  float(f.get("entry_price") or 0),
@@ -82,7 +87,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     args = context.args or []
-    since_arg = args[0] if args else "7d"
+    user_specified = bool(args)
+    since_arg = args[0] if args else "30d"
     try:
         window_s = conde_stats.parse_duration(since_arg)
     except (ValueError, KeyError):
@@ -90,6 +96,11 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"bad duration: {since_arg!r} — use forms like 7d, 24h, 90m"
         )
         return
+
+    if not user_specified:
+        await update.effective_message.reply_text(
+            f"using default window {since_arg} — pass an arg like /stats 7d, /stats 24h, /stats 90m to change it"
+        )
 
     since_ms = int((time.time() - window_s) * 1000)
 

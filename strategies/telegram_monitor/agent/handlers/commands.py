@@ -22,7 +22,7 @@ HELP_TEXT = (
     "/tail `<svc>` — live tail, batched every 5s\n"
     "/tailstop — stop the active tail in this chat\n"
     "/signals `<svc>` — newest signal files + age\n"
-    "/stats `[since=7d]` — per-channel signal effectiveness for conde_auto_entry\n"
+    "/stats `[since=30d]` — per-channel signal effectiveness for conde_auto_entry\n"
     "/gvfx — publish GVFX signal; no args = wizard with buttons,\n"
     "         or `<target>` `[dir]` `[step]` `[tp]` `[low]` `[high]` (defaults: BUY/500/500/0/0)\n"
     "         low/high are price-zone gates: BUY only above low, SELL only below high (0 = disabled)\n"
