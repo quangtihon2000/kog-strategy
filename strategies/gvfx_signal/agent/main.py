@@ -98,6 +98,9 @@ def main() -> None:
     while True:
         try:
             run_once(consumer, writers_by_symbol)
+        except KeyboardInterrupt:
+            log.info("Shutdown requested — exiting")
+            return
         except Exception as exc:
             log.error("Loop error: %s", exc, exc_info=True)
             time.sleep(5)
