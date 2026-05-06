@@ -127,6 +127,8 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     dirty: dict[str, str] = {}
     for vps, svc in settings.fleet.all_services():
+        if svc.signal_dir is None:
+            continue
         try:
             transport = transports[vps.name]
             files = await transport.list_signal_files(svc.signal_dir)

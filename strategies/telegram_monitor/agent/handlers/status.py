@@ -46,7 +46,10 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def _signal_age_s(transport: Transport, svc: Service, now: float) -> float | None:
-    """Age (seconds) of newest signal file, or None if dir is empty/unreadable."""
+    """Age (seconds) of newest signal file, or None if dir is empty/unreadable
+    or the service has no signal_dir configured."""
+    if svc.signal_dir is None:
+        return None
     try:
         files = await transport.list_signal_files(svc.signal_dir)
     except Exception:
@@ -57,7 +60,7 @@ async def _signal_age_s(transport: Transport, svc: Service, now: float) -> float
 
 
 def _signal_segment(age_s: float | None, svc: Service) -> str:
-    if age_s is None:
+    if age_s is None or svc.signal_freshness_min is None:
         return ""
     threshold_s = svc.signal_freshness_min * 60
     glyph = "🟢" if age_s <= threshold_s else "🔴"
