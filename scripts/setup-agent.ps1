@@ -3,7 +3,9 @@
     Setup Python agents - venv, pip install, and register as Windows service.
 .DESCRIPTION
     For each strategy with an agent, creates a Python venv, installs deps,
-    and optionally restarts the agent service using NSSM.
+    writes .env, and prints an install hint if the NSSM service is missing.
+    Service start/stop is owned by the workflow's Stop/Start steps that
+    bracket this script — this script does NOT touch service state.
 .PARAMETER Strategies
     JSON array of strategy names. e.g. '["zone_signal","conde_auto_entry"]'
 #>
@@ -116,23 +118,25 @@ foreach ($name in $strategyList) {
         Write-Host "[$name] Created logs dir: $logsDir"
     }
 
-    # 4. Restart service if NSSM is available
+    # 4. Service install hint (first deploy only).
+    # Service lifecycle (stop/start) is owned by the workflow's Stop/Start
+    # steps that bracket this script. Calling `nssm restart` here raced with
+    # NSSM's state machine and rolled gvfx_signal_agent into SERVICE_PAUSED
+    # on the 2026-05-06 deploy, breaking the subsequent Start step.
     $nssm = Get-Command nssm -ErrorAction SilentlyContinue
     if ($nssm) {
-        # Probe with Get-Service first - `nssm status` writes to stderr when the
+        # Probe with Get-Service - `nssm status` writes to stderr when the
         # service does not exist, which under $ErrorActionPreference="Stop"
         # escalates to NativeCommandError and aborts the whole script.
         $serviceExists = [bool](Get-Service -Name $serviceName -ErrorAction SilentlyContinue)
-
-        if ($serviceExists) {
-            Write-Host "[$name] Restarting service: $serviceName"
-            nssm restart $serviceName
-            Write-Host "[$name] OK Service restarted"
-        } else {
+        if (-not $serviceExists) {
             Write-Host "[$name] WARN Service '$serviceName' not installed."
             Write-Host "[$name] To install, run:"
             Write-Host "  nssm install $serviceName `"$pythonExe`" `"$(Join-Path $agentDir 'main.py')`""
             Write-Host "  nssm set $serviceName AppDirectory `"$agentDir`""
+            Write-Host "  nssm set $serviceName AppStdout `"$(Join-Path $agentDir 'logs\stdout.log')`""
+            Write-Host "  nssm set $serviceName AppStderr `"$(Join-Path $agentDir 'logs\stderr.log')`""
+            Write-Host "  nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1"
             Write-Host "  nssm start $serviceName"
         }
     } else {
