@@ -3,7 +3,10 @@
 import logging
 import os
 import sys
+import threading
 import time
+
+import redis as redis_lib
 
 # Add shared/ to import path so agent_lib is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
@@ -12,6 +15,7 @@ from config import load_settings
 from models import CondeSignal
 from agent_lib.redis_consumer import RedisConsumer
 from signal_writer import SignalWriter
+import outcome_publisher
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +32,10 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         sig = CondeSignal.from_dict(data)
         sig.validate()
     except (KeyError, ValueError) as exc:
-        log.error("Bad message %s — discarding: %s", msg_id, exc)
+        log.error(
+            "Bad message %s — discarding: %s (channel_name=%r)",
+            msg_id, exc, data.get("channel_name"),
+        )
         consumer.ack(msg_id)   # avoid infinite requeue of a malformed message
         return
 
@@ -80,6 +87,18 @@ def main() -> None:
         consumer=settings.redis_consumer,
     )
     consumer.create_group_if_missing()
+
+    # Outcome publisher — separate Redis client (decoupled from consumer's internals)
+    # tails data/outcomes/*.json and XADDs to `conde_outcomes` for /stats to consume.
+    outcomes_dir = out_dir / "outcomes"
+    outcomes_dir.mkdir(parents=True, exist_ok=True)
+    publisher_redis = redis_lib.from_url(settings.redis_url, decode_responses=True)
+    threading.Thread(
+        target=outcome_publisher.run,
+        args=(publisher_redis, outcomes_dir),
+        name="outcome-publisher",
+        daemon=True,
+    ).start()
 
     # Cross-product fan-out: one writer per (account, symbol) pair.
     # Indexed by symbol so run_once() can route a signal to the right subset.

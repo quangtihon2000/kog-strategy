@@ -56,6 +56,11 @@ def push_conde_signal(data: dict) -> bool:
             logger.error(f"direction must be BUY or SELL, got {direction!r}")
             return False
 
+        channel_name = str(data.get("channel_name", "")).strip()
+        if not channel_name:
+            logger.error("channel_name is required and must be non-empty")
+            return False
+
         entry_price = str(data["entry_price"])
         sl = str(data["sl"])
 
@@ -68,12 +73,13 @@ def push_conde_signal(data: dict) -> bool:
         timestamp = int(data.get("timestamp", int(time.time())))
 
         conde_signal = {
-            "timestamp":   str(timestamp),   # Redis Stream fields must be strings
-            "symbol":      symbol,
-            "direction":   direction,
-            "entry_price": entry_price,
-            "sl":          sl,
-            "tps":         tps,
+            "timestamp":    str(timestamp),   # Redis Stream fields must be strings
+            "symbol":       symbol,
+            "direction":    direction,
+            "entry_price":  entry_price,
+            "sl":           sl,
+            "tps":          tps,
+            "channel_name": channel_name,
         }
 
         # Dedup — hash content excluding timestamp
@@ -90,7 +96,7 @@ def push_conde_signal(data: dict) -> bool:
         stream_id = redis_client.xadd(
             _stream_name,
             conde_signal,
-            maxlen=1000,
+            maxlen=1_000_000,
             approximate=True,
         )
 

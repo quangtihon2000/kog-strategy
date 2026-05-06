@@ -21,11 +21,14 @@ class CondeSignal:
     entry_price: float
     sl: float
     tps: List[float]
+    channel_name: str         # source channel id (e.g. Telegram channel handle); required for stats
 
     # ------------------------------------------------------------------
     def validate(self) -> None:
         if self.direction not in ("BUY", "SELL"):
             raise ValueError(f"direction must be BUY or SELL, got {self.direction!r}")
+        if not self.channel_name or not self.channel_name.strip():
+            raise ValueError("channel_name is required and must be non-empty")
         if self.entry_price <= 0:
             raise ValueError(f"entry_price must be > 0, got {self.entry_price}")
         if self.sl <= 0:
@@ -59,6 +62,7 @@ class CondeSignal:
             entry_price=float(d["entry_price"]),
             sl=float(d["sl"]),
             tps=[float(x) for x in str(d["tps"]).split(",") if x.strip()],
+            channel_name=str(d["channel_name"]),
         )
 
     # ------------------------------------------------------------------
