@@ -76,12 +76,13 @@ class Fleet:
 class Settings:
     bot_token: str
     allowed_user_ids: frozenset[int]
+    alert_chat_ids: frozenset[int]
     redis_url: str
     log_level: str
     fleet: Fleet
 
 
-def _parse_user_ids(raw: str) -> frozenset[int]:
+def _parse_chat_ids(raw: str, var_name: str) -> frozenset[int]:
     ids = set()
     for part in raw.split(","):
         part = part.strip()
@@ -90,7 +91,7 @@ def _parse_user_ids(raw: str) -> frozenset[int]:
         try:
             ids.add(int(part))
         except ValueError:
-            raise RuntimeError(f"TELEGRAM_ALLOWED_USER_IDS contains non-integer: {part!r}")
+            raise RuntimeError(f"{var_name} contains non-integer: {part!r}")
     return frozenset(ids)
 
 
@@ -122,7 +123,19 @@ def load_settings() -> Settings:
 
     allowed_raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").strip()
     # Empty whitelist = bot rejects everyone (read-only safety default).
-    allowed = _parse_user_ids(allowed_raw) if allowed_raw else frozenset()
+    allowed = (
+        _parse_chat_ids(allowed_raw, "TELEGRAM_ALLOWED_USER_IDS")
+        if allowed_raw else frozenset()
+    )
+
+    # Where AlertDispatcher fans out monitor pages. Accepts user ids (DM) or
+    # group/channel chat ids (negative). Empty → fall back to allowed_user_ids
+    # so existing single-operator deploys keep working without new config.
+    alert_raw = os.environ.get("TELEGRAM_ALERT_CHAT_IDS", "").strip()
+    alert_chat_ids = (
+        _parse_chat_ids(alert_raw, "TELEGRAM_ALERT_CHAT_IDS")
+        if alert_raw else allowed
+    )
 
     fleet_path = Path(os.environ.get("FLEET_CONFIG", str(DEFAULT_FLEET_PATH)))
     fleet = load_fleet(fleet_path)
@@ -130,6 +143,7 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         allowed_user_ids=allowed,
+        alert_chat_ids=alert_chat_ids,
         redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         fleet=fleet,
