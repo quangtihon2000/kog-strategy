@@ -191,6 +191,15 @@ jobs:
           # Counterpart to the "Stop agent services" step at job start. Without
           # this, every deploy leaves agents SERVICE_STOPPED until someone RDPs
           # in to start them -- silent signal loss.
+          #
+          # GitHub Actions sets $ErrorActionPreference='Stop' by default for
+          # `shell: powershell`. nssm.exe writes its "Unexpected status
+          # SERVICE_PAUSED in response to START control" message to stderr,
+          # which PS converts to a NativeCommandError and aborts the script
+          # before the retry loop runs (see run 25419610370, 2026-05-06).
+          # Switch to Continue so we can detect failures via post-status check
+          # and retry. We still throw at the end if any service is down.
+          $ErrorActionPreference = 'Continue'
           $nssm = Get-Command nssm -ErrorAction SilentlyContinue
           if (-not $nssm) {
             Write-Host "NSSM not installed - nothing to start"
