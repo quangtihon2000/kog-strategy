@@ -198,6 +198,14 @@ jobs:
               Write-Host "[$svc] already running - skip"
               continue
             }
+            if ($status -match "PAUSED|PAUSE_PENDING|CONTINUE_PENDING") {
+              # NSSM occasionally leaves a service in PAUSED after a racy
+              # restart. `nssm start` from PAUSED returns "already running"
+              # and fails the step, so unstick with an explicit stop first.
+              Write-Host "[$svc] unsticking from $($status.Trim()) via stop"
+              & nssm stop $svc 2>&1 | Write-Host
+              Start-Sleep -Seconds 2
+            }
             Write-Host "[$svc] starting (was: $($status.Trim()))"
             & nssm start $svc 2>&1 | Write-Host
             Start-Sleep -Seconds 2
