@@ -34,8 +34,11 @@ class Service:
     nssm_service: str            # e.g. "zone_signal_agent"
     agent_dir: str
     log_dir: str
-    signal_dir: str
-    signal_freshness_min: int    # /status flags red when newest *.json older than this
+    # signal_dir / signal_freshness_min are optional — services that don't
+    # produce signal files (e.g. the github-actions runner) leave them unset
+    # and skip signal-related views.
+    signal_dir: str | None = None
+    signal_freshness_min: int | None = None
     # MT5 Expert log dirs per account this service drives. /logs combines
     # them with the Python agent log: 0 → agent only, 1 → both, N → picker.
     mt5_logs: tuple[Mt5LogTarget, ...] = ()

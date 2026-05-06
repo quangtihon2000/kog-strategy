@@ -27,12 +27,15 @@ def _humanize(seconds: float) -> str:
 
 
 async def send_signals(message: Message, transport: Transport, vps: Vps, svc: Service) -> None:
+    if svc.signal_dir is None:
+        await message.reply_text(f"{vps.name}/{svc.name} has no signal directory configured")
+        return
     files = await transport.list_signal_files(svc.signal_dir)
     if not files:
         await message.reply_text(f"no signal files in {svc.signal_dir}")
         return
     now = time.time()
-    threshold_s = svc.signal_freshness_min * 60
+    threshold_s = (svc.signal_freshness_min or 0) * 60
     newest = files[0]
     age = now - newest.mtime_epoch
     glyph = "🟢" if age <= threshold_s else "🔴"

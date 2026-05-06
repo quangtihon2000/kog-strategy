@@ -19,6 +19,9 @@ def service_keyboard(settings: Settings, action: str) -> InlineKeyboardMarkup:
     rows = []
     multi_vps = len(settings.fleet.vpses) > 1
     for vps, svc in settings.fleet.all_services():
+        # /signals only makes sense for services that produce signal files.
+        if action == "signals" and svc.signal_dir is None:
+            continue
         label = f"{vps.name}/{svc.name}" if multi_vps else svc.name
         rows.append([InlineKeyboardButton(label, callback_data=f"{action}:{vps.name}:{svc.name}")])
     return InlineKeyboardMarkup(rows)
