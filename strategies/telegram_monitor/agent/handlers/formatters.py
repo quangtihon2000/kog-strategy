@@ -45,14 +45,18 @@ def format_zone_signal(d: dict) -> str:
 def format_conde_signal(d: dict) -> str:
     direction = str(d.get("direction", "?")).upper()
     arrow = "▲" if direction == "BUY" else ("▼" if direction == "SELL" else "·")
-    return (
-        f"symbol     : {d.get('symbol', '?')}\n"
-        f"timestamp  : {_ts_to_str(d.get('timestamp'))}\n"
-        f"direction  : {arrow} {direction}\n"
-        f"entry      : {d.get('entry_price', '-')}\n"
-        f"sl         : {d.get('sl', '-')}\n"
-        f"tps        : {_fmt_price_list(d.get('tps'))}"
-    )
+    lines = [
+        f"symbol     : {d.get('symbol', '?')}",
+        f"timestamp  : {_ts_to_str(d.get('timestamp'))}",
+        f"direction  : {arrow} {direction}",
+        f"entry      : {d.get('entry_price', '-')}",
+        f"sl         : {d.get('sl', '-')}",
+        f"tps        : {_fmt_price_list(d.get('tps'))}",
+    ]
+    channel = d.get("channel_name")
+    if channel:
+        lines.append(f"channel    : {channel}")
+    return "\n".join(lines)
 
 
 def format_gvfx_signal(d: dict) -> str:
