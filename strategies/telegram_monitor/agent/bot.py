@@ -31,6 +31,7 @@ _BOT_COMMANDS: list[BotCommand] = [
     BotCommand("signals", "Newest signal files + age"),
     BotCommand("stats", "Per-channel signal effectiveness (conde_auto_entry)"),
     BotCommand("gvfx", "Publish GVFX signal (no args = wizard, or <target> [dir] [step] [tp] [low] [high])"),
+    BotCommand("zone", "Publish zone_signal (no args = wizard, or <upper> <lower> <above> <below>)"),
     BotCommand("whoami", "Your Telegram user id"),
     BotCommand("chatid", "This chat's id (for alert routing)"),
     BotCommand("help", "Show commands"),
