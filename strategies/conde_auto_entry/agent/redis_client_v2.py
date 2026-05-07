@@ -61,16 +61,40 @@ def push_conde_signal(data: dict) -> bool:
             logger.error("channel_name is required and must be non-empty")
             return False
 
-        entry_price = str(data["entry_price"])
-        sl = str(data["sl"])
+        try:
+            entry_price_f = float(data["entry_price"])
+            sl_f = float(data["sl"])
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.error(f"entry_price/sl parse failed: {exc} (channel_name={channel_name!r})")
+            return False
+        if entry_price_f <= 0:
+            logger.error(f"entry_price must be > 0, got {entry_price_f} (channel_name={channel_name!r})")
+            return False
+        if sl_f <= 0:
+            logger.error(f"sl must be > 0, got {sl_f} (channel_name={channel_name!r})")
+            return False
+        entry_price = str(entry_price_f)
+        sl = str(sl_f)
 
         tps_list = data.get("tps", [])
         if not tps_list:
             logger.error("tps is empty")
             return False
-        tps = ",".join(str(x) for x in tps_list)
+        try:
+            tps_floats = [float(x) for x in tps_list]
+        except (TypeError, ValueError) as exc:
+            logger.error(f"tps parse failed: {exc} (channel_name={channel_name!r})")
+            return False
+        for i, tp in enumerate(tps_floats):
+            if tp <= 0:
+                logger.error(f"tps[{i}] must be > 0, got {tp} (channel_name={channel_name!r})")
+                return False
+        tps = ",".join(str(x) for x in tps_floats)
 
         timestamp = int(data.get("timestamp", int(time.time())))
+        if timestamp <= 0:
+            logger.error(f"timestamp must be > 0, got {timestamp} (channel_name={channel_name!r})")
+            return False
 
         conde_signal = {
             "timestamp":    str(timestamp),   # Redis Stream fields must be strings
