@@ -203,7 +203,7 @@ def aggregate(signals: List[dict], outcomes: List[dict]) -> Dict[str, ChannelSta
 # Report formatting
 # ---------------------------------------------------------------------------
 
-_NAME_W = 22
+_NAME_W = 20
 
 
 def _fmt_name(s: str) -> str:
@@ -214,48 +214,37 @@ def _fmt_name(s: str) -> str:
 def format_report(stats: Dict[str, ChannelStats], since_label: str) -> str:
     """Render a mobile-friendly per-channel report.
 
-    Two sections: "Executed" (channels with closed positions, sorted by Wilson
-    lower-bound on TP rate — proxy for trust) and "Pending" (no executions yet,
-    sorted by signal count). Each row fits one mobile line; executed rows append
-    a second indented line with TP%, avg_R, and conf95 so unused stats columns
-    don't clutter pending rows.
+    Channels with closed positions (sorted by Wilson lower-bound on TP rate
+    — a proxy for trust) come first. Each row shows name, signal count, and
+    execution count on one line. Channels with at least one execution append
+    an indented second line with TP%, avg_R, and conf95.
     """
     if not stats:
         return f"KOG /stats — {since_label}\n\n(no signals in window)"
 
-    rows = list(stats.values())
+    rows = sorted(
+        stats.values(),
+        key=lambda c: (c.n_executed > 0, c.confidence_lo95, c.n_signals),
+        reverse=True,
+    )
     total_sig = sum(c.n_signals for c in rows)
     total_exec = sum(c.n_executed for c in rows)
-
-    executed = sorted(
-        (c for c in rows if c.n_executed > 0),
-        key=lambda c: (c.confidence_lo95, c.n_signals),
-        reverse=True,
-    )
-    pending = sorted(
-        (c for c in rows if c.n_executed == 0),
-        key=lambda c: c.n_signals,
-        reverse=True,
-    )
 
     lines = [
         f"KOG /stats — {since_label}",
         f"{total_sig} sig · {total_exec} exec",
+        "",
+        f"{'channel':<{_NAME_W}} {'sig':>3} {'ex':>3}",
     ]
-
-    if executed:
-        lines += ["", "Executed:"]
-        for cs in executed:
+    for cs in rows:
+        lines.append(
+            f"{_fmt_name(cs.channel)} {cs.n_signals:>3} {cs.n_executed:>3}"
+        )
+        if cs.n_executed > 0:
             tp = f"TP {cs.tp_rate * 100:.0f}%" if cs.tp_rate is not None else "TP -"
             ar = f"R {cs.avg_r:+.2f}" if cs.avg_r is not None else "R -"
             c95 = f"c95 {cs.confidence_lo95:.2f}"
-            lines.append(f"{_fmt_name(cs.channel)} {cs.n_signals:>3}/{cs.n_executed}")
             lines.append(f"  {tp} · {ar} · {c95}")
-
-    if pending:
-        lines += ["", "Pending:"]
-        for cs in pending:
-            lines.append(f"{_fmt_name(cs.channel)} {cs.n_signals:>3}")
 
     return "\n".join(lines)
 
