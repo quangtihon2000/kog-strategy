@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.03"
+#property version     "1.04"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -108,7 +108,8 @@ void OnTradeTransaction(
 
    if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT) return;
    if (HistoryDealGetString(deal_ticket, DEAL_SYMBOL) != _Symbol)                          return;
-   if (HistoryDealGetInteger(deal_ticket, DEAL_MAGIC) != (long)InpMagic)                   return;
+   // NOTE: do NOT filter on closing deal's DEAL_MAGIC — manual close via UI sets it to 0,
+   // which would drop the outcome. Filter on IN deal magic below instead.
 
    long  position_id  = HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
    if (position_id == 0) return;
@@ -119,14 +120,16 @@ void OnTradeTransaction(
    double entry_price = 0.0;
    long   opened_at   = 0;
    string direction   = "";
+   long   in_magic    = -1;
 
-   //--- Walk position history for IN deal: entry_price, opened_at, direction, signal_ts fallback
+   //--- Walk position history for IN deal: magic (filter), entry_price, opened_at, direction, signal_ts fallback
    if (HistorySelectByPosition(position_id)) {
       int n = HistoryDealsTotal();
       for (int i = 0; i < n; i++) {
          ulong d = HistoryDealGetTicket(i);
          if (d == 0) continue;
          if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+         in_magic    = HistoryDealGetInteger(d, DEAL_MAGIC);
          entry_price = HistoryDealGetDouble(d, DEAL_PRICE);
          opened_at   = (long)HistoryDealGetInteger(d, DEAL_TIME);
          long t      = HistoryDealGetInteger(d, DEAL_TYPE);
@@ -136,7 +139,8 @@ void OnTradeTransaction(
          break;
       }
    }
-   if (signal_ts == 0) return;   // not our signal lineage
+   if (in_magic != (long)InpMagic) return;   // not our position
+   if (signal_ts == 0)             return;   // not our signal lineage
 
    double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
    double profit     = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
