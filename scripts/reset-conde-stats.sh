@@ -144,7 +144,7 @@ printf "  conde_outcomes              : %s\n" "$(run XLEN conde_outcomes 2>/dev/
 printf "  conde_outcomes:ingested     : %s\n" "$(run SCARD conde_outcomes:ingested 2>/dev/null || echo 0)"
 echo
 echo "Next steps on the VPS:"
-echo "  nssm restart conde_auto_entry_agent"
+echo "  nssm restart conde_signal_agent"
 if [[ $RESET_TELEGRAM -eq 1 ]]; then
     echo "  nssm restart telegram_monitor_bot"
 fi
