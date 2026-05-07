@@ -33,8 +33,8 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         sig.validate()
     except (KeyError, ValueError) as exc:
         log.error(
-            "Bad message %s -- discarding: %s (channel_name=%s)",
-            msg_id, exc, _clean_channel_name(str(data.get("channel_name") or "")),
+            "Bad message %s -- discarding: %s (channel_name=%s) | raw=%r",
+            msg_id, exc, _clean_channel_name(str(data.get("channel_name") or "")), data,
         )
         consumer.ack(msg_id)   # avoid infinite requeue of a malformed message
         return
