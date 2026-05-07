@@ -27,7 +27,7 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         sig = GvfxSignal.from_dict(data)
         sig.validate()
     except (KeyError, ValueError) as exc:
-        log.error("Bad message %s — discarding: %s", msg_id, exc)
+        log.error("Bad message %s — discarding: %s | raw=%r", msg_id, exc, data)
         consumer.ack(msg_id)
         return
 
