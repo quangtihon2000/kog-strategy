@@ -203,7 +203,7 @@ def aggregate(signals: List[dict], outcomes: List[dict]) -> Dict[str, ChannelSta
 # Report formatting
 # ---------------------------------------------------------------------------
 
-_NAME_W = 13
+_NAME_W = 15
 
 
 def _fmt_name(s: str) -> str:
@@ -211,18 +211,14 @@ def _fmt_name(s: str) -> str:
     return (s[:_NAME_W - 1] + "…") if len(s) > _NAME_W else s.ljust(_NAME_W)
 
 
-def _pct(rate: Optional[float]) -> str:
-    return f"{rate * 100:>3.0f}" if rate is not None else "  -"
-
-
 def format_report(stats: Dict[str, ChannelStats], since_label: str) -> str:
     """Render a mobile-friendly per-channel report.
 
     Channels with closed positions (sorted by Wilson lower-bound on TP rate
     — a proxy for trust) come first. Each row shows name, signal count,
-    execution count, TP rate %, SL rate %, and the Wilson c95 lower bound
-    on a single line. Channels with at least one execution append an
-    indented `R ±n.nn` line with the average R-multiple.
+    execution count, a combined `tp/sl` rate cell (% TP / % SL), and the
+    Wilson c95 lower bound on a single line. Channels with at least one
+    execution append an indented `R ±n.nn` line with the average R-multiple.
     """
     if not stats:
         return f"KOG /stats — {since_label}\n\n(no signals in window)"
@@ -239,17 +235,19 @@ def format_report(stats: Dict[str, ChannelStats], since_label: str) -> str:
         f"KOG /stats — {since_label}",
         f"{total_sig} sig · {total_exec} exec",
         "",
-        f"{'channel':<{_NAME_W}} {'sig':>3} {'ex':>2} {'tp':>3} {'sl':>3} {'c95':>3}",
+        f"{'channel':<{_NAME_W}} {'sig':>3} {'ex':>2} {'tp/sl':>5} {'c95':>3}",
     ]
     for cs in rows:
         if cs.n_executed > 0:
-            tp = _pct(cs.tp_rate)
-            sl = _pct(cs.sl_rate)
+            tp = f"{cs.tp_rate * 100:.0f}" if cs.tp_rate is not None else "-"
+            sl = f"{cs.sl_rate * 100:.0f}" if cs.sl_rate is not None else "-"
+            tpsl = f"{tp}/{sl}"
             c95 = f"{int(round(cs.confidence_lo95 * 100)):>3d}"
         else:
-            tp = sl = c95 = "  -"
+            tpsl = "-"
+            c95 = "  -"
         lines.append(
-            f"{_fmt_name(cs.channel)} {cs.n_signals:>3} {cs.n_executed:>2} {tp:>3} {sl:>3} {c95:>3}"
+            f"{_fmt_name(cs.channel)} {cs.n_signals:>3} {cs.n_executed:>2} {tpsl:>5} {c95:>3}"
         )
         if cs.n_executed > 0 and cs.avg_r is not None:
             lines.append(f"  R {cs.avg_r:+.2f}")
