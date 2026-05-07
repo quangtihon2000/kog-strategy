@@ -21,6 +21,8 @@ from typing import Dict, List, Optional
 
 import redis as redis_lib
 
+from models import _clean_channel_name as clean_channel_name
+
 log = logging.getLogger(__name__)
 
 SIGNALS_STREAM  = "conde_signals"
@@ -201,28 +203,60 @@ def aggregate(signals: List[dict], outcomes: List[dict]) -> Dict[str, ChannelSta
 # Report formatting
 # ---------------------------------------------------------------------------
 
+_NAME_W = 22
+
+
+def _fmt_name(s: str) -> str:
+    s = clean_channel_name(s) or "unknown"
+    return (s[:_NAME_W - 1] + "…") if len(s) > _NAME_W else s.ljust(_NAME_W)
+
+
 def format_report(stats: Dict[str, ChannelStats], since_label: str) -> str:
-    """Render a monospace table sorted by confidence_lo95 desc."""
-    rows = sorted(stats.values(), key=lambda c: c.confidence_lo95, reverse=True)
+    """Render a mobile-friendly per-channel report.
+
+    Two sections: "Executed" (channels with closed positions, sorted by Wilson
+    lower-bound on TP rate — proxy for trust) and "Pending" (no executions yet,
+    sorted by signal count). Each row fits one mobile line; executed rows append
+    a second indented line with TP%, avg_R, and conf95 so unused stats columns
+    don't clutter pending rows.
+    """
+    if not stats:
+        return f"KOG /stats — {since_label}\n\n(no signals in window)"
+
+    rows = list(stats.values())
+    total_sig = sum(c.n_signals for c in rows)
+    total_exec = sum(c.n_executed for c in rows)
+
+    executed = sorted(
+        (c for c in rows if c.n_executed > 0),
+        key=lambda c: (c.confidence_lo95, c.n_signals),
+        reverse=True,
+    )
+    pending = sorted(
+        (c for c in rows if c.n_executed == 0),
+        key=lambda c: c.n_signals,
+        reverse=True,
+    )
 
     lines = [
-        f"KOG /stats — since {since_label}",
-        "",
-        f"{'channel':<22} {'n_sig':>5} {'exec':>5} {'tp%':>5} {'sl%':>5} {'avg_R':>7} {'conf95':>7}",
-        "─" * 64,
+        f"KOG /stats — {since_label}",
+        f"{total_sig} sig · {total_exec} exec",
     ]
-    if not rows:
-        lines.append("(no signals in window)")
-        return "\n".join(lines)
 
-    for cs in rows:
-        tp = f"{cs.tp_rate * 100:.0f}%" if cs.tp_rate is not None else "  - "
-        sl = f"{cs.sl_rate * 100:.0f}%" if cs.sl_rate is not None else "  - "
-        ar = f"{cs.avg_r:+.2f}"          if cs.avg_r is not None else "  - "
-        ch = (cs.channel[:21] + "…") if len(cs.channel) > 22 else cs.channel
-        lines.append(
-            f"{ch:<22} {cs.n_signals:>5} {cs.n_executed:>5} {tp:>5} {sl:>5} {ar:>7} {cs.confidence_lo95:>7.2f}"
-        )
+    if executed:
+        lines += ["", "Executed:"]
+        for cs in executed:
+            tp = f"TP {cs.tp_rate * 100:.0f}%" if cs.tp_rate is not None else "TP -"
+            ar = f"R {cs.avg_r:+.2f}" if cs.avg_r is not None else "R -"
+            c95 = f"c95 {cs.confidence_lo95:.2f}"
+            lines.append(f"{_fmt_name(cs.channel)} {cs.n_signals:>3}/{cs.n_executed}")
+            lines.append(f"  {tp} · {ar} · {c95}")
+
+    if pending:
+        lines += ["", "Pending:"]
+        for cs in pending:
+            lines.append(f"{_fmt_name(cs.channel)} {cs.n_signals:>3}")
+
     return "\n".join(lines)
 
 
