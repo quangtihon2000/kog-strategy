@@ -3,13 +3,22 @@
 import hashlib
 import json
 import logging
+import re
 import time
+import unicodedata
 
 import redis
 
 from config import load_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_channel_name(s: str) -> str:
+    """NFKC-normalize then strip non-printable-ASCII (emojis, etc.)."""
+    s = unicodedata.normalize("NFKC", s)
+    s = re.sub(r"[^\x20-\x7E]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 try:
     _settings = load_settings()
@@ -56,7 +65,7 @@ def push_conde_signal(data: dict) -> bool:
             logger.error(f"direction must be BUY or SELL, got {direction!r}")
             return False
 
-        channel_name = str(data.get("channel_name", "")).strip()
+        channel_name = _clean_channel_name(str(data.get("channel_name", "")))
         if not channel_name:
             logger.error("channel_name is required and must be non-empty")
             return False
