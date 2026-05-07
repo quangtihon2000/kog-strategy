@@ -12,7 +12,7 @@ import redis as redis_lib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
 
 from config import load_settings
-from models import CondeSignal
+from models import CondeSignal, _clean_channel_name
 from agent_lib.redis_consumer import RedisConsumer
 from signal_writer import SignalWriter
 import outcome_publisher
@@ -33,8 +33,8 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         sig.validate()
     except (KeyError, ValueError) as exc:
         log.error(
-            "Bad message %s — discarding: %s (channel_name=%s)",
-            msg_id, exc, data.get("channel_name"),
+            "Bad message %s -- discarding: %s (channel_name=%s)",
+            msg_id, exc, _clean_channel_name(str(data.get("channel_name") or "")),
         )
         consumer.ack(msg_id)   # avoid infinite requeue of a malformed message
         return
@@ -43,7 +43,7 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
     writers = writers_by_symbol.get(sig.symbol, [])
     if not writers:
         log.warning(
-            "No writer configured for symbol=%s — discarding msg %s",
+            "No writer configured for symbol=%s -- discarding msg %s",
             sig.symbol, msg_id,
         )
         consumer.ack(msg_id)
