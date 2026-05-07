@@ -7,9 +7,23 @@ from dataclasses import asdict, dataclass
 from typing import List
 
 
+# Smart-quote / dash / ellipsis chars that NFKC leaves intact but the
+# ASCII-only filter would otherwise strip — fold them to closest ASCII first.
+_PUNCT_FOLD = str.maketrans({
+    "‘": "'", "’": "'",  # ‘ ’
+    "‚": "'", "‛": "'",
+    "“": '"', "”": '"',  # “ ”
+    "„": '"', "‟": '"',
+    "–": "-", "—": "-",  # – —
+    "−": "-",                  # − minus
+    "…": "...",                # …
+    "·": ".",                  # ·
+})
+
+
 def _clean_channel_name(s: str) -> str:
-    """NFKC-normalize then strip non-printable-ASCII (emojis, etc.)."""
-    s = unicodedata.normalize("NFKC", s)
+    """NFKC-normalize, fold smart punctuation, then strip non-printable-ASCII."""
+    s = unicodedata.normalize("NFKC", s).translate(_PUNCT_FOLD)
     s = re.sub(r"[^\x20-\x7E]+", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
