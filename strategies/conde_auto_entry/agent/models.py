@@ -1,8 +1,17 @@
 """CondeSignal dataclass — matches the JSON shape expected by CondeAutoEntryEA.mq5."""
 
 import json
+import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from typing import List
+
+
+def _clean_channel_name(s: str) -> str:
+    """NFKC-normalize then strip non-printable-ASCII (emojis, etc.)."""
+    s = unicodedata.normalize("NFKC", s)
+    s = re.sub(r"[^\x20-\x7E]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 @dataclass
@@ -62,7 +71,7 @@ class CondeSignal:
             entry_price=float(d["entry_price"]),
             sl=float(d["sl"]),
             tps=[float(x) for x in str(d["tps"]).split(",") if x.strip()],
-            channel_name=str(d["channel_name"]),
+            channel_name=_clean_channel_name(str(d["channel_name"])),
         )
 
     # ------------------------------------------------------------------
