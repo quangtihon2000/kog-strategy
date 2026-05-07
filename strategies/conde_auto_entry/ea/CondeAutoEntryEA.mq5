@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.02"
+#property version     "1.03"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -16,7 +16,7 @@ input int    InpMaxPositions        = 20;          // Max open EA positions per 
 input double InpMaxSlippagePts      = 100;         // Max distance (points) between market and entry_price to fire
 input double InpSlBufferPts         = 20;           // Extra SL buffer (points)
 input ulong  InpMagic               = 20260421;    // Magic number
-input bool   InpUseCommonDir        = true;        // Use MT5 common Files folder
+input bool   InpUseCommonDir        = false;       // Use MT5 common Files folder
 input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
 input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop
