@@ -63,10 +63,21 @@ def _review_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
-def _format_payload_block(payload: dict) -> str:
-    return "<pre><code class=\"language-json\">" + html.escape(
-        json.dumps(payload, indent=2, ensure_ascii=False)
-    ) + "</code></pre>"
+def _await_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✖ Cancel", callback_data=f"badmsg:cancel:{token}")],
+    ])
+
+
+def _format_payload_block(payload: dict, *, compact: bool = False) -> str:
+    # compact=True → single-line JSON: easier to tap-copy + paste-edit on mobile
+    # compact=False → indent=2 pretty: easier to read in review screen
+    body = (
+        json.dumps(payload, ensure_ascii=False)
+        if compact
+        else json.dumps(payload, indent=2, ensure_ascii=False)
+    )
+    return "<pre><code class=\"language-json\">" + html.escape(body) + "</code></pre>"
 
 
 async def _load_cache(redis: Redis, token: str) -> dict | None:
@@ -143,10 +154,11 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         f"<b>Edit bad message — {html.escape(spec.service_name)}</b>\n"
         f"exception: <code>{html.escape(exc)}</code>\n"
         f"target stream: <code>{html.escape(spec.stream)}</code>\n"
-        "original payload:\n"
-        f"{_format_payload_block(payload)}\n"
+        "tap to copy &amp; edit:\n"
+        f"{_format_payload_block(payload, compact=True)}\n"
         f"required: <code>{html.escape(', '.join(spec.required_fields))}</code>\n"
-        "reply with corrected JSON, or /cancel"
+        "reply with corrected JSON:",
+        reply_markup=_await_keyboard(token),
     )
     return S_AWAIT_JSON
 
@@ -210,10 +222,12 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if action == "edit_again":
         await query.edit_message_text(
             f"<b>Edit again — {html.escape(state['service'])}</b>\n"
-            f"current payload:\n{_format_payload_block(state['payload'])}\n"
+            "tap to copy &amp; edit:\n"
+            f"{_format_payload_block(state['payload'], compact=True)}\n"
             f"required: <code>{html.escape(', '.join(state['required']))}</code>\n"
-            "reply with corrected JSON, or /cancel",
+            "reply with corrected JSON:",
             parse_mode="HTML",
+            reply_markup=_await_keyboard(token),
         )
         return S_AWAIT_JSON
 
@@ -290,11 +304,24 @@ async def _cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+@auth_required
+async def _on_await_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle [✖ Cancel] tap while waiting for the JSON reply."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop(STATE_KEY, None)
+    await query.edit_message_text("cancelled")
+    return ConversationHandler.END
+
+
 def conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(_on_edit, pattern=r"^badmsg:edit:")],
         states={
-            S_AWAIT_JSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, _on_json_reply)],
+            S_AWAIT_JSON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_json_reply),
+                CallbackQueryHandler(_on_await_cancel, pattern=r"^badmsg:cancel:"),
+            ],
             S_REVIEW: [
                 CallbackQueryHandler(
                     _on_review,
