@@ -33,13 +33,13 @@ $PythonExe = Join-Path $AgentDir ".venv\Scripts\python.exe"
 $DumpScript = Join-Path $AgentDir "dump_html.py"
 
 if (-not (Test-Path $PythonExe)) {
-    throw "venv python not found: $PythonExe — run setup-agent.ps1 first"
+    throw "venv python not found: $PythonExe -- run setup-agent.ps1 first"
 }
 if (-not (Test-Path $DumpScript)) {
     throw "dump_html.py not found: $DumpScript"
 }
 if (-not (Test-Path (Join-Path $PublicRepo ".git"))) {
-    throw "PublicRepo is not a git clone: $PublicRepo — clone https://github.com/quangtihon2000/conde-stats.git there first"
+    throw "PublicRepo is not a git clone: $PublicRepo -- clone https://github.com/quangtihon2000/conde-stats.git there first"
 }
 
 Write-Host "[publish-conde-stats] window=$Window out=$PublicRepo"
@@ -64,7 +64,7 @@ try {
     git add -A
     $changed = git status --porcelain
     if (-not $changed) {
-        Write-Host "[publish-conde-stats] no changes — skipping commit"
+        Write-Host "[publish-conde-stats] no changes -- skipping commit"
         return
     }
     $stamp = (Get-Date -Format "yyyy-MM-dd HH:mm")
