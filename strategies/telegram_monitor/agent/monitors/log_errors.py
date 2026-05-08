@@ -9,16 +9,22 @@ word "error" appearing in normal output.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
+import secrets
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from ..alerts import AlertDispatcher
 from ..config import Settings
 from ..transports import Transport
+from .badmsg_parser import parse_bad_message
 
 log = logging.getLogger(__name__)
+
+BADMSG_TTL_S = 86400  # 24h — long enough to survive a weekend on-call window
 
 PATTERNS = [
     re.compile(r"^\s*Traceback \(most recent call last\):", re.MULTILINE),
@@ -47,6 +53,7 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = ctx["settings"]
     transports: dict[str, Transport] = ctx["transports"]
     alerts: AlertDispatcher = ctx["alerts"]
+    redis = ctx.get("redis")  # optional: enables [✏ Edit] button on Bad message alerts
 
     for vps, svc in settings.fleet.all_services():
         try:
@@ -73,12 +80,45 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                          vps.name, svc.name)
                 continue
             snippet = new_data[-MAX_SNIPPET:]
+            # Parse over the full new_data, not the truncated snippet — the
+            # `raw=...` dict can exceed MAX_SNIPPET. Snippet is for display only.
+            reply_markup = await _maybe_edit_markup(redis, vps.name, svc.name, new_data)
             await alerts.notify(
                 dedup_key=f"log_err:{vps.name}:{svc.name}:{_hash(snippet)}",
                 text=(
                     f"⚠️ *{vps.name}/{svc.name}* — error in `{active.name}`\n"
                     f"```\n{snippet}\n```"
                 ),
+                reply_markup=reply_markup,
             )
         except Exception as e:
             log.warning("log scan failed (%s/%s): %s", vps.name, svc.name, e)
+
+
+async def _maybe_edit_markup(redis, vps_name: str, svc_name: str, full_chunk: str):
+    """Build an `[✏ Edit]` keyboard if `full_chunk` contains a parseable
+    Bad message line. Returns None when no badmsg pattern is found, when the
+    Redis client is unavailable, or when the cache write fails (the alert
+    still goes out; only the button is dropped).
+    """
+    if redis is None:
+        return None
+    bad = parse_bad_message(full_chunk)
+    if bad is None:
+        return None
+    token = secrets.token_urlsafe(8)
+    record = json.dumps({
+        "service": svc_name,
+        "vps": vps_name,
+        "msg_id": bad.msg_id,
+        "exc": bad.exc,
+        "payload": bad.payload,
+    })
+    try:
+        await redis.setex(f"badmsg:{token}", BADMSG_TTL_S, record)
+    except Exception as e:
+        log.warning("badmsg cache write failed (%s/%s): %s", vps_name, svc_name, e)
+        return None
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✏ Edit", callback_data=f"badmsg:edit:{token}"),
+    ]])
