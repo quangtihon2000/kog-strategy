@@ -53,7 +53,8 @@ $action = New-ScheduledTaskAction `
     -WorkingDirectory $RepoRoot
 
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes)
+    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+    -RepetitionDuration ([TimeSpan]::MaxValue)
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
