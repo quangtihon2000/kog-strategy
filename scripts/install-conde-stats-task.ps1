@@ -85,12 +85,13 @@ Write-Host "You will be prompted for $env:USERDOMAIN\$env:USERNAME password (sto
 $cred = Get-Credential -UserName "$env:USERDOMAIN\$env:USERNAME" `
     -Message "Password for $env:USERDOMAIN\$env:USERNAME (so task can run when logged out)"
 
+# PS5.1 Register-ScheduledTask cannot accept -Principal alongside -User/-Password
+# (parameter sets are mutually exclusive). Build the task object with the
+# principal first, then register with -InputObject + stored credentials.
+$task = New-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -Principal $principal
 Register-ScheduledTask `
     -TaskName $TaskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Settings $settings `
-    -Principal $principal `
+    -InputObject $task `
     -User $cred.UserName `
     -Password $cred.GetNetworkCredential().Password | Out-Null
 
