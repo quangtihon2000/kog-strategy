@@ -235,18 +235,36 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(f"flatten failed: {e}")
             return S_REVIEW
 
+        # Atomic publish-claim: when an alert lands in a shared group, multiple
+        # whitelisted operators can each open the edit conversation (per-user
+        # state is independent). DELETE returns 1 only for the first caller, so
+        # whoever wins the race proceeds; the rest get a clear "already handled"
+        # message instead of double-publishing the same signal.
+        try:
+            claimed = await redis.delete(f"badmsg:{token}")
+        except Exception as e:
+            log.warning("badmsg cache delete failed (token=%s): %s", token, e)
+            claimed = 0
+        if not claimed:
+            await query.edit_message_text(
+                "⚠️ already handled by another operator (or session expired)"
+            )
+            context.user_data.pop(STATE_KEY, None)
+            return ConversationHandler.END
+
         try:
             entry_id = await redis.xadd(spec.stream, flat)
         except Exception as e:
             log.exception("xadd to %s failed", spec.stream)
-            await query.edit_message_text(f"failed to publish: {e}")
-            return S_REVIEW
-
-        # Best-effort: clear the cache so the same token can't republish twice.
-        try:
-            await redis.delete(f"badmsg:{token}")
-        except Exception as e:
-            log.warning("badmsg cache delete failed (token=%s): %s", token, e)
+            # Cache already cleared — this token can't be retried via Edit.
+            # Operator still has the corrected JSON in this chat to copy into
+            # a manual /zone /conde /gvfx wizard.
+            await query.edit_message_text(
+                f"publish failed: {e}\n"
+                "use /zone /conde /gvfx to retry manually"
+            )
+            context.user_data.pop(STATE_KEY, None)
+            return ConversationHandler.END
 
         log.info(
             "badmsg republished: service=%s stream=%s id=%s payload=%s",
