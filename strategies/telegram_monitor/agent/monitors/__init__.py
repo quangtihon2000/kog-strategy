@@ -22,7 +22,12 @@ def register_monitors(
     alerts: AlertDispatcher,
 ) -> None:
     jq = app.job_queue
-    ctx = {"settings": settings, "transports": transports, "alerts": alerts}
+    ctx = {
+        "settings": settings,
+        "transports": transports,
+        "alerts": alerts,
+        "redis": app.bot_data.get("redis"),
+    }
 
     # Service state edges — tight loop, cheap nssm calls.
     jq.run_repeating(service_edges.tick, interval=30, first=10,

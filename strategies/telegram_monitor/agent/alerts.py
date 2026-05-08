@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardMarkup
 
 log = logging.getLogger(__name__)
 
@@ -34,11 +34,20 @@ class AlertDispatcher:
     cooldown_s: int = DEFAULT_COOLDOWN_S
     _last_sent: dict[str, float] = field(default_factory=dict)
 
-    async def notify(self, dedup_key: str, text: str, *, force: bool = False) -> bool:
+    async def notify(
+        self,
+        dedup_key: str,
+        text: str,
+        *,
+        force: bool = False,
+        reply_markup: InlineKeyboardMarkup | None = None,
+        parse_mode: str | None = "Markdown",
+    ) -> bool:
         """Send `text` to every operator. Returns True if actually sent.
 
         `dedup_key` collapses repeated alerts (e.g. "log_err:zone_signal:Traceback").
         Pass `force=True` for daily summaries or operator-initiated pings.
+        `reply_markup` attaches inline buttons (e.g. Edit on bad-message alerts).
         """
         now = time.time()
         last = self._last_sent.get(dedup_key, 0.0)
@@ -47,7 +56,12 @@ class AlertDispatcher:
         self._last_sent[dedup_key] = now
         for chat_id in self.chat_ids:
             try:
-                await self.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
             except Exception as e:
                 log.warning("alert send failed (chat=%s key=%s): %s", chat_id, dedup_key, e)
         return True

@@ -14,7 +14,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from ..config import Settings
 from ..transports import Transport
-from . import commands, gvfx_signal, logs, signals, stats, status, zone_signal
+from . import badmsg, commands, gvfx_signal, logs, signals, stats, status, zone_signal
 from .auth import auth_required
 from .keyboards import account_keyboard, lines_keyboard
 
@@ -97,4 +97,5 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("stats", stats.cmd_stats))
     app.add_handler(gvfx_signal.conversation_handler())
     app.add_handler(zone_signal.conversation_handler())
+    app.add_handler(badmsg.conversation_handler())
     app.add_handler(CallbackQueryHandler(_on_callback, pattern=r"^(logs|logs_acct|logs_n|tail|signals):"))
