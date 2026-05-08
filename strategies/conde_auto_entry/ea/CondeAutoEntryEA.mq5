@@ -19,10 +19,10 @@ input ulong  InpMagic               = 20260421;    // Magic number
 input bool   InpUseCommonDir        = false;       // Use MT5 common Files folder
 input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
-input bool   InpEnableTrailing      = false;       // Enable break-even + trailing stop (off: TP1-for-all policy makes BE/trail counterproductive)
-input double InpBeTriggerPts        = 300;         // Profit (pts) to move SL to break-even
+input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop (gate at 1000 pts → only signals with TP1 > 1000 pts get managed)
+input double InpBeTriggerPts        = 1000;        // Profit (pts) to move SL to break-even
 input double InpBeOffsetPts         = 50;          // Offset beyond entry at BE (covers spread+commission)
-input double InpTrailStartPts       = 400;         // Profit (pts) to start trailing past BE
+input double InpTrailStartPts       = 1000;        // Profit (pts) to start trailing past BE
 input double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
 input double InpTrailStepPts        = 100;          // Minimum SL improvement before modify (anti-spam)
 
