@@ -64,6 +64,33 @@ class CondeSignal:
         if self.timestamp <= 0:
             raise ValueError(f"timestamp must be > 0, got {self.timestamp}")
 
+        # Direction-aware monotonic ordering: TP1 has the smallest expected
+        # profit, TP2 larger, etc. The OCR producer occasionally swaps a digit
+        # (e.g. 4719→4419) which slips past the per-tp positivity check but
+        # violates monotonicity. Rejecting here makes it surface as a
+        # `Bad message` so the operator can fix-and-republish via the
+        # Telegram badmsg Edit UI.
+        if self.direction == "BUY":
+            prev = self.entry_price
+            for i, tp in enumerate(self.tps):
+                if tp <= prev:
+                    ref = "entry_price" if i == 0 else f"tps[{i - 1}]"
+                    raise ValueError(
+                        f"BUY tps must be strictly ascending and > entry_price; "
+                        f"tps[{i}]={tp} <= {ref}={prev}"
+                    )
+                prev = tp
+        else:  # SELL — direction was already validated above
+            prev = self.entry_price
+            for i, tp in enumerate(self.tps):
+                if tp >= prev:
+                    ref = "entry_price" if i == 0 else f"tps[{i - 1}]"
+                    raise ValueError(
+                        f"SELL tps must be strictly descending and < entry_price; "
+                        f"tps[{i}]={tp} >= {ref}={prev}"
+                    )
+                prev = tp
+
     # ------------------------------------------------------------------
     @classmethod
     def from_dict(cls, d: dict) -> "CondeSignal":

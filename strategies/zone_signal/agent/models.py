@@ -26,6 +26,31 @@ class ZoneSignal:
         if not self.targets_below:
             raise ValueError("targets_below is empty")
 
+        # Direction-aware monotonic ordering: targets must walk away from the
+        # redbox (T1 closest, T2 farther, …). The OCR producer occasionally
+        # swaps a digit, leaving an outlier inside or out-of-order which slips
+        # past the empty/positivity checks. Rejecting here makes it surface as
+        # a `Bad message` so the operator can fix-and-republish via the
+        # Telegram badmsg Edit UI.
+        prev = self.redbox_upper
+        for i, t in enumerate(self.targets_above):
+            if t <= prev:
+                ref = "redbox_upper" if i == 0 else f"targets_above[{i - 1}]"
+                raise ValueError(
+                    f"targets_above must be strictly ascending and > redbox_upper; "
+                    f"targets_above[{i}]={t} <= {ref}={prev}"
+                )
+            prev = t
+        prev = self.redbox_lower
+        for i, t in enumerate(self.targets_below):
+            if t >= prev:
+                ref = "redbox_lower" if i == 0 else f"targets_below[{i - 1}]"
+                raise ValueError(
+                    f"targets_below must be strictly descending and < redbox_lower; "
+                    f"targets_below[{i}]={t} >= {ref}={prev}"
+                )
+            prev = t
+
     # ------------------------------------------------------------------
     @classmethod
     def from_dict(cls, d: dict) -> "ZoneSignal":
