@@ -26,6 +26,7 @@ def run_once(consumer: RedisConsumer, writers: list) -> None:
     # Parse message
     try:
         sig = ZoneSignal.from_dict(data)
+        sig.validate()
     except (KeyError, ValueError) as exc:
         log.error("Bad message %s — discarding: %s | raw=%r", msg_id, exc, data)
         consumer.ack(msg_id)   # avoid infinite requeue of a malformed message
