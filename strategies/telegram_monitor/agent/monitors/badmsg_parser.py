@@ -22,8 +22,13 @@ from dataclasses import dataclass
 # no DOTALL — values are always single-line in practice (Redis fields are
 # strings) and the line-bounded match prevents a greedy `\{.*\}` from spanning
 # multiple Bad message entries when several stack up between scanner ticks.
+#
+# Separator tolerance: zone/gvfx emit em-dash `—` (U+2014) and conde emits
+# `--`. On Windows, NSSM-captured stderr is often cp1252-encoded, so the
+# em-dash byte 0x97 isn't valid UTF-8 and our reader replaces it with `�`
+# (rendered as `❓`). `[^\w\s]+` matches `—`, `--`, and `�` alike.
 _BAD_MSG_RE = re.compile(
-    r"Bad message\s+(?P<msg_id>\S+)\s+(?:—|--)\s+discarding:\s+"
+    r"Bad message\s+(?P<msg_id>\S+)\s+[^\w\s]+\s+discarding:\s+"
     r"(?P<exc>.+?)\s+\|\s+raw=(?P<raw>\{.*\})\s*$",
     re.MULTILINE,
 )
