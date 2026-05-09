@@ -53,9 +53,10 @@ In the repo settings:
   Use this to send alerts into a shared ops group while keeping commands
   scoped to individual operators.
 - **Variable** `TELEGRAM_MONITOR_SIGNAL_STATS_URL` *(optional)* — base URL for
-  the per-signal stats page. When set, new-signal notifications append a
-  clickable `?ts=<timestamp>` link (e.g.
-  `https://quangtihon2000.github.io/conde-stats/`). Unset = no link.
+  the per-signal stats page. New-signal notifications append a clickable
+  `?ts=<timestamp>` link. Defaults to
+  `https://quangtihon2000.github.io/conde-stats/`; set to override, or set
+  to empty string to disable the link.
 
 Naming follows `setup-agent.ps1`'s `${PREFIX}_${KEY}` convention
 (`PREFIX = TELEGRAM_MONITOR`). The workflow at

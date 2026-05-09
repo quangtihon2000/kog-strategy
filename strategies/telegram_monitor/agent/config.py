@@ -83,10 +83,9 @@ class Settings:
     redis_url: str
     log_level: str
     fleet: Fleet
-    # Optional base URL for the per-signal stats page. When set, new-signal
-    # notifications append `?ts=<timestamp>` and include a link in the body.
-    # Empty = no link rendered.
-    signal_stats_url: str = ""
+    # Base URL for the per-signal stats page. New-signal notifications append
+    # `?ts=<timestamp>` and include a link in the body. Set empty to disable.
+    signal_stats_url: str = "https://quangtihon2000.github.io/conde-stats/"
 
 
 def _parse_chat_ids(raw: str, var_name: str) -> frozenset[int]:
@@ -154,5 +153,8 @@ def load_settings() -> Settings:
         redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         fleet=fleet,
-        signal_stats_url=os.environ.get("TELEGRAM_SIGNAL_STATS_URL", "").strip(),
+        signal_stats_url=os.environ.get(
+            "TELEGRAM_SIGNAL_STATS_URL",
+            "https://quangtihon2000.github.io/conde-stats/",
+        ).strip(),
     )
