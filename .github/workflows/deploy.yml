@@ -180,6 +180,7 @@ jobs:
           TELEGRAM_MONITOR_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
           TELEGRAM_MONITOR_TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
           TELEGRAM_MONITOR_TELEGRAM_ALERT_CHAT_IDS: ${{ vars.TELEGRAM_MONITOR_ALERT_CHAT_IDS }}
+          TELEGRAM_MONITOR_TELEGRAM_SIGNAL_STATS_URL: ${{ vars.TELEGRAM_MONITOR_SIGNAL_STATS_URL }}
         run: |
           $ErrorActionPreference = "Stop"
           .\scripts\setup-agent.ps1 -Strategies '${{ needs.detect-changes.outputs.strategies_agent }}'

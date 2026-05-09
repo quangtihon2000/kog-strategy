@@ -175,12 +175,16 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             if prev is None:
                 continue
             body = format_signal(svc.name, data)
+            text = (
+                f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
+                f"```\n{body}\n```"
+            )
+            if settings.signal_stats_url:
+                sep = "&" if "?" in settings.signal_stats_url else "?"
+                text += f"\n[📈 stats]({settings.signal_stats_url}{sep}ts={ts})"
             await alerts.notify(
                 dedup_key=f"sig_new:{vps.name}:{svc.name}:{f.name}:{ts}",
-                text=(
-                    f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
-                    f"```\n{body}\n```"
-                ),
+                text=text,
             )
 
     if dirty and client is not None:
