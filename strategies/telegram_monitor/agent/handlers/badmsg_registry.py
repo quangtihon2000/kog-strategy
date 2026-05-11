@@ -54,6 +54,7 @@ def _flatten_conde(d: dict[str, Any]) -> dict[str, str]:
         "entry_price": str(d["entry_price"]),
         "sl": str(d["sl"]),
         "tps": _csv(d["tps"]),
+        "channel_id": str(int(d["channel_id"])),
         "channel_name": str(d.get("channel_name", "")),
     }
 
@@ -93,7 +94,8 @@ REGISTRY: dict[str, StrategySpec] = {
         stream="conde_signals",
         required_fields=(
             "timestamp", "symbol", "direction",
-            "entry_price", "sl", "tps", "channel_name",
+            "entry_price", "sl", "tps",
+            "channel_id", "channel_name",
         ),
         optional_fields=(),
         flatten=_flatten_conde,

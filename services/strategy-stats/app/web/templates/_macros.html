@@ -1,0 +1,30 @@
+{% macro since_selector(path, current) -%}
+<form class="flex items-center gap-2 text-sm">
+  <label for="since" class="text-slate-600">Window</label>
+  <select name="since" id="since"
+          hx-get="{{ path }}" hx-target="#data" hx-push-url="true"
+          class="border border-slate-300 rounded px-2 py-1 bg-white">
+    {% for code, label in since_choices %}
+      <option value="{{ code }}" {% if code == current %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+</form>
+{%- endmacro %}
+
+{% macro kpi(label, value, sub=None) -%}
+<div class="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+  <div class="text-xs uppercase tracking-wide text-slate-500">{{ label }}</div>
+  <div class="text-2xl font-semibold mt-1">{{ value }}</div>
+  {% if sub %}<div class="text-xs text-slate-500 mt-1">{{ sub }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro money(v) -%}
+<span class="{% if v and v > 0 %}text-emerald-600{% elif v and v < 0 %}text-rose-600{% else %}text-slate-500{% endif %}">
+{{- "%+,.2f"|format(v or 0) -}}
+</span>
+{%- endmacro %}
+
+{% macro pct(v) -%}
+{% if v is none %}—{% else %}{{ "%.1f%%"|format(v * 100) }}{% endif %}
+{%- endmacro %}

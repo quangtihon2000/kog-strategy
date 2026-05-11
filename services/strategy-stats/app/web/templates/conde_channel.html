@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Conde — {{ channel_name }}{% endblock %}
+{% block content %}
+<section class="flex items-center justify-between mb-4">
+  <div>
+    <div class="text-xs uppercase tracking-wide text-slate-500">Conde channel</div>
+    <h1 class="text-xl font-semibold">{{ channel_name }}</h1>
+  </div>
+  {{ m.since_selector("/conde/channel/" ~ channel_name, since) }}
+</section>
+
+<div id="data" class="space-y-4">
+  {% for s in signals %}
+  <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+    <div class="flex flex-wrap items-center gap-4 px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm">
+      <span class="text-slate-400 text-xs">#{{ s.signal_ts }}</span>
+      <span class="font-medium">{{ s.symbol }}</span>
+      <span class="px-2 py-0.5 rounded text-xs font-semibold
+        {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
+        {{ s.direction }}
+      </span>
+      <span class="text-slate-600">entry <span class="font-mono">{{ "%.2f"|format(s.entry_price) }}</span></span>
+      <span class="text-slate-600">SL <span class="font-mono">{{ "%.2f"|format(s.sl) }}</span></span>
+      <span class="text-slate-600">TPs
+        <span class="font-mono">
+          {%- for tp in s.tps -%}
+            {{ "%.2f"|format(tp) }}{% if not loop.last %}, {% endif %}
+          {%- endfor -%}
+        </span>
+      </span>
+      <span class="ml-auto text-slate-600">{{ s.n_positions }} positions</span>
+      <span class="font-medium">{{ m.money(s.pnl) }}</span>
+    </div>
+    {% if s.outcomes %}
+    <table class="min-w-full text-xs">
+      <thead class="bg-white text-slate-500 uppercase tracking-wide">
+        <tr>
+          <th class="px-3 py-2 text-left">Account</th>
+          <th class="px-3 py-2 text-left">Position</th>
+          <th class="px-3 py-2 text-right">Vol</th>
+          <th class="px-3 py-2 text-right">Entry</th>
+          <th class="px-3 py-2 text-right">Exit</th>
+          <th class="px-3 py-2 text-left">Closed</th>
+          <th class="px-3 py-2 text-left">Reason</th>
+          <th class="px-3 py-2 text-right">P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for o in s.outcomes %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-3 py-1.5">{{ o.account }}</td>
+          <td class="px-3 py-1.5 font-mono">{{ o.position_id }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.volume) }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.entry_price) }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.exit_price) }}</td>
+          <td class="px-3 py-1.5 text-slate-500">{{ o.closed_at.strftime("%Y-%m-%d %H:%M") if o.closed_at else "—" }}</td>
+          <td class="px-3 py-1.5"><span class="text-slate-600">{{ o.close_reason or "—" }}</span></td>
+          <td class="px-3 py-1.5 text-right">{{ m.money(o.profit + (o.swap or 0) + (o.commission or 0)) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="px-4 py-3 text-xs text-slate-500">No executions for this signal.</div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-500">No signals in this window.</div>
+  {% endfor %}
+</div>
+{% endblock %}

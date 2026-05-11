@@ -51,12 +51,15 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
   "direction": "BUY",
   "entry_price": 2350.00,
   "sl": 2340.00,
-  "tps": [2355.0, 2360.0, 2365.0]
+  "tps": [2355.0, 2360.0, 2365.0],
+  "channel_id": -1001234567890,
+  "channel_name": "Conder VIP"
 }
 ```
 
 - `timestamp` is **NOT re-stamped** — producer-supplied, preserved end-to-end
 - This is critical because `timestamp` is embedded in each position's comment for dedup
+- `channel_id` (Telegram BIGINT) + `channel_name` are **required** by `push_conde_signal` — strategy-stats ingest skips and ACKs any signal without `channel_id` to keep per-channel stats clean
 - File path: `data/{account}_{symbol}.json` (e.g., `data/5100000_XAUUSD.json`)
 - EA reads from `MQL5/Files/CondeAutoEntryEA/{account}_{symbol}.json`
 
