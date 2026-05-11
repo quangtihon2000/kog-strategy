@@ -175,16 +175,19 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             if prev is None:
                 continue
             body = format_signal(svc.name, data)
-            text = (
-                f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
-                f"```\n{body}\n```"
-            )
+            lines = [f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`"]
+            # `ts` lives outside the code block so Markdown can render it as a
+            # clickable link to the stats page. Falls back to plain text when
+            # the URL is disabled.
             if settings.signal_stats_url:
                 sep = "&" if "?" in settings.signal_stats_url else "?"
-                text += f"\n[📈 stats]({settings.signal_stats_url}{sep}ts={ts})"
+                lines.append(f"ts: [{ts}]({settings.signal_stats_url}{sep}ts={ts})")
+            else:
+                lines.append(f"ts: {ts}")
+            lines.append(f"```\n{body}\n```")
             await alerts.notify(
                 dedup_key=f"sig_new:{vps.name}:{svc.name}:{f.name}:{ts}",
-                text=text,
+                text="\n".join(lines),
             )
 
     if dirty and client is not None:

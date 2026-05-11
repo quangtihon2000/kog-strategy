@@ -48,7 +48,6 @@ def format_conde_signal(d: dict) -> str:
     lines = [
         f"symbol     : {d.get('symbol', '?')}",
         f"timestamp  : {_ts_to_str(d.get('timestamp'))}",
-        f"ts         : {d.get('timestamp', '-')}",
         f"direction  : {arrow} {direction}",
         f"entry      : {d.get('entry_price', '-')}",
         f"sl         : {d.get('sl', '-')}",
