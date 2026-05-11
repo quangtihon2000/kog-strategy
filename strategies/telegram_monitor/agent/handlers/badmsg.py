@@ -123,11 +123,10 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.message.reply_html(
             f"<b>Bad message — {html.escape(service or 'unknown')}</b>\n"
             f"exception: <code>{html.escape(exc)}</code>\n"
-            "no automatic publish path for this service. parsed payload:\n"
-            f"{_format_payload_block(payload)}\n"
-            "publish manually via one of:\n"
+            "no automatic publish path for this service. publish manually via one of:\n"
             f"<pre>{html.escape(known_streams_help())}</pre>"
         )
+        await query.message.reply_html(_format_payload_block(payload))
         return ConversationHandler.END
 
     context.user_data[STATE_KEY] = {
@@ -139,12 +138,13 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "payload": payload,
     }
 
+    # Two messages so the JSON stands alone — one tap to copy on mobile,
+    # less context to wade through when pasting back the fix.
+    await query.message.reply_html(_format_payload_block(payload))
     await query.message.reply_html(
         f"<b>Edit bad message — {html.escape(spec.service_name)}</b>\n"
         f"exception: <code>{html.escape(exc)}</code>\n"
         f"target stream: <code>{html.escape(spec.stream)}</code>\n"
-        "original payload:\n"
-        f"{_format_payload_block(payload)}\n"
         f"required: <code>{html.escape(', '.join(spec.required_fields))}</code>\n"
         "reply with corrected JSON, or /cancel"
     )
@@ -210,11 +210,11 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if action == "edit_again":
         await query.edit_message_text(
             f"<b>Edit again — {html.escape(state['service'])}</b>\n"
-            f"current payload:\n{_format_payload_block(state['payload'])}\n"
             f"required: <code>{html.escape(', '.join(state['required']))}</code>\n"
             "reply with corrected JSON, or /cancel",
             parse_mode="HTML",
         )
+        await query.message.reply_html(_format_payload_block(state["payload"]))
         return S_AWAIT_JSON
 
     if action == "publish":
