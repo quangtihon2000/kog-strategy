@@ -201,6 +201,8 @@ async def _run_induce(
             final_status = "activated"
 
             await session.commit()
+        else:
+            await session.commit()
 
     print(
         json.dumps(

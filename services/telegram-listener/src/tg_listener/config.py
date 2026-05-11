@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .exceptions import ChannelsConfigError, ConfigError
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
 
     llm_provider: Literal["anthropic", "google"] = "anthropic"
-    anthropic_api_key: str | None = None
+    anthropic_api_key: SecretStr | None = None
     google_api_key: str | None = None
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

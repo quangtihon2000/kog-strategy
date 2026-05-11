@@ -8,7 +8,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ParsedBy = Literal["regex", "llm"]
+ParsedBy = Literal[
+    "tier0_metadata",
+    "tier1_heuristic",
+    "tier2_regex",
+    "tier3_llm",
+    "tier4_validator",
+]
 Side = Literal["LONG", "SHORT"]
 EntryValue = float | tuple[float, float]
 
