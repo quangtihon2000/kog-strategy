@@ -63,10 +63,21 @@ def _review_keyboard(token: str) -> InlineKeyboardMarkup:
     ])
 
 
-def _format_payload_block(payload: dict) -> str:
-    return "<pre><code class=\"language-json\">" + html.escape(
-        json.dumps(payload, indent=2, ensure_ascii=False)
-    ) + "</code></pre>"
+def _await_keyboard(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✖ Cancel", callback_data=f"badmsg:cancel:{token}")],
+    ])
+
+
+def _format_payload_block(payload: dict, *, compact: bool = False) -> str:
+    # compact=True → single-line JSON: easier to tap-copy + paste-edit on mobile
+    # compact=False → indent=2 pretty: easier to read in review screen
+    body = (
+        json.dumps(payload, ensure_ascii=False)
+        if compact
+        else json.dumps(payload, indent=2, ensure_ascii=False)
+    )
+    return "<pre><code class=\"language-json\">" + html.escape(body) + "</code></pre>"
 
 
 async def _load_cache(redis: Redis, token: str) -> dict | None:
@@ -123,10 +134,11 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.message.reply_html(
             f"<b>Bad message — {html.escape(service or 'unknown')}</b>\n"
             f"exception: <code>{html.escape(exc)}</code>\n"
-            "no automatic publish path for this service. publish manually via one of:\n"
+            "no automatic publish path for this service. parsed payload:\n"
+            f"{_format_payload_block(payload)}\n"
+            "publish manually via one of:\n"
             f"<pre>{html.escape(known_streams_help())}</pre>"
         )
-        await query.message.reply_html(_format_payload_block(payload))
         return ConversationHandler.END
 
     context.user_data[STATE_KEY] = {
@@ -138,15 +150,15 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "payload": payload,
     }
 
-    # Two messages so the JSON stands alone — one tap to copy on mobile,
-    # less context to wade through when pasting back the fix.
-    await query.message.reply_html(_format_payload_block(payload))
     await query.message.reply_html(
         f"<b>Edit bad message — {html.escape(spec.service_name)}</b>\n"
         f"exception: <code>{html.escape(exc)}</code>\n"
         f"target stream: <code>{html.escape(spec.stream)}</code>\n"
+        "tap to copy &amp; edit:\n"
+        f"{_format_payload_block(payload, compact=True)}\n"
         f"required: <code>{html.escape(', '.join(spec.required_fields))}</code>\n"
-        "reply with corrected JSON, or /cancel"
+        "reply with corrected JSON:",
+        reply_markup=_await_keyboard(token),
     )
     return S_AWAIT_JSON
 
@@ -210,11 +222,13 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if action == "edit_again":
         await query.edit_message_text(
             f"<b>Edit again — {html.escape(state['service'])}</b>\n"
+            "tap to copy &amp; edit:\n"
+            f"{_format_payload_block(state['payload'], compact=True)}\n"
             f"required: <code>{html.escape(', '.join(state['required']))}</code>\n"
-            "reply with corrected JSON, or /cancel",
+            "reply with corrected JSON:",
             parse_mode="HTML",
+            reply_markup=_await_keyboard(token),
         )
-        await query.message.reply_html(_format_payload_block(state["payload"]))
         return S_AWAIT_JSON
 
     if action == "publish":
@@ -235,18 +249,36 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(f"flatten failed: {e}")
             return S_REVIEW
 
+        # Atomic publish-claim: when an alert lands in a shared group, multiple
+        # whitelisted operators can each open the edit conversation (per-user
+        # state is independent). DELETE returns 1 only for the first caller, so
+        # whoever wins the race proceeds; the rest get a clear "already handled"
+        # message instead of double-publishing the same signal.
+        try:
+            claimed = await redis.delete(f"badmsg:{token}")
+        except Exception as e:
+            log.warning("badmsg cache delete failed (token=%s): %s", token, e)
+            claimed = 0
+        if not claimed:
+            await query.edit_message_text(
+                "⚠️ already handled by another operator (or session expired)"
+            )
+            context.user_data.pop(STATE_KEY, None)
+            return ConversationHandler.END
+
         try:
             entry_id = await redis.xadd(spec.stream, flat)
         except Exception as e:
             log.exception("xadd to %s failed", spec.stream)
-            await query.edit_message_text(f"failed to publish: {e}")
-            return S_REVIEW
-
-        # Best-effort: clear the cache so the same token can't republish twice.
-        try:
-            await redis.delete(f"badmsg:{token}")
-        except Exception as e:
-            log.warning("badmsg cache delete failed (token=%s): %s", token, e)
+            # Cache already cleared — this token can't be retried via Edit.
+            # Operator still has the corrected JSON in this chat to copy into
+            # a manual /zone /conde /gvfx wizard.
+            await query.edit_message_text(
+                f"publish failed: {e}\n"
+                "use /zone /conde /gvfx to retry manually"
+            )
+            context.user_data.pop(STATE_KEY, None)
+            return ConversationHandler.END
 
         log.info(
             "badmsg republished: service=%s stream=%s id=%s payload=%s",
@@ -272,11 +304,24 @@ async def _cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
+@auth_required
+async def _on_await_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle [✖ Cancel] tap while waiting for the JSON reply."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop(STATE_KEY, None)
+    await query.edit_message_text("cancelled")
+    return ConversationHandler.END
+
+
 def conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(_on_edit, pattern=r"^badmsg:edit:")],
         states={
-            S_AWAIT_JSON: [MessageHandler(filters.TEXT & ~filters.COMMAND, _on_json_reply)],
+            S_AWAIT_JSON: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, _on_json_reply),
+                CallbackQueryHandler(_on_await_cancel, pattern=r"^badmsg:cancel:"),
+            ],
             S_REVIEW: [
                 CallbackQueryHandler(
                     _on_review,
