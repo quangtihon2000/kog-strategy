@@ -131,12 +131,11 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if spec is None:
         # Service not in the registry — no automatic republish path. Show the
         # parsed payload so the operator can hand-publish via an existing wizard.
+        await query.message.reply_html(_format_payload_block(payload))
         await query.message.reply_html(
             f"<b>Bad message — {html.escape(service or 'unknown')}</b>\n"
             f"exception: <code>{html.escape(exc)}</code>\n"
-            "no automatic publish path for this service. parsed payload:\n"
-            f"{_format_payload_block(payload)}\n"
-            "publish manually via one of:\n"
+            "no automatic publish path for this service. publish manually via:\n"
             f"<pre>{html.escape(known_streams_help())}</pre>"
         )
         return ConversationHandler.END
@@ -150,12 +149,13 @@ async def _on_edit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "payload": payload,
     }
 
+    # Raw JSON as its own message so it's easy to find, long-press to copy,
+    # and quote-reply against. The instructional message follows separately.
+    await query.message.reply_html(_format_payload_block(payload))
     await query.message.reply_html(
         f"<b>Edit bad message — {html.escape(spec.service_name)}</b>\n"
         f"exception: <code>{html.escape(exc)}</code>\n"
         f"target stream: <code>{html.escape(spec.stream)}</code>\n"
-        "tap to copy &amp; edit:\n"
-        f"{_format_payload_block(payload, compact=True)}\n"
         f"required: <code>{html.escape(', '.join(spec.required_fields))}</code>\n"
         "reply with corrected JSON:",
         reply_markup=_await_keyboard(token),
@@ -222,13 +222,12 @@ async def _on_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if action == "edit_again":
         await query.edit_message_text(
             f"<b>Edit again — {html.escape(state['service'])}</b>\n"
-            "tap to copy &amp; edit:\n"
-            f"{_format_payload_block(state['payload'], compact=True)}\n"
             f"required: <code>{html.escape(', '.join(state['required']))}</code>\n"
             "reply with corrected JSON:",
             parse_mode="HTML",
             reply_markup=_await_keyboard(token),
         )
+        await query.message.reply_html(_format_payload_block(state["payload"]))
         return S_AWAIT_JSON
 
     if action == "publish":
