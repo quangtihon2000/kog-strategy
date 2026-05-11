@@ -29,6 +29,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       UPSTREAM_REDIS_URL: ${UPSTREAM_REDIS_URL}
+      REDIS_STREAM_PREFIX: ${REDIS_STREAM_PREFIX:-}
       INGEST_BATCH_COUNT: ${INGEST_BATCH_COUNT:-64}
       INGEST_BLOCK_MS: ${INGEST_BLOCK_MS:-5000}
       INGEST_CONSUMER_NAME: ${INGEST_CONSUMER_NAME:-stats-worker-1}
@@ -50,7 +51,24 @@ services:
       BASIC_AUTH_USER: ${BASIC_AUTH_USER}
       BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD}
     ports:
-      - "${WEB_PORT:-8080}:8080"
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN}
 
 volumes:
   pg-data:
+  caddy-data:
+  caddy-config:

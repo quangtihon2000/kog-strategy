@@ -32,9 +32,11 @@ Copy `.env.example` → `.env` and fill in. All required:
 |---|---|
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Postgres creds (used by compose + app) |
 | `POSTGRES_HOST` / `POSTGRES_PORT` | Default `postgres` / `5432` (compose service name) |
-| `UPSTREAM_REDIS_URL` | Redis on the **MT5 VPS** (e.g. `redis://10.0.0.5:6379` via SSH tunnel or TLS-exposed). Must NOT point to a local Redis on the Linux VPS — there's nothing there to consume. |
+| `UPSTREAM_REDIS_URL` | Redis on the **MT5 VPS**. Prod: `rediss://default:<password>@<mt5-vps-host>:6380` (TLS + requirepass). Local dev: `redis://host.docker.internal:6379`. Must NOT point to a local Redis on the Linux VPS — there's nothing there to consume. |
+| `REDIS_STREAM_PREFIX` | Stream namespace prefix. Empty = prod names (`conde_signals`); set `dev_` / `test_` for staging |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Single shared credential for `/` |
-| `WEB_PORT` | Host port for the web container (default 8080) |
+| `WEB_PORT` | Loopback host port for the web container (default 8080); Caddy fronts public traffic |
+| `DASHBOARD_DOMAIN` | Public hostname for Caddy auto-TLS (e.g. `stats.example.com`). Blank = local-only |
 | `INGEST_BATCH_COUNT` / `INGEST_BLOCK_MS` / `INGEST_CONSUMER_NAME` | XREADGROUP tuning |
 
 ## Stream → consumer-group mapping
@@ -77,22 +79,86 @@ Open <http://localhost:8080/> → Basic Auth → home page renders 3 KPI cards.
 
 ## Production deploy (Linux VPS)
 
+End-to-end runbook for first-time deploy. Two VPS in play:
+
+- **MT5 VPS** (Windows): runs the EAs + Redis. Needs to expose Redis TLS+auth on a public port.
+- **Linux VPS**: runs this stack (`docker compose`). Connects to MT5 VPS Redis as a consumer.
+
+### Step 1 — Expose Redis on the MT5 VPS (TLS + requirepass)
+
+The default Memurai / Redis-on-Windows install listens on `127.0.0.1:6379` plaintext. We wrap it with stunnel for TLS and add `requirepass`.
+
+1. **Set `requirepass` in Redis config** (`redis.windows.conf` or Memurai equivalent):
+   ```
+   requirepass <strong-random-password>
+   ```
+   Restart the Redis/Memurai service. Sanity check: `redis-cli -a <password> XLEN conde_signals` works.
+
+2. **Install stunnel for Windows** and create `stunnel.conf`:
+   ```ini
+   [redis-tls]
+   accept = 0.0.0.0:6380
+   connect = 127.0.0.1:6379
+   cert = C:\stunnel\redis.pem
+   ```
+   Generate `redis.pem` with openssl (self-signed is fine — `rediss://` client will skip CN check if we set `ssl_cert_reqs=none`, but prefer a real cert from Let's Encrypt via `certbot` if the MT5 VPS has a public DNS name).
+
+3. **Firewall**: Windows Defender Firewall → inbound rule → allow TCP 6380 **only** from the Linux VPS public IP. Block 6379 from the public interface (keep it loopback-only).
+
+4. **Verify from the Linux VPS**:
+   ```bash
+   redis-cli --tls -h <mt5-vps-host> -p 6380 -a <password> XLEN conde_signals
+   ```
+
+### Step 2 — DNS for the dashboard
+
+Point an A record (`stats.example.com`) at the Linux VPS public IP. Caddy needs the domain to be publicly resolvable to auto-issue a Let's Encrypt cert; ports 80 + 443 must be reachable from the internet.
+
+### Step 3 — Deploy on the Linux VPS
+
 ```bash
 ssh linux-vps
 cd ~/kog_strategy && git pull
 cd services/strategy-stats
-docker compose up --build -d
+
+cp .env.example .env
+# Edit .env — at minimum:
+#   POSTGRES_PASSWORD=<strong-random>
+#   BASIC_AUTH_PASSWORD=<strong-random>
+#   UPSTREAM_REDIS_URL=rediss://default:<redis-password>@<mt5-vps-host>:6380
+#   DASHBOARD_DOMAIN=stats.example.com
+
+docker compose up --build -d postgres
 docker compose run --rm ingest alembic upgrade head
+docker compose up -d ingest web caddy
 ```
 
-Reverse-proxy (Caddy / nginx) terminates TLS in front of the `web` container. Verify backfill: `SELECT count(*) FROM conde_signals` should approach `XLEN conde_signals` on the MT5 VPS Redis.
+### Step 4 — Verify
 
-### Cross-VPS Redis access
+```bash
+# Ingest connected to all 6 streams
+docker compose logs ingest | grep "StreamConsumer.*ready"
 
-Ingest reads Redis on the MT5 (Windows) VPS, not local. Pick one:
+# Backfill landed
+docker compose exec postgres psql -U stats -d strategy_stats \
+  -c "SELECT count(*) FROM conde_signals;"
+# Compare against MT5 VPS Redis: redis-cli --tls ... XLEN conde_signals
 
-- **SSH tunnel** (preferred): systemd unit on Linux VPS keeps `ssh -L 6379:127.0.0.1:6379 mt5-vps` open; set `UPSTREAM_REDIS_URL=redis://host.docker.internal:6379`.
-- **Direct expose**: MT5 VPS Redis with `requirepass` + TLS, firewall whitelist Linux VPS IP.
+# Public dashboard reachable
+curl -sI https://stats.example.com/healthz  # 200 OK, no auth
+curl -u admin:<basic-auth-pw> https://stats.example.com/  # 200 OK
+```
+
+Caddy logs (`docker compose logs caddy`) should show a successful ACME cert issuance on first boot.
+
+### Updating
+
+```bash
+cd ~/kog_strategy && git pull
+cd services/strategy-stats
+docker compose up --build -d
+docker compose run --rm ingest alembic upgrade head  # only if migrations changed
+```
 
 ## Routes
 
