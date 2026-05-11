@@ -1,0 +1,71 @@
+name: strategy-stats CI
+
+on:
+  pull_request:
+    paths:
+      - 'services/strategy-stats/**'
+      - '.github/workflows/strategy-stats-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/strategy-stats/**'
+      - '.github/workflows/strategy-stats-ci.yml'
+
+jobs:
+  lint-build-migrate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/strategy-stats
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: stats
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: strategy_stats
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stats -d strategy_stats"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install ruff + alembic deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+          pip install \
+            "alembic>=1.14" \
+            "sqlalchemy[asyncio]>=2.0.36" \
+            "asyncpg>=0.30" \
+            "psycopg2-binary>=2.9" \
+            "pydantic>=2.9" \
+            "pydantic-settings>=2.6"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Build docker images
+        run: |
+          docker compose -f docker-compose.yml build ingest web
+
+      - name: Alembic upgrade head against ephemeral Postgres
+        env:
+          POSTGRES_USER: stats
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: strategy_stats
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+        run: alembic upgrade head

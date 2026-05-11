@@ -46,6 +46,8 @@ def push_conde_signal(data: dict) -> bool:
         entry_price  : float | str
         sl           : float | str
         tps          : list[float]   e.g. [2355.0, 2360.0, 2365.0]
+        channel_id   : int           Telegram channel id (BIGINT)
+        channel_name : str           Telegram channel display name
         timestamp    : int (optional — defaults to now)
     """
     if not redis_client:
@@ -70,6 +72,16 @@ def push_conde_signal(data: dict) -> bool:
             logger.error("channel_name is required and must be non-empty")
             return False
 
+        channel_id_raw = data.get("channel_id")
+        if channel_id_raw is None or str(channel_id_raw).strip() == "":
+            logger.error("channel_id is required (Telegram channel BIGINT)")
+            return False
+        try:
+            channel_id = int(channel_id_raw)
+        except (TypeError, ValueError):
+            logger.error(f"channel_id must be int-castable, got {channel_id_raw!r}")
+            return False
+
         entry_price = str(data["entry_price"])
         sl = str(data["sl"])
 
@@ -88,6 +100,7 @@ def push_conde_signal(data: dict) -> bool:
             "entry_price":  entry_price,
             "sl":           sl,
             "tps":          tps,
+            "channel_id":   str(channel_id),
             "channel_name": channel_name,
         }
 

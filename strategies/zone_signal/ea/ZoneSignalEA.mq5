@@ -85,6 +85,8 @@ int OnInit() {
       PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
                   InpTrailDistPts, InpTrailStartPts);
 
+   EnsureOutcomesDir();
+
    Print("[ZoneSignalEA] Initialized. Signal file: ", g_signalFile);
    return INIT_SUCCEEDED;
 }
@@ -194,16 +196,44 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    ulong deal = trans.deal;
    if (!HistoryDealSelect(deal)) return;
 
-   //--- Must be our EA on this symbol
-   if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) return;
+   //--- Symbol filter stays on OUT deal (symbol is set on both legs)
    if (HistoryDealGetString (deal, DEAL_SYMBOL) != _Symbol)        return;
+   // NOTE: do NOT filter on closing deal's DEAL_MAGIC — manual close via UI sets it to 0,
+   // which would drop the outcome. Filter on IN deal magic below instead.
 
-   //--- Only closing deals (SL or TP)
+   //--- Only closing deals
    ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal, DEAL_ENTRY);
    if (entry != DEAL_ENTRY_OUT) return;
 
    ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(deal, DEAL_REASON);
    ulong closedPosId = trans.position;  // position ticket that was closed
+
+   //--- Walk position history for IN deal: magic (filter), entry_price, opened_at, in_comment
+   long   in_magic    = -1;
+   double entry_price = 0.0;
+   long   opened_at   = 0;
+   string in_comment  = "";
+   string in_direction = "";
+   if (HistorySelectByPosition((long)closedPosId)) {
+      int n = HistoryDealsTotal();
+      for (int i = 0; i < n; i++) {
+         ulong d = HistoryDealGetTicket(i);
+         if (d == 0) continue;
+         if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+         in_magic    = HistoryDealGetInteger(d, DEAL_MAGIC);
+         entry_price = HistoryDealGetDouble(d, DEAL_PRICE);
+         opened_at   = (long)HistoryDealGetInteger(d, DEAL_TIME);
+         long t      = HistoryDealGetInteger(d, DEAL_TYPE);
+         in_direction = (t == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+         in_comment  = HistoryDealGetString(d, DEAL_COMMENT);
+         break;
+      }
+   }
+   if (in_magic != (long)InpMagic) return;   // not our position
+
+   //--- Emit outcome JSON (covers TP/SL/EXPERT/OTHER incl. manual closes)
+   WriteZoneOutcome(deal, (long)closedPosId, in_comment, in_direction,
+                    entry_price, opened_at, (long)reason);
 
    //--- Determine the original position direction from the closing deal type
    //    Closing a BUY = DEAL_TYPE_SELL, closing a SELL = DEAL_TYPE_BUY
@@ -993,5 +1023,142 @@ bool JsonGetDoubleArray(const string json, const string key, double &arr[]) {
 //+------------------------------------------------------------------+
 bool IsPeriod(ENUM_TIMEFRAMES tf) {
    return Period() == tf;
+}
+
+//+------------------------------------------------------------------+
+//| Create ZoneSignalEA\outcomes\ if missing                         |
+//+------------------------------------------------------------------+
+void EnsureOutcomesDir() {
+   string path = "ZoneSignalEA\\outcomes";
+   if (InpUseCommonDir) {
+      if (FolderCreate(path, FILE_COMMON)) return;
+   }
+   FolderCreate(path);
+}
+
+//+------------------------------------------------------------------+
+//| Parse Zone tier + slot_index + signal_ts from position comment.  |
+//|   ZB|ZS_SCALP{n}_{ts}  → tier=SCALP, slot=n                      |
+//|   ZB|ZS_T{n}_{ts}      → tier=NORMAL, slot=n                     |
+//|   ZB|ZS_MID_{ts}       → tier=MID,    slot=-1                    |
+//| Returns false if comment doesn't match any known Zone pattern.   |
+//+------------------------------------------------------------------+
+bool ParseZoneTierFromComment(const string comment, string &tier_out,
+                              long &slot_out, ulong &ts_out) {
+   tier_out = "UNKNOWN";
+   slot_out = -1;
+   ts_out   = 0;
+   if (comment == "") return false;
+
+   //--- Strip ZB_ / ZS_ prefix
+   string body;
+   if      (StringFind(comment, "ZB_") == 0) body = StringSubstr(comment, 3);
+   else if (StringFind(comment, "ZS_") == 0) body = StringSubstr(comment, 3);
+   else return false;
+
+   //--- Split on '_'
+   string parts[];
+   int n = StringSplit(body, '_', parts);
+   if (n < 2) return false;
+
+   string head = parts[0];
+   if (head == "MID") {
+      tier_out = "MID";
+      slot_out = -1;
+      ts_out   = (ulong)StringToInteger(parts[1]);
+      return ts_out != 0;
+   }
+   if (StringFind(head, "SCALP") == 0) {
+      tier_out = "SCALP";
+      slot_out = (long)StringToInteger(StringSubstr(head, 5));
+      if (n >= 2) ts_out = (ulong)StringToInteger(parts[1]);
+      return ts_out != 0;
+   }
+   if (StringFind(head, "T") == 0 && StringLen(head) >= 2) {
+      tier_out = "NORMAL";
+      slot_out = (long)StringToInteger(StringSubstr(head, 1));
+      if (n >= 2) ts_out = (ulong)StringToInteger(parts[1]);
+      return ts_out != 0;
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Write Zone outcome JSON file (19 fields = Conde 17 + tier/slot)  |
+//| Fires once per closing deal; idempotent (overwrite by pos_id).   |
+//+------------------------------------------------------------------+
+void WriteZoneOutcome(const ulong  deal_ticket,
+                      const long   position_id,
+                      const string in_comment,
+                      const string direction,
+                      const double entry_price,
+                      const long   opened_at,
+                      const long   reason_int) {
+   if (position_id == 0) return;
+
+   string out_comment = HistoryDealGetString(deal_ticket, DEAL_COMMENT);
+   string comment_field = (in_comment != "") ? in_comment : out_comment;
+
+   string tier;
+   long   slot_index;
+   ulong  signal_ts;
+   ParseZoneTierFromComment(comment_field, tier, slot_index, signal_ts);
+
+   double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+   double profit     = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+   double swap       = HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   double commission = HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+   double volume     = HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+   long   closed_at  = (long)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+   long   account    = (long)AccountInfoInteger(ACCOUNT_LOGIN);
+
+   string close_reason;
+   if      (reason_int == DEAL_REASON_TP)     close_reason = "TP";
+   else if (reason_int == DEAL_REASON_SL)     close_reason = "SL";
+   else if (reason_int == DEAL_REASON_EXPERT) close_reason = "EXPERT";
+   else                                       close_reason = "OTHER";
+
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+
+   string json = "{";
+   json += "\"position_id\":"     + IntegerToString(position_id)        + ",";
+   json += "\"deal_out_ticket\":" + IntegerToString((long)deal_ticket)  + ",";
+   json += "\"signal_ts\":"       + IntegerToString((long)signal_ts)   + ",";
+   json += "\"comment\":\""       + comment_field                       + "\",";
+   json += "\"account\":"         + IntegerToString(account)            + ",";
+   json += "\"symbol\":\""        + _Symbol                             + "\",";
+   json += "\"direction\":\""     + direction                           + "\",";
+   json += "\"magic\":"           + IntegerToString((long)InpMagic)     + ",";
+   json += "\"volume\":"          + DoubleToString(volume, 2)           + ",";
+   json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
+   json += "\"exit_price\":"      + DoubleToString(exit_price, digits)  + ",";
+   json += "\"profit\":"          + DoubleToString(profit, 2)           + ",";
+   json += "\"swap\":"            + DoubleToString(swap, 2)             + ",";
+   json += "\"commission\":"      + DoubleToString(commission, 2)       + ",";
+   json += "\"opened_at\":"       + IntegerToString(opened_at)          + ",";
+   json += "\"closed_at\":"       + IntegerToString(closed_at)          + ",";
+   json += "\"close_reason\":\""  + close_reason                        + "\",";
+   json += "\"tier\":\""          + tier                                + "\",";
+   json += "\"slot_index\":"      + IntegerToString(slot_index);
+   json += "}";
+
+   string path  = "ZoneSignalEA\\outcomes\\" + IntegerToString(position_id) + ".json";
+   int    flags = FILE_WRITE | FILE_TXT | FILE_ANSI;
+   if (InpUseCommonDir) flags |= FILE_COMMON;
+
+   int h = FileOpen(path, flags);
+   if (h == INVALID_HANDLE) {
+      flags ^= FILE_COMMON;
+      h = FileOpen(path, flags);
+      if (h == INVALID_HANDLE) {
+         PrintFormat("[Outcome] Cannot write '%s' (err %d)", path, GetLastError());
+         return;
+      }
+   }
+   FileWriteString(h, json);
+   FileClose(h);
+   PrintFormat("[Outcome] saved pos=%s reason=%s tier=%s slot=%d ts=%s",
+               IntegerToString(position_id), close_reason, tier,
+               (int)slot_index, IntegerToString((long)signal_ts));
 }
 //+------------------------------------------------------------------+

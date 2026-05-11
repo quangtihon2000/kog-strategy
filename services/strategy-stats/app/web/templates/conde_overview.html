@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Conde — Channels{% endblock %}
+{% block content %}
+<section class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">Conde · per channel</h1>
+  {{ m.since_selector("/conde", since) }}
+</section>
+
+<div id="data" class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="px-3 py-2 text-left">Channel</th>
+        <th class="px-3 py-2 text-right">Signals</th>
+        <th class="px-3 py-2 text-right">Classified</th>
+        <th class="px-3 py-2 text-right">Win</th>
+        <th class="px-3 py-2 text-right">Win rate</th>
+        <th class="px-3 py-2 text-right">Lo95</th>
+        <th class="px-3 py-2 text-right">Save</th>
+        <th class="px-3 py-2 text-right">Clean</th>
+        <th class="px-3 py-2 text-right">Trail</th>
+        <th class="px-3 py-2 text-right">Avg R</th>
+        <th class="px-3 py-2 text-right">P&amp;L</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in rows %}
+      <tr class="hover:bg-slate-50">
+        <td class="px-3 py-2">
+          <a class="text-amber-700 hover:underline" href="/conde/channel/{{ r.channel }}?since={{ since }}">{{ r.channel }}</a>
+        </td>
+        <td class="px-3 py-2 text-right">{{ r.n_signals }}</td>
+        <td class="px-3 py-2 text-right">{{ r.n_classified }}</td>
+        <td class="px-3 py-2 text-right">{{ r.n_win }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(r.win_rate) }}</td>
+        <td class="px-3 py-2 text-right text-slate-500">{{ m.pct(r.confidence_lo95) }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(r.save_rate) }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(r.clean_rate) }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(r.trail_rate) }}</td>
+        <td class="px-3 py-2 text-right">{% if r.avg_r is none %}—{% else %}{{ "%.2f"|format(r.avg_r) }}{% endif %}</td>
+        <td class="px-3 py-2 text-right">{{ m.money(r.total_pnl) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="11" class="px-3 py-6 text-center text-slate-500">No data in this window.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

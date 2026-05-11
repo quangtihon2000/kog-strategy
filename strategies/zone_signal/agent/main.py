@@ -3,11 +3,15 @@
 import logging
 import os
 import sys
+import threading
 import time
+
+import redis as redis_lib
 
 # Add shared/ to import path so agent_lib is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
 
+import outcome_publisher
 from config import load_settings
 from models import ZoneSignal
 from agent_lib.redis_consumer import RedisConsumer
@@ -72,6 +76,16 @@ def main() -> None:
         consumer=settings.redis_consumer,
     )
     consumer.create_group_if_missing()
+
+    outcomes_dir = settings.mt5_signal_dir / "outcomes"
+    outcomes_dir.mkdir(parents=True, exist_ok=True)
+    publisher_redis = redis_lib.from_url(settings.redis_url, decode_responses=True)
+    threading.Thread(
+        target=outcome_publisher.run,
+        args=(publisher_redis, outcomes_dir),
+        name="outcome-publisher",
+        daemon=True,
+    ).start()
 
     writers = [SignalWriter(acc, settings.mt5_signal_dir) for acc in settings.mt5_accounts]
     log.info(

@@ -90,6 +90,8 @@ int OnInit() {
       else                        GlobalVariableDel(varName);
    }
 
+   EnsureOutcomesDir();
+
    PrintFormat("[GVFX] Initialized. Signal=%s lastSigTs=%s active=%s dailyRealized=%.2f eodCutDone=%s",
                g_signalFile, IntegerToString(g_lastSigTs),
                g_signalActive ? "true" : "false",
@@ -105,6 +107,140 @@ void OnDeinit(const int reason) {
       g_atrHandle = INVALID_HANDLE;
    }
    PrintFormat("[GVFX] Removed. Reason: %d", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Create GvfxSignalEA\outcomes\ if missing                         |
+//+------------------------------------------------------------------+
+void EnsureOutcomesDir() {
+   string path = InpSignalSubdir + "\\outcomes";
+   if (InpUseCommonDir) {
+      if (FolderCreate(path, FILE_COMMON)) return;
+   }
+   FolderCreate(path);
+}
+
+//+------------------------------------------------------------------+
+//| Parse mode tag (A|F|S) from "GVFX_T{ts}_{mode}".                 |
+//| Returns "" if comment lacks the suffix (legacy positions).        |
+//+------------------------------------------------------------------+
+string ParseModeFromComment(const string comment) {
+   if (StringFind(comment, "GVFX_T") != 0) return "";
+   int us = StringFind(comment, "_", 6);
+   if (us < 0) return "";
+   string tail = StringSubstr(comment, us + 1);
+   if (tail == "A" || tail == "F" || tail == "S") return tail;
+   return "";
+}
+
+//+------------------------------------------------------------------+
+//| Capture position close → write outcomes\{position_id}.json        |
+//| Fires once per closing deal; idempotent (overwrite by position_id)|
+//+------------------------------------------------------------------+
+void OnTradeTransaction(
+   const MqlTradeTransaction &trans,
+   const MqlTradeRequest     &req,
+   const MqlTradeResult      &res
+) {
+   if (trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+
+   ulong deal_ticket = trans.deal;
+   if (deal_ticket == 0) return;
+   if (!HistoryDealSelect(deal_ticket)) return;
+
+   if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT) return;
+   if (HistoryDealGetString(deal_ticket, DEAL_SYMBOL) != _Symbol)                          return;
+   // NOTE: do NOT filter on closing deal's DEAL_MAGIC — manual close via UI sets it to 0.
+
+   long position_id = HistoryDealGetInteger(deal_ticket, DEAL_POSITION_ID);
+   if (position_id == 0) return;
+
+   string out_comment = HistoryDealGetString(deal_ticket, DEAL_COMMENT);
+   ulong  signal_ts   = ParseTsFromComment(out_comment);
+   string mode_tag    = ParseModeFromComment(out_comment);
+   string in_comment  = "";
+   double entry_price = 0.0;
+   long   opened_at   = 0;
+   string direction   = "";
+   long   in_magic    = -1;
+
+   if (HistorySelectByPosition(position_id)) {
+      int n = HistoryDealsTotal();
+      for (int i = 0; i < n; i++) {
+         ulong d = HistoryDealGetTicket(i);
+         if (d == 0) continue;
+         if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+         in_magic    = HistoryDealGetInteger(d, DEAL_MAGIC);
+         entry_price = HistoryDealGetDouble(d, DEAL_PRICE);
+         opened_at   = (long)HistoryDealGetInteger(d, DEAL_TIME);
+         long t      = HistoryDealGetInteger(d, DEAL_TYPE);
+         direction   = (t == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+         in_comment  = HistoryDealGetString(d, DEAL_COMMENT);
+         if (signal_ts == 0) signal_ts = ParseTsFromComment(in_comment);
+         if (mode_tag  == "") mode_tag  = ParseModeFromComment(in_comment);
+         break;
+      }
+   }
+   if (in_magic != (long)InpMagic) return;
+   if (signal_ts == 0)             return;
+
+   double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
+   double profit     = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
+   double swap       = HistoryDealGetDouble(deal_ticket, DEAL_SWAP);
+   double commission = HistoryDealGetDouble(deal_ticket, DEAL_COMMISSION);
+   double volume     = HistoryDealGetDouble(deal_ticket, DEAL_VOLUME);
+   long   closed_at  = (long)HistoryDealGetInteger(deal_ticket, DEAL_TIME);
+   long   reason_int = HistoryDealGetInteger(deal_ticket, DEAL_REASON);
+   long   account    = (long)AccountInfoInteger(ACCOUNT_LOGIN);
+
+   string close_reason;
+   if      (reason_int == DEAL_REASON_TP)     close_reason = "TP";
+   else if (reason_int == DEAL_REASON_SL)     close_reason = "SL";
+   else if (reason_int == DEAL_REASON_EXPERT) close_reason = IsEodWindow() ? "EOD" : "EXPERT";
+   else                                       close_reason = "OTHER";
+
+   int    digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   string comment_field = (in_comment != "") ? in_comment : out_comment;
+
+   string json = "{";
+   json += "\"position_id\":"     + IntegerToString(position_id)        + ",";
+   json += "\"deal_out_ticket\":" + IntegerToString((long)deal_ticket)  + ",";
+   json += "\"signal_ts\":"       + IntegerToString((long)signal_ts)    + ",";
+   json += "\"comment\":\""       + comment_field                       + "\",";
+   json += "\"mode_tag\":\""      + mode_tag                            + "\",";
+   json += "\"account\":"         + IntegerToString(account)            + ",";
+   json += "\"symbol\":\""        + _Symbol                             + "\",";
+   json += "\"direction\":\""     + direction                           + "\",";
+   json += "\"magic\":"           + IntegerToString((long)InpMagic)     + ",";
+   json += "\"volume\":"          + DoubleToString(volume, 2)           + ",";
+   json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
+   json += "\"exit_price\":"      + DoubleToString(exit_price, digits)  + ",";
+   json += "\"profit\":"          + DoubleToString(profit, 2)           + ",";
+   json += "\"swap\":"            + DoubleToString(swap, 2)             + ",";
+   json += "\"commission\":"      + DoubleToString(commission, 2)       + ",";
+   json += "\"opened_at\":"       + IntegerToString(opened_at)          + ",";
+   json += "\"closed_at\":"       + IntegerToString(closed_at)          + ",";
+   json += "\"close_reason\":\""  + close_reason                        + "\"";
+   json += "}";
+
+   string path  = InpSignalSubdir + "\\outcomes\\" + IntegerToString(position_id) + ".json";
+   int    flags = FILE_WRITE | FILE_TXT | FILE_ANSI;
+   if (InpUseCommonDir) flags |= FILE_COMMON;
+
+   int h = FileOpen(path, flags);
+   if (h == INVALID_HANDLE) {
+      flags ^= FILE_COMMON;
+      h = FileOpen(path, flags);
+      if (h == INVALID_HANDLE) {
+         PrintFormat("[Outcome] Cannot write '%s' (err %d)", path, GetLastError());
+         return;
+      }
+   }
+   FileWriteString(h, json);
+   FileClose(h);
+   PrintFormat("[Outcome] saved pos=%s reason=%s mode=%s ts=%s",
+               IntegerToString(position_id), close_reason, mode_tag,
+               IntegerToString((long)signal_ts));
 }
 
 //+------------------------------------------------------------------+

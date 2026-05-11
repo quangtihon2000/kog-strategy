@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Strategy Stats — Overview{% endblock %}
+{% block content %}
+<section class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">Overview</h1>
+  {{ m.since_selector("/", since) }}
+</section>
+
+<div id="data" class="space-y-6">
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <a href="/conde?since={{ since }}" class="block group">
+      <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-5 group-hover:border-amber-400">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs uppercase tracking-wide text-slate-500">Conde</span>
+          <span class="text-xs text-slate-400">{{ conde.channels }} channels</span>
+        </div>
+        <div class="text-3xl font-semibold">{{ conde.n_signals }}</div>
+        <div class="text-xs text-slate-500">signals</div>
+        <div class="mt-3 text-sm">
+          Win rate: <span class="font-medium">{{ m.pct(conde.win_rate) }}</span>
+          <span class="text-slate-400">({{ conde.n_classified }} classified)</span>
+        </div>
+        <div class="text-sm">P&amp;L: {{ m.money(conde.total_pnl) }}</div>
+      </div>
+    </a>
+
+    <a href="/gvfx?since={{ since }}" class="block group">
+      <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-5 group-hover:border-amber-400">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs uppercase tracking-wide text-slate-500">GVFX</span>
+          <span class="text-xs text-slate-400">{{ gvfx.symbols }} symbols</span>
+        </div>
+        <div class="text-3xl font-semibold">{{ gvfx.n_signals }}</div>
+        <div class="text-xs text-slate-500">signals · {{ gvfx.n_positions }} positions</div>
+        <div class="mt-3 text-sm">P&amp;L: {{ m.money(gvfx.total_pnl) }}</div>
+      </div>
+    </a>
+
+    <a href="/zone?since={{ since }}" class="block group">
+      <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-5 group-hover:border-amber-400">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-xs uppercase tracking-wide text-slate-500">Zone</span>
+          <span class="text-xs text-slate-400">{{ zone.accounts }} accounts</span>
+        </div>
+        <div class="text-3xl font-semibold">{{ zone.n_signals }}</div>
+        <div class="text-xs text-slate-500">signals · {{ zone.n_positions }} positions</div>
+        <div class="mt-3 text-sm">P&amp;L: {{ m.money(zone.total_pnl) }}</div>
+      </div>
+    </a>
+  </div>
+</div>
+{% endblock %}
