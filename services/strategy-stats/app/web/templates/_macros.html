@@ -20,8 +20,9 @@
 {%- endmacro %}
 
 {% macro money(v) -%}
-<span class="{% if v and v > 0 %}text-emerald-600{% elif v and v < 0 %}text-rose-600{% else %}text-slate-500{% endif %}">
-{{- "%+,.2f"|format(v or 0) -}}
+{% set n = v or 0 %}
+<span class="{% if n > 0 %}text-emerald-600{% elif n < 0 %}text-rose-600{% else %}text-slate-500{% endif %}">
+{{- "{:+,.2f}".format(n) -}}
 </span>
 {%- endmacro %}
 

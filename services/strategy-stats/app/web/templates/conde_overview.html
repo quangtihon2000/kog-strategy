@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}Conde — Channels{% endblock %}
 {% block content %}
 <section class="flex items-center justify-between mb-4">
@@ -28,7 +28,7 @@
       {% for r in rows %}
       <tr class="hover:bg-slate-50">
         <td class="px-3 py-2">
-          <a class="text-amber-700 hover:underline" href="/conde/channel/{{ r.channel_name }}?since={{ since }}">{{ r.channel_name }}</a>
+          <a class="text-amber-700 hover:underline" href="/conde/channel/{{ r.channel }}?since={{ since }}">{{ r.channel }}</a>
         </td>
         <td class="px-3 py-2 text-right">{{ r.n_signals }}</td>
         <td class="px-3 py-2 text-right">{{ r.n_classified }}</td>
