@@ -48,8 +48,8 @@ jobs:
             echo "==> Running alembic upgrade head"
             docker compose run --rm ingest alembic upgrade head
 
-            echo "==> Rebuilding ingest + web + caddy"
-            docker compose up --build -d ingest web caddy
+            echo "==> Rebuilding ingest + web"
+            docker compose up --build -d ingest web
 
             echo "==> Pruning dangling images"
             docker image prune -f
