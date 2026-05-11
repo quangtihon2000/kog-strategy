@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     upstream_redis_url: str = "redis://localhost:6379"
+    redis_stream_prefix: str = ""
 
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"

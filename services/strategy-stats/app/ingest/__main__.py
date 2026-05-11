@@ -26,6 +26,9 @@ from app.settings import get_settings
 log = logging.getLogger(__name__)
 
 
+# (base_stream_name, consumer_group, handler). The actual stream name is
+# prefixed at runtime with settings.redis_stream_prefix (empty in prod;
+# "dev_" / "test_" for staging namespaces).
 STREAMS = [
     ("conde_signals", "stats_conde_sig", conde_signals.handle),
     ("conde_outcomes", "stats_conde_out", conde_outcomes.handle),
@@ -40,9 +43,10 @@ async def main() -> None:
     settings = get_settings()
     client = redis.from_url(settings.upstream_redis_url, decode_responses=False)
 
+    prefix = settings.redis_stream_prefix
     consumers = [
-        StreamConsumer(client, stream, group, handler)
-        for stream, group, handler in STREAMS
+        StreamConsumer(client, f"{prefix}{base}", group, handler)
+        for base, group, handler in STREAMS
     ]
     log.info("starting %d stream consumers against %s", len(consumers), settings.upstream_redis_url)
 
