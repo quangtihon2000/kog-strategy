@@ -1,0 +1,37 @@
+# channels.yaml — single source of truth for channel config.
+# See specs/telegram-signal-listener.md section 8.
+
+channels:
+  - id: -1001234567890
+    name: "Channel A Pro"
+    enabled: true
+    type: "broadcast"   # broadcast | group
+    allow_forward: false
+    parser: "channel_a"
+    notes: "Format clean, regex chính"
+
+  - id: -1001111111111
+    name: "Channel B Free"
+    enabled: true
+    type: "group"
+    allow_forward: false
+    parser: "channel_b"
+    admin_user_ids: [12345, 67890]   # override nếu API call get_participants fail
+    notes: "Admin viết tay, regex linh hoạt + LLM fallback nhiều"
+
+  - id: -1002222222222
+    name: "Channel VN Stocks"
+    enabled: false   # tạm tắt để debug
+    type: "broadcast"
+    parser: "channel_vn_stocks"
+
+llm:
+  provider: "anthropic"
+  model: "claude-haiku-4-5-20251001"
+  timeout_s: 5
+  max_retries: 2
+  confidence_threshold: 0.7
+
+filtering:
+  startup_replay_window_min: 1
+  rejected_sample_rate: 0.005   # 0.5%
