@@ -178,18 +178,24 @@ void OnTick() {
    GvfxSig sig;
    if (!LoadSignal(g_signalFile, sig)) return;
 
-   //--- New signal detection
+   //--- New signal detection. Consult the persisted reached-ts marker so a
+   //    previously-deactivated signal can't resurrect when it looks "new" to
+   //    in-memory state — fresh chart, terminal redeploy after history rolled
+   //    out of the lookback window, or any path where ScanMaxSeenTimestamp
+   //    returns 0 (or diverges from the file ts) while the GlobalVariable
+   //    GVFX_Reached_* still records the kill.
    if (sig.timestamp != g_lastSigTs) {
       g_currentSig   = sig;
       g_lastSigTs    = sig.timestamp;
-      g_signalActive = true;
+      g_signalActive = !SignalAlreadyReached(sig.timestamp);
       int    effStep, effTp;
       string effMode;
       EffectiveStepTpPts(g_currentSig, effStep, effTp, effMode);
-      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f atr=%s effStep=%d effTp=%d mode=%s",
+      PrintFormat("[GVFX] New signal ts=%s dir=%s target=%.5f step=%d tp=%d low=%.5f high=%.5f atr=%s effStep=%d effTp=%d mode=%s active=%s",
                   IntegerToString(sig.timestamp), sig.direction,
                   sig.target, sig.step, sig.tp, sig.low, sig.high,
-                  sig.use_atr ? "true" : "false", effStep, effTp, effMode);
+                  sig.use_atr ? "true" : "false", effStep, effTp, effMode,
+                  g_signalActive ? "true" : "false");
    }
 
    //--- Target reached → deactivate signal (don't enter more). Persist the
