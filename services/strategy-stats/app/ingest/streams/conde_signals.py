@@ -7,6 +7,11 @@ Producer fields:
 Signals without `channel_id` are skipped (ack'd, not stored). Backfill of
 legacy messages predating the producer's `channel_id` rollout would otherwise
 pollute stats with channel-less rows; we'd rather miss them than misattribute.
+
+Cross-contamination observed in prod: some messages on `conde_signals` are
+actually zone-formatted (have `type=ZONE_SIGNAL` / `redbox_upper` / no
+`direction`). Producer-side bug; we skip+ack with WARNING rather than
+strand the PEL.
 """
 from __future__ import annotations
 
@@ -52,11 +57,40 @@ async def _upsert_channel(session: AsyncSession, channel_id: int, name: str) -> 
 
 
 async def handle(session: AsyncSession, fields: dict[str, str]) -> None:
-    signal_ts = int(fields["timestamp"])
-    symbol = fields["symbol"]
-    direction = fields["direction"].upper()
-    entry_price = float(fields["entry_price"])
-    sl = float(fields["sl"])
+    # Cross-contamination guard: zone-formatted messages routed to conde stream.
+    msg_type = (fields.get("type") or "").strip().upper()
+    if msg_type == "ZONE_SIGNAL" or "redbox_upper" in fields or "redbox_uppper" in fields:
+        log.warning(
+            "conde_signals: skip zone-formatted message on conde stream type=%r fields=%s",
+            msg_type, fields,
+        )
+        return
+
+    ts_raw = (fields.get("timestamp") or "").strip()
+    symbol = (fields.get("symbol") or "").strip()
+    direction_raw = (fields.get("direction") or "").strip()
+    entry_raw = (fields.get("entry_price") or "").strip()
+    sl_raw = (fields.get("sl") or "").strip()
+
+    if not ts_raw or not symbol or not direction_raw or not entry_raw or not sl_raw:
+        log.warning(
+            "conde_signals: skip malformed (missing required field) fields=%s",
+            fields,
+        )
+        return
+
+    try:
+        signal_ts = int(ts_raw)
+        entry_price = float(entry_raw)
+        sl = float(sl_raw)
+    except ValueError:
+        log.warning(
+            "conde_signals: skip non-numeric (ts=%r entry=%r sl=%r) fields=%s",
+            ts_raw, entry_raw, sl_raw, fields,
+        )
+        return
+
+    direction = direction_raw.upper()
     tps = _parse_floats_csv(fields.get("tps", ""))
     channel_name = fields.get("channel_name") or None
 
