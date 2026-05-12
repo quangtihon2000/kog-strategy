@@ -31,6 +31,12 @@ input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to plac
 
 input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
 
+// --- ATR-based TP override (ghi đè TP từ signal bằng ATR * hệ số)
+input bool            InpUseAtrTp   = true;          // Override signal TPs with ATR-based TP (default ON)
+input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calculation
+input int             InpAtrPeriod  = 14;             // ATR period
+input double          InpAtrTpMult  = 1.0;            // TP distance = ATR * mult
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -51,6 +57,7 @@ datetime    g_lastTickCheck = 0;
 ulong       g_lastSigTs     = 0;   // timestamp of last successfully executed signal
 ulong       g_lastWaitTs    = 0;   // timestamp we've already logged "waiting" for
 CondeSignal g_sig;
+int         g_atrHandle     = INVALID_HANDLE;  // ATR indicator handle (reused per tick)
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -66,6 +73,16 @@ int OnInit() {
 
    EnsureOutcomesDir();
 
+   //--- Khởi tạo ATR handle một lần, tái sử dụng cho mọi lần mở lệnh
+   if (InpUseAtrTp) {
+      g_atrHandle = iATR(_Symbol, InpAtrTf, InpAtrPeriod);
+      if (g_atrHandle == INVALID_HANDLE)
+         Print("[WARN] iATR handle creation failed — ATR TP may fall back to signal TP");
+      else
+         PrintFormat("[CondeAutoEntryEA] ATR handle ready (tf=%s period=%d mult=%.2f)",
+                     EnumToString(InpAtrTf), InpAtrPeriod, InpAtrTpMult);
+   }
+
    if (InpEnableTrailing && InpTrailDistPts >= InpTrailStartPts)
       PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
                   InpTrailDistPts, InpTrailStartPts);
@@ -77,6 +94,10 @@ int OnInit() {
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
+   if (g_atrHandle != INVALID_HANDLE) {
+      IndicatorRelease(g_atrHandle);
+      g_atrHandle = INVALID_HANDLE;
+   }
    Print("[CondeAutoEntryEA] Removed. Reason: ", reason);
 }
 
@@ -253,6 +274,47 @@ bool IsSpreadOK(const string tag) {
 }
 
 //+------------------------------------------------------------------+
+//| Tính TP cho một lệnh: ATR-based nếu InpUseAtrTp bật, ngược lại  |
+//| dùng sig.tps[0] (signal TP1). ATR lấy trên InpAtrTf, shift=1    |
+//| (bar đóng gần nhất). Fallback về signal TP1 nếu ATR không hợp lệ.|
+//+------------------------------------------------------------------+
+double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice) {
+   if (!InpUseAtrTp) {
+      // Dùng TP từ signal — hành vi gốc không thay đổi
+      return sig.tps[0];
+   }
+
+   double atrVal = 0.0;
+   bool   atrOk  = false;
+
+   if (g_atrHandle != INVALID_HANDLE) {
+      double buf[1];
+      // shift=1: lấy bar đóng gần nhất (tránh bar đang hình thành)
+      if (CopyBuffer(g_atrHandle, 0, 1, 1, buf) == 1) {
+         atrVal = buf[0];
+         atrOk  = (atrVal > 0.0 && MathIsValidNumber(atrVal));
+      }
+   }
+
+   if (!atrOk || atrVal <= 0.0) {
+      // ATR không tính được → dùng tps[0] làm fallback
+      PrintFormat("[ATR-TP] ATR unavailable (handle=%d val=%.5f) — falling back to signal TP1 %.5f",
+                  g_atrHandle, atrVal, sig.tps[0]);
+      return sig.tps[0];
+   }
+
+   double dist = atrVal * InpAtrTpMult;
+   double tp   = (dir == POSITION_TYPE_BUY)
+                 ? NormalizeDouble(entryPrice + dist, _Digits)
+                 : NormalizeDouble(entryPrice - dist, _Digits);
+
+   PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f dist=%.5f entry=%.5f → tp=%.5f",
+               dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
+               atrVal, InpAtrTpMult, dist, entryPrice, tp);
+   return tp;
+}
+
+//+------------------------------------------------------------------+
 //| Open one position per TP, respecting position and lot caps.      |
 //| Returns true iff every TP either succeeded or was already        |
 //| accounted for (open position / historical deal) or was terminally|
@@ -315,7 +377,9 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
       double sl     = ClampStop(dir, slRaw,       true);
       // All positions target TP1 — exit together when the first TP prints.
       // Position count still tracks tps[] length for sizing/dedup purposes.
-      double tp     = ClampStop(dir, sig.tps[0],  false);
+      // Khi InpUseAtrTp bật: mọi vị thế trong cùng signal dùng chung 1 ATR TP
+      // (computed once per OpenTrades call — see GetAtrTp call below).
+      double tp     = ClampStop(dir, ComputeTp(dir, sig, sig.entry_price), false);
 
       bool ok;
       if (usePending) {
