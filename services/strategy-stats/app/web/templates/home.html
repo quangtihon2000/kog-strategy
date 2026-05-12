@@ -50,63 +50,154 @@
     </a>
   </div>
 
-  <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
-    <div class="px-4 py-3 border-b border-slate-100">
-      <h2 class="text-sm font-semibold text-slate-700">Recent executed signals</h2>
-    </div>
-    <table class="min-w-full text-xs">
-      <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
-        <tr>
-          <th class="px-3 py-2 text-left">Time (UTC)</th>
-          <th class="px-3 py-2 text-left">Channel</th>
-          <th class="px-3 py-2 text-left">Symbol</th>
-          <th class="px-3 py-2 text-left">Dir</th>
-          <th class="px-3 py-2 text-right">Entry</th>
-          <th class="px-3 py-2 text-right">SL</th>
-          <th class="px-3 py-2 text-left">Classification</th>
-          <th class="px-3 py-2 text-right">P&amp;L</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-slate-100">
-        {% for s in recent_signals %}
-        <tr class="hover:bg-slate-50">
-          <td class="px-3 py-1.5 font-mono text-slate-500">{{ s.time_str }}</td>
-          <td class="px-3 py-1.5">
-            {% if s.channel_id is not none %}
-            <a class="text-amber-700 hover:underline"
-               href="/conde/channel/{{ s.channel_id }}?signal_ts={{ s.signal_ts }}&since={{ since }}">
+  <section class="space-y-4">
+    <h2 class="text-sm font-semibold text-slate-700">Recent executed signals</h2>
+
+    {# ---------- Conde ---------- #}
+    <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
+        <span class="text-xs uppercase tracking-wide text-slate-500">Conde</span>
+        <span class="text-xs text-slate-400">{{ recent_conde|length }} shown</span>
+      </div>
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-3 py-2 text-left">Time (UTC)</th>
+            <th class="px-3 py-2 text-left">Channel</th>
+            <th class="px-3 py-2 text-left">Symbol</th>
+            <th class="px-3 py-2 text-left">Dir</th>
+            <th class="px-3 py-2 text-right">Entry</th>
+            <th class="px-3 py-2 text-right">SL</th>
+            <th class="px-3 py-2 text-left">Classification</th>
+            <th class="px-3 py-2 text-right">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for s in recent_conde %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-3 py-1.5 font-mono text-slate-500">{{ s.time_str }}</td>
+            <td class="px-3 py-1.5">
+              {% if s.channel_id is not none %}
+              <a class="text-amber-700 hover:underline"
+                 href="/conde/channel/{{ s.channel_id }}?signal_ts={{ s.signal_ts }}&since={{ since }}">
+                {{ s.channel_name }}
+              </a>
+              {% else %}
               {{ s.channel_name }}
-            </a>
-            {% else %}
-            {{ s.channel_name }}
-            {% endif %}
-          </td>
-          <td class="px-3 py-1.5 font-medium">{{ s.symbol }}</td>
-          <td class="px-3 py-1.5">
-            <span class="px-2 py-0.5 rounded text-xs font-semibold
-              {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
-              {{ s.direction }}
-            </span>
-          </td>
-          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(s.entry_price) }}</td>
-          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(s.sl) }}</td>
-          <td class="px-3 py-1.5">
-            {% set cls = s.classification %}
-            <span class="px-2 py-0.5 rounded text-xs font-semibold
-              {% if cls in ('WIN_CLEAN', 'WIN_TRAIL', 'WIN_MIXED') %}bg-emerald-100 text-emerald-700
-              {% elif cls == 'LOSS' %}bg-rose-100 text-rose-700
-              {% elif cls == 'SAVED' %}bg-amber-100 text-amber-700
-              {% else %}bg-slate-100 text-slate-500{% endif %}">
-              {{ cls }}
-            </span>
-          </td>
-          <td class="px-3 py-1.5 text-right">{{ m.money(s.pnl) }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="8" class="px-3 py-6 text-center text-slate-500">No recent signals.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+              {% endif %}
+            </td>
+            <td class="px-3 py-1.5 font-medium">{{ s.symbol }}</td>
+            <td class="px-3 py-1.5">
+              <span class="px-2 py-0.5 rounded text-xs font-semibold
+                {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
+                {{ s.direction }}
+              </span>
+            </td>
+            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(s.entry_price) }}</td>
+            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(s.sl) }}</td>
+            <td class="px-3 py-1.5">
+              {% set cls = s.classification %}
+              <span class="px-2 py-0.5 rounded text-xs font-semibold
+                {% if cls in ('WIN_CLEAN', 'WIN_TRAIL', 'WIN_MIXED') %}bg-emerald-100 text-emerald-700
+                {% elif cls == 'LOSS' %}bg-rose-100 text-rose-700
+                {% elif cls == 'SAVED' %}bg-amber-100 text-amber-700
+                {% else %}bg-slate-100 text-slate-500{% endif %}">
+                {{ cls }}
+              </span>
+            </td>
+            <td class="px-3 py-1.5 text-right">{{ m.money(s.pnl) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="px-3 py-6 text-center text-slate-500">No recent executed signals.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ---------- GVFX ---------- #}
+    <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
+        <span class="text-xs uppercase tracking-wide text-slate-500">GVFX</span>
+        <span class="text-xs text-slate-400">{{ recent_gvfx|length }} shown</span>
+      </div>
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-3 py-2 text-left">Time (UTC)</th>
+            <th class="px-3 py-2 text-left">Symbol</th>
+            <th class="px-3 py-2 text-left">Dir</th>
+            <th class="px-3 py-2 text-right">Target</th>
+            <th class="px-3 py-2 text-right">Positions</th>
+            <th class="px-3 py-2 text-right">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for s in recent_gvfx %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-3 py-1.5 font-mono text-slate-500">{{ s.time_str }}</td>
+            <td class="px-3 py-1.5">
+              <a class="text-amber-700 hover:underline font-medium"
+                 href="/gvfx/symbol/{{ s.symbol }}?since={{ since }}">{{ s.symbol }}</a>
+            </td>
+            <td class="px-3 py-1.5">
+              <span class="px-2 py-0.5 rounded text-xs font-semibold
+                {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
+                {{ s.direction }}
+              </span>
+            </td>
+            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(s.target) }}</td>
+            <td class="px-3 py-1.5 text-right">{{ s.n_positions }}</td>
+            <td class="px-3 py-1.5 text-right">{{ m.money(s.pnl) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="px-3 py-6 text-center text-slate-500">No recent executed signals.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# ---------- Zone ---------- #}
+    <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div class="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
+        <span class="text-xs uppercase tracking-wide text-slate-500">Zone</span>
+        <span class="text-xs text-slate-400">{{ recent_zone|length }} shown</span>
+      </div>
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
+          <tr>
+            <th class="px-3 py-2 text-left">Time (UTC)</th>
+            <th class="px-3 py-2 text-left">Symbol</th>
+            <th class="px-3 py-2 text-right">Redbox</th>
+            <th class="px-3 py-2 text-left">Account</th>
+            <th class="px-3 py-2 text-right">Positions</th>
+            <th class="px-3 py-2 text-right">P&amp;L</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for s in recent_zone %}
+          <tr class="hover:bg-slate-50">
+            <td class="px-3 py-1.5 font-mono text-slate-500">{{ s.time_str }}</td>
+            <td class="px-3 py-1.5 font-medium">{{ s.symbol }}</td>
+            <td class="px-3 py-1.5 text-right font-mono">
+              {{ "%.2f"|format(s.redbox_lower) }} – {{ "%.2f"|format(s.redbox_upper) }}
+            </td>
+            <td class="px-3 py-1.5">
+              {% if s.account %}
+              <a class="text-amber-700 hover:underline"
+                 href="/zone/account/{{ s.account }}?since={{ since }}">{{ s.account }}</a>
+              {% else %}
+              <span class="text-slate-400">—</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-1.5 text-right">{{ s.n_positions }}</td>
+            <td class="px-3 py-1.5 text-right">{{ m.money(s.pnl) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="px-3 py-6 text-center text-slate-500">No recent executed signals.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {% endblock %}
