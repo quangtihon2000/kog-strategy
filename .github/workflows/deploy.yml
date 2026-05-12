@@ -1,6 +1,6 @@
 name: Deploy EAs & Agents
 
-# Redeploy-all trigger: 2026-05-01 (verify ReparsePoint junction fix preserves data/*.json across redeploy)
+# Redeploy-all trigger: 2026-05-12 (push Zone EA v3.05 — InpUseCommonDir default flipped to false)
 
 on:
   push:
