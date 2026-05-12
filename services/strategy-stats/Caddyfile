@@ -1,6 +1,20 @@
-{$DASHBOARD_DOMAIN} {
+# Reference snippet — append a block like this to the existing portfolio-caddy
+# Caddyfile (the file bind-mounted into the portfolio-caddy container; typical
+# host path: ~/portfolio-engine/Caddyfile). Replace stats.example.com with the
+# real dashboard hostname. After editing, reload from inside the container:
+#
+#   docker exec portfolio-caddy caddy reload --config /etc/caddy/Caddyfile
+#
+# If reload doesn't trigger ACME on the new host, force a restart:
+#
+#   docker restart portfolio-caddy
+#
+# The strategy-stats-web alias resolves on portfolio-engine_portfolio-network,
+# which the web container joins via docker-compose.yml.
+
+stats.example.com {
 	encode gzip
-	reverse_proxy web:8080
+	reverse_proxy strategy-stats-web:8080
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
