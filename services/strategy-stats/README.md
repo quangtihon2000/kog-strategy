@@ -22,7 +22,7 @@ EAs are the sole writers to the Redis streams; ingest is the sole reader on the 
 - SQLAlchemy 2.0 async + asyncpg, Alembic migrations
 - Postgres 15
 - Async Redis consumer (`asyncio.gather` over 6 streams)
-- HTTP Basic Auth (single shared credential)
+- Dashboard is currently open (no auth); `verify_basic_auth` retained in code for a one-line re-enable
 
 ## Layout
 
@@ -48,7 +48,7 @@ Copy `.env.example` → `.env` and fill in. All required:
 | `POSTGRES_HOST` / `POSTGRES_PORT` | Default `strategy-stats-postgres` / `5432`. We use an explicit alias (not the bare service name `postgres`) because the web container also joins `portfolio-engine_portfolio-network`, where `postgres` resolves to a different, unrelated DB. |
 | `UPSTREAM_REDIS_URL` | Redis on the **MT5 VPS**. Prod: `rediss://default:<password>@<mt5-vps-host>:6380` (TLS + requirepass). Local dev: `redis://host.docker.internal:6379`. Must NOT point to a local Redis on the Linux VPS — there's nothing there to consume. |
 | `REDIS_STREAM_PREFIX` | Stream namespace prefix. Empty = prod names (`conde_signals`); set `dev_` / `test_` for staging |
-| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Single shared credential for `/` |
+| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Currently unused — kept for one-line re-enable of dashboard auth |
 | `WEB_PORT` | Loopback host port for the web container (default 8080); external `portfolio-caddy` fronts public traffic via the `strategy-stats-web` network alias |
 | `INGEST_BATCH_COUNT` / `INGEST_BLOCK_MS` / `INGEST_CONSUMER_NAME` | XREADGROUP tuning |
 
@@ -92,7 +92,7 @@ redis-cli XADD conde_signals '*' \
   timestamp 1700000000 symbol XAUUSD direction BUY \
   entry_price 2000 sl 1990 tps 2010,2020,2030 channel_name TEST
 ```
-Open <http://localhost:8080/> → Basic Auth → home page renders 3 KPI cards.
+Open <http://localhost:8080/> → home page renders 3 KPI cards.
 
 ## Querying prod Postgres from your laptop
 
@@ -154,7 +154,6 @@ cd services/strategy-stats
 cp .env.example .env
 # Edit .env — at minimum:
 #   POSTGRES_PASSWORD=<strong-random>
-#   BASIC_AUTH_PASSWORD=<strong-random>
 #   UPSTREAM_REDIS_URL=rediss://default:<redis-password>@<mt5-vps-host>:6380
 
 docker compose up --build -d postgres
@@ -208,7 +207,7 @@ docker exec portfolio-caddy ls /data/caddy/certificates/acme-v02.api.letsencrypt
 docker logs portfolio-caddy --since 2m 2>&1 \
   | grep -iE "stats|obtain|certificate" | tail -10
 curl -sS https://stats.auto-trade.life/healthz                # {"status":"ok"}
-curl -u admin:<basic-auth-pw> -sI https://stats.auto-trade.life/  # 200 OK
+curl -sI https://stats.auto-trade.life/                       # 200 OK (dashboard currently open)
 ```
 
 Pitfalls (learned the hard way on the first prod deploy):
@@ -228,16 +227,18 @@ docker compose run --rm ingest alembic upgrade head  # only if migrations change
 
 ## Routes
 
-| Path | Auth | Purpose |
-|---|---|---|
-| `/` | Basic | Home — 3 KPI cards (conde / gvfx / zone) |
-| `/conde` | Basic | Per-channel table + win-rate |
-| `/conde/channel/{channel_id}` | Basic | Per-signal breakdown |
-| `/gvfx` | Basic | Per-symbol cards + mode_tag (A/F/S) breakdown |
-| `/gvfx/symbol/{symbol}` | Basic | Per-signal grid |
-| `/zone` | Basic | Per-account + per-tier (SCALP/NORMAL/MID) |
-| `/zone/account/{account}` | Basic | Per-signal tier breakdown |
-| `/healthz` | **none** | Docker healthcheck JSON |
+All dashboard routes are currently open (no auth). To re-enable Basic Auth, see the comment in `app/web/app.py`.
+
+| Path | Purpose |
+|---|---|
+| `/` | Home — 3 KPI cards (conde / gvfx / zone) |
+| `/conde` | Per-channel table + win-rate |
+| `/conde/channel/{channel_id}` | Per-signal breakdown |
+| `/gvfx` | Per-symbol cards + mode_tag (A/F/S) breakdown |
+| `/gvfx/symbol/{symbol}` | Per-signal grid |
+| `/zone` | Per-account + per-tier (SCALP/NORMAL/MID) |
+| `/zone/account/{account}` | Per-signal tier breakdown |
+| `/healthz` | Docker healthcheck JSON |
 
 HTMX powers `?since=7d|30d|all` selectors and column sorts (`hx-get` + `hx-target="#data"` + `hx-push-url=true`).
 

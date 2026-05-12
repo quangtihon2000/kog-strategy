@@ -1,19 +1,18 @@
 """FastAPI app factory.
 
-Single-process server with Jinja2 templates + HTMX. Basic Auth is applied
-globally to the dashboard router; `/healthz` is mounted outside that router
-so Docker's healthcheck doesn't need credentials.
+Single-process server with Jinja2 templates + HTMX. Dashboard is currently
+open (no auth); `verify_basic_auth` in app.deps is retained so re-enabling
+is a one-line change on the dashboard router below.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from app.deps import verify_basic_auth
 from app.web.routers import conde, gvfx, home, zone
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -31,8 +30,10 @@ def create_app() -> FastAPI:
     async def healthz() -> JSONResponse:  # pragma: no cover — trivial
         return JSONResponse({"status": "ok"})
 
-    # All dashboard routers sit behind a single Basic Auth dependency.
-    dashboard = APIRouter(dependencies=[Depends(verify_basic_auth)])
+    # Dashboard is currently open. To re-enable Basic Auth, re-import
+    # `Depends` and `app.deps.verify_basic_auth` and pass
+    # `dependencies=[Depends(verify_basic_auth)]` here.
+    dashboard = APIRouter()
     dashboard.include_router(home.router)
     dashboard.include_router(conde.router, prefix="/conde", tags=["conde"])
     dashboard.include_router(gvfx.router, prefix="/gvfx", tags=["gvfx"])
