@@ -231,9 +231,9 @@ All dashboard routes are currently open (no auth). To re-enable Basic Auth, see 
 
 | Path | Purpose |
 |---|---|
-| `/` | Home — 3 KPI cards (conde / gvfx / zone) |
+| `/` | Home — 3 KPI cards (conde / gvfx / zone) + recent conde signals table |
 | `/conde` | Per-channel table + win-rate |
-| `/conde/channel/{channel_id}` | Per-signal breakdown |
+| `/conde/channel/{channel_id}` | Per-signal breakdown (optional `?signal_ts=` deeplink to single signal) |
 | `/gvfx` | Per-symbol cards + mode_tag (A/F/S) breakdown |
 | `/gvfx/symbol/{symbol}` | Per-signal grid |
 | `/zone` | Per-account + per-tier (SCALP/NORMAL/MID) |
