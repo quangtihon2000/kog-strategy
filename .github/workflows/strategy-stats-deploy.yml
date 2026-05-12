@@ -75,3 +75,61 @@ jobs:
             echo "FATAL: /healthz did not become healthy after deploy"
             docker compose logs --tail=100 web
             exit 1
+
+  notify:
+    needs: deploy
+    if: always() && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
+          CHAT_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
+          STATUS: ${{ needs.deploy.result }}
+        run: |
+          set -u
+          if [ -z "${BOT_TOKEN:-}" ]; then
+            echo "::warning::secrets.TELEGRAM_MONITOR_BOT_TOKEN is not set -- cannot notify"
+            exit 0
+          fi
+          if [ -z "${CHAT_IDS:-}" ]; then
+            echo "::warning::vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS is empty -- cannot notify"
+            exit 0
+          fi
+
+          if [ "${STATUS}" = "success" ]; then tag='[OK]'; else tag='[FAIL]'; fi
+          sha='${{ github.sha }}'
+          short_sha="${sha:0:7}"
+          run_url='${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          msg="$(printf '%s\n%s\n%s\n%s' \
+            "${tag} strategy-stats deploy ${STATUS}" \
+            "branch: ${{ github.ref_name }}@${short_sha}" \
+            "actor: ${{ github.actor }}" \
+            "${run_url}")"
+
+          sent=0
+          failed=0
+          IFS=','
+          for raw_id in ${CHAT_IDS}; do
+            id="$(echo "${raw_id}" | tr -d '[:space:]')"
+            [ -z "${id}" ] && continue
+            http_code=$(curl -sS -o /tmp/tg_resp -w '%{http_code}' \
+              --max-time 10 \
+              -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${id}" \
+              --data-urlencode "text=${msg}" \
+              --data-urlencode "disable_web_page_preview=true" || echo "000")
+            if [ "${http_code}" = "200" ]; then
+              echo "notified ${id}"
+              sent=$((sent + 1))
+            else
+              echo "::error::${id} : http=${http_code} body=$(cat /tmp/tg_resp 2>/dev/null || true)"
+              failed=$((failed + 1))
+            fi
+          done
+
+          echo "Notify summary: sent=${sent} failed=${failed}"
+          if [ "${sent}" -eq 0 ]; then
+            echo "::error::All Telegram notifications failed"
+            exit 1
+          fi
