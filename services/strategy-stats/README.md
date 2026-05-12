@@ -35,8 +35,7 @@ Copy `.env.example` → `.env` and fill in. All required:
 | `UPSTREAM_REDIS_URL` | Redis on the **MT5 VPS**. Prod: `rediss://default:<password>@<mt5-vps-host>:6380` (TLS + requirepass). Local dev: `redis://host.docker.internal:6379`. Must NOT point to a local Redis on the Linux VPS — there's nothing there to consume. |
 | `REDIS_STREAM_PREFIX` | Stream namespace prefix. Empty = prod names (`conde_signals`); set `dev_` / `test_` for staging |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Single shared credential for `/` |
-| `WEB_PORT` | Loopback host port for the web container (default 8080); Caddy fronts public traffic |
-| `DASHBOARD_DOMAIN` | Public hostname for Caddy auto-TLS (e.g. `stats.example.com`). Blank = local-only |
+| `WEB_PORT` | Loopback host port for the web container (default 8080); external `portfolio-caddy` fronts public traffic via the `strategy-stats-web` network alias |
 | `INGEST_BATCH_COUNT` / `INGEST_BLOCK_MS` / `INGEST_CONSUMER_NAME` | XREADGROUP tuning |
 
 ## Stream → consumer-group mapping
@@ -84,6 +83,8 @@ End-to-end runbook for first-time deploy. Two VPS in play:
 - **MT5 VPS** (Windows): runs the EAs + Redis. Needs to expose Redis TLS+auth on a public port.
 - **Linux VPS**: runs this stack (`docker compose`). Connects to MT5 VPS Redis as a consumer.
 
+Reverse-proxy / TLS is provided by an **existing `portfolio-caddy`** container on the Linux VPS (part of the `portfolio-engine` stack on ports 80/443). This service does **not** bundle its own Caddy — instead the `web` container joins `portfolio-engine_portfolio-network` with the alias `strategy-stats-web`, and a site block is appended to the portfolio-caddy Caddyfile. Prerequisite: `portfolio-caddy` is already running on the host.
+
 ### Step 1 — Expose Redis on the MT5 VPS (TLS + requirepass)
 
 The default Memurai / Redis-on-Windows install listens on `127.0.0.1:6379` plaintext. We wrap it with stunnel for TLS and add `requirepass`.
@@ -112,9 +113,9 @@ The default Memurai / Redis-on-Windows install listens on `127.0.0.1:6379` plain
 
 ### Step 2 — DNS for the dashboard
 
-Point an A record (`stats.example.com`) at the Linux VPS public IP. Caddy needs the domain to be publicly resolvable to auto-issue a Let's Encrypt cert; ports 80 + 443 must be reachable from the internet.
+Point an A record (`stats.example.com`) at the Linux VPS public IP. portfolio-caddy needs the domain to be publicly resolvable to auto-issue a Let's Encrypt cert; ports 80 + 443 must be reachable from the internet (already true if portfolio-caddy is serving other sites).
 
-### Step 3 — Deploy on the Linux VPS
+### Step 3 — Bring up the app containers
 
 ```bash
 ssh linux-vps
@@ -126,14 +127,42 @@ cp .env.example .env
 #   POSTGRES_PASSWORD=<strong-random>
 #   BASIC_AUTH_PASSWORD=<strong-random>
 #   UPSTREAM_REDIS_URL=rediss://default:<redis-password>@<mt5-vps-host>:6380
-#   DASHBOARD_DOMAIN=stats.example.com
 
 docker compose up --build -d postgres
 docker compose run --rm ingest alembic upgrade head
-docker compose up -d ingest web caddy
+docker compose up -d ingest web
 ```
 
-### Step 4 — Verify
+At this point `curl -fsS http://127.0.0.1:8080/healthz` on the VPS returns 200 — public HTTPS still needs the next step.
+
+### Step 4 — Wire portfolio-caddy reverse proxy
+
+`web` joined `portfolio-engine_portfolio-network` automatically (see `docker-compose.yml`), so it's reachable from inside the portfolio-caddy container as `strategy-stats-web:8080`. Now append a site block to the **portfolio-caddy Caddyfile** (the file mounted into the container — confirm via `docker inspect portfolio-caddy --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`; typical path is `~/portfolio-engine/Caddyfile`):
+
+```caddy
+stats.example.com {
+        encode gzip
+        reverse_proxy strategy-stats-web:8080
+        header {
+                Strict-Transport-Security "max-age=31536000; includeSubDomains"
+                X-Content-Type-Options "nosniff"
+                Referrer-Policy "strict-origin-when-cross-origin"
+        }
+}
+```
+
+Then reload Caddy. `caddy reload` runs inside the container, so use the container-side config path (`/etc/caddy/Caddyfile` for the standard image):
+
+```bash
+docker exec portfolio-caddy caddy reload --config /etc/caddy/Caddyfile
+# If reload doesn't pick up the new block (rare; symptom: log shows no
+# "obtaining certificate" line for the new host), force a restart:
+docker restart portfolio-caddy
+```
+
+A copy of this snippet lives at `services/strategy-stats/Caddyfile` for reference.
+
+### Step 5 — Verify
 
 ```bash
 # Ingest connected to all 6 streams
@@ -144,12 +173,20 @@ docker compose exec postgres psql -U stats -d strategy_stats \
   -c "SELECT count(*) FROM conde_signals;"
 # Compare against MT5 VPS Redis: redis-cli --tls ... XLEN conde_signals
 
-# Public dashboard reachable
-curl -sI https://stats.example.com/healthz  # 200 OK, no auth
-curl -u admin:<basic-auth-pw> https://stats.example.com/  # 200 OK
+# Cert issued + public dashboard reachable
+docker exec portfolio-caddy ls /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/ \
+  | grep stats   # expect <your-stats-domain>
+docker logs portfolio-caddy --since 2m 2>&1 \
+  | grep -iE "stats|obtain|certificate" | tail -10
+curl -sS https://stats.example.com/healthz                # {"status":"ok"}
+curl -u admin:<basic-auth-pw> -sI https://stats.example.com/  # 200 OK
 ```
 
-Caddy logs (`docker compose logs caddy`) should show a successful ACME cert issuance on first boot.
+Pitfalls (learned the hard way on the first prod deploy):
+
+- `caddy reload` reports `config is unchanged` if you edit a Caddyfile *outside* the bind mount. Always confirm the mount path before editing — the file at `/etc/caddy/Caddyfile` on the host is **not** what portfolio-caddy reads.
+- HTTP→HTTPS 308 on `:80` does **not** prove the site block loaded — Caddy's global auto-HTTP-redirect fires for every host once any TLS site exists. Trust the cert directory and the `tls.obtain` log lines, not the redirect.
+- Use `curl -vI` (not `-sI`) when debugging TLS — `-sI` swallows handshake errors.
 
 ### Updating
 
