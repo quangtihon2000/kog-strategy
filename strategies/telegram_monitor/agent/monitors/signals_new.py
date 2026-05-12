@@ -179,9 +179,9 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
                 f"```\n{body}\n```"
             )
-            if settings.signal_stats_url:
-                sep = "&" if "?" in settings.signal_stats_url else "?"
-                text += f"\n[📈 stats]({settings.signal_stats_url}{sep}ts={ts})"
+            if settings.signal_stats_url and svc.name == "conde_auto_entry":
+                base = settings.signal_stats_url.rstrip("/")
+                text += f"\n[📈 stats]({base}/conde/signal/{ts})"
             await alerts.notify(
                 dedup_key=f"sig_new:{vps.name}:{svc.name}:{f.name}:{ts}",
                 text=text,

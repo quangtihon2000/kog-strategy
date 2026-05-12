@@ -52,11 +52,11 @@ In the repo settings:
   (e.g. `-1001234567890`). Unset = fall back to `ALLOWED_USER_IDS`.
   Use this to send alerts into a shared ops group while keeping commands
   scoped to individual operators.
-- **Variable** `TELEGRAM_MONITOR_SIGNAL_STATS_URL` *(optional)* — base URL for
-  the per-signal stats page. New-signal notifications append a clickable
-  `?ts=<timestamp>` link. Defaults to
-  `https://quangtihon2000.github.io/conde-stats/`; set to override, or set
-  to empty string to disable the link.
+- **Variable** `TELEGRAM_MONITOR_SIGNAL_STATS_URL` *(optional)* — base URL of
+  the strategy-stats dashboard. Conde new-signal notifications append
+  `/conde/signal/<timestamp>`, which the dashboard resolves to the channel
+  deeplink via 302. Defaults to `https://stats.auto-trade.life`; set to
+  empty string to disable the link.
 
 Naming follows `setup-agent.ps1`'s `${PREFIX}_${KEY}` convention
 (`PREFIX = TELEGRAM_MONITOR`). The workflow at

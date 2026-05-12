@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +39,31 @@ async def overview(
             "since": since_code,
             "rows": rows,
         },
+    )
+
+
+@router.get("/signal/{signal_ts}")
+async def signal_lookup(
+    signal_ts: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RedirectResponse:
+    """Resolve a signal_ts to its channel and redirect to the channel deeplink.
+
+    Lets external notifiers (e.g. telegram_monitor) link to a signal without
+    knowing channel_id — the bot only has the JSON file, which lacks it.
+    """
+    row = (
+        await session.execute(
+            select(CondeSignal)
+            .where(CondeSignal.signal_ts == signal_ts)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is None or row.channel_id is None:
+        raise HTTPException(status_code=404, detail=f"signal_ts {signal_ts} not found")
+    return RedirectResponse(
+        url=f"/conde/channel/{row.channel_id}?signal_ts={signal_ts}",
+        status_code=302,
     )
 
 
