@@ -4,7 +4,7 @@
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "3.04"
+#property version     "3.05"
 #property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
@@ -16,7 +16,7 @@ input int      InpMaxPositions  = 10;            // Max open positions (all targ
 input double   InpMinTpPts      = 300;           // Min TP distance (points) to open
 input double   InpSlBufferPts   = 50;            // Extra SL buffer (points)
 input ulong    InpMagic         = 20240416;      // Magic number
-input bool     InpUseCommonDir  = true;          // Use MT5 common Files folder
+input bool     InpUseCommonDir  = false;         // Use MT5 common Files folder (outcomes path must match publisher; keep false)
 input double   InpScalpTpPts    = 400;           // Scalp TP distance (points)
 input double   InpScalpBufPts   = 500;           // Scalp zone ceiling buffer from T1 (points)
 input int      InpMaxScalpPerDir   = 10;         // Max scalp positions per direction per signal
