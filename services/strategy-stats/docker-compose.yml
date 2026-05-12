@@ -24,8 +24,8 @@ services:
 
   ingest:
     build:
-      context: .
-      dockerfile: Dockerfile.ingest
+      context: ../..
+      dockerfile: services/strategy-stats/Dockerfile.ingest
     restart: unless-stopped
     depends_on:
       postgres:
@@ -44,8 +44,8 @@ services:
 
   web:
     build:
-      context: .
-      dockerfile: Dockerfile.web
+      context: ../..
+      dockerfile: services/strategy-stats/Dockerfile.web
     restart: unless-stopped
     depends_on:
       postgres:

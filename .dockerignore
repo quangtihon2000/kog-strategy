@@ -1,0 +1,30 @@
+.git/
+.github/
+.gitignore
+.claude/
+
+**/.env
+**/.env.*
+!**/.env.example
+
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.venv/
+**/.venv-*/
+**/venv/
+**/node_modules/
+
+# Không phải code của strategy-stats — loại trừ để giảm context
+strategies/
+services/saleor-storefront/
+services/saleor-web/
+docs/
+*.md
+!services/strategy-stats/README.md
+
+# Build artifacts / data
+**/data/
+**/*.log
+**/dist/
+**/build/
