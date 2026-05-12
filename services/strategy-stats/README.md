@@ -113,7 +113,7 @@ The default Memurai / Redis-on-Windows install listens on `127.0.0.1:6379` plain
 
 ### Step 2 — DNS for the dashboard
 
-Point an A record (`stats.example.com`) at the Linux VPS public IP. portfolio-caddy needs the domain to be publicly resolvable to auto-issue a Let's Encrypt cert; ports 80 + 443 must be reachable from the internet (already true if portfolio-caddy is serving other sites).
+Point an A record (`stats.auto-trade.life`) at the Linux VPS public IP. portfolio-caddy needs the domain to be publicly resolvable to auto-issue a Let's Encrypt cert; ports 80 + 443 must be reachable from the internet (already true if portfolio-caddy is serving other sites).
 
 ### Step 3 — Bring up the app containers
 
@@ -140,7 +140,7 @@ At this point `curl -fsS http://127.0.0.1:8080/healthz` on the VPS returns 200 �
 `web` joined `portfolio-engine_portfolio-network` automatically (see `docker-compose.yml`), so it's reachable from inside the portfolio-caddy container as `strategy-stats-web:8080`. Now append a site block to the **portfolio-caddy Caddyfile** (the file mounted into the container — confirm via `docker inspect portfolio-caddy --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'`; typical path is `~/portfolio-engine/Caddyfile`):
 
 ```caddy
-stats.example.com {
+stats.auto-trade.life {
         encode gzip
         reverse_proxy strategy-stats-web:8080
         header {
@@ -178,8 +178,8 @@ docker exec portfolio-caddy ls /data/caddy/certificates/acme-v02.api.letsencrypt
   | grep stats   # expect <your-stats-domain>
 docker logs portfolio-caddy --since 2m 2>&1 \
   | grep -iE "stats|obtain|certificate" | tail -10
-curl -sS https://stats.example.com/healthz                # {"status":"ok"}
-curl -u admin:<basic-auth-pw> -sI https://stats.example.com/  # 200 OK
+curl -sS https://stats.auto-trade.life/healthz                # {"status":"ok"}
+curl -u admin:<basic-auth-pw> -sI https://stats.auto-trade.life/  # 200 OK
 ```
 
 Pitfalls (learned the hard way on the first prod deploy):

@@ -1,7 +1,7 @@
 # Reference snippet — append a block like this to the existing portfolio-caddy
 # Caddyfile (the file bind-mounted into the portfolio-caddy container; typical
-# host path: ~/portfolio-engine/Caddyfile). Replace stats.example.com with the
-# real dashboard hostname. After editing, reload from inside the container:
+# host path: ~/portfolio-engine/Caddyfile). After editing, reload from inside
+# the container:
 #
 #   docker exec portfolio-caddy caddy reload --config /etc/caddy/Caddyfile
 #
@@ -12,7 +12,7 @@
 # The strategy-stats-web alias resolves on portfolio-engine_portfolio-network,
 # which the web container joins via docker-compose.yml.
 
-stats.example.com {
+stats.auto-trade.life {
 	encode gzip
 	reverse_proxy strategy-stats-web:8080
 
