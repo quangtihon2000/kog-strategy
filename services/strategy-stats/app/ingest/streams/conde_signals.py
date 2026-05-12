@@ -8,10 +8,11 @@ Signals without `channel_id` are skipped (ack'd, not stored). Backfill of
 legacy messages predating the producer's `channel_id` rollout would otherwise
 pollute stats with channel-less rows; we'd rather miss them than misattribute.
 
-Cross-contamination observed in prod: some messages on `conde_signals` are
-actually zone-formatted (have `type=ZONE_SIGNAL` / `redbox_upper` / no
-`direction`). Producer-side bug; we skip+ack with WARNING rather than
-strand the PEL.
+Malformations observed in prod (skip + ack with WARNING, don't strand PEL):
+- some messages on `conde_signals` are actually zone-formatted (have
+  `type=ZONE_SIGNAL` / `redbox_upper` / no `direction`)
+- `tps` field arrives as a Python-list-repr string `'[4724, 4740, 4747, 4750]'`
+  instead of CSV `'4724,4740,4747,4750'`
 """
 from __future__ import annotations
 
@@ -27,9 +28,20 @@ log = logging.getLogger(__name__)
 
 
 def _parse_floats_csv(s: str) -> list[float]:
+    """Tolerate CSV (`'1,2,3'`) and Python-list-repr (`'[1, 2, 3]'`); skip non-numeric tokens."""
     if not s:
         return []
-    return [float(x) for x in s.split(",") if x.strip()]
+    s = s.strip().lstrip("[").rstrip("]")
+    out: list[float] = []
+    for x in s.split(","):
+        x = x.strip()
+        if not x or x.lower() == "none":
+            continue
+        try:
+            out.append(float(x))
+        except ValueError:
+            continue
+    return out
 
 
 async def _upsert_channel(session: AsyncSession, channel_id: int, name: str) -> None:
