@@ -2,13 +2,13 @@
 {% import "_macros.html" as m with context %}
 {% block title %}Strategy Stats — Overview{% endblock %}
 {% block content %}
-<section class="flex items-center justify-between mb-4">
+<section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <h1 class="text-xl font-semibold">Overview</h1>
   {{ m.since_selector("/", since) }}
 </section>
 
 <div id="data" class="space-y-6">
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
     <a href="/conde?since={{ since }}" class="block group">
       <div class="bg-white border border-slate-200 rounded-lg shadow-sm p-5 group-hover:border-amber-400">
         <div class="flex items-center justify-between mb-2">
@@ -59,6 +59,7 @@
         <span class="text-xs uppercase tracking-wide text-slate-500">Conde</span>
         <span class="text-xs text-slate-400">{{ recent_conde|length }} shown</span>
       </div>
+      <div class="overflow-x-auto">
       <table class="min-w-full text-xs">
         <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
           <tr>
@@ -112,6 +113,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
 
     {# ---------- GVFX ---------- #}
@@ -120,6 +122,7 @@
         <span class="text-xs uppercase tracking-wide text-slate-500">GVFX</span>
         <span class="text-xs text-slate-400">{{ recent_gvfx|length }} shown</span>
       </div>
+      <div class="overflow-x-auto">
       <table class="min-w-full text-xs">
         <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
           <tr>
@@ -154,6 +157,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
 
     {# ---------- Zone ---------- #}
@@ -162,6 +166,7 @@
         <span class="text-xs uppercase tracking-wide text-slate-500">Zone</span>
         <span class="text-xs text-slate-400">{{ recent_zone|length }} shown</span>
       </div>
+      <div class="overflow-x-auto">
       <table class="min-w-full text-xs">
         <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
           <tr>
@@ -197,6 +202,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </section>
 </div>
