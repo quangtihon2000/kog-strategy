@@ -52,23 +52,17 @@ services:
       BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD}
     ports:
       - "127.0.0.1:${WEB_PORT:-8080}:8080"
+    networks:
+      default: {}
+      portfolio:
+        aliases:
+          - strategy-stats-web
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - web
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    environment:
-      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN}
+networks:
+  default: {}
+  portfolio:
+    name: portfolio-engine_portfolio-network
+    external: true
 
 volumes:
   pg-data:
-  caddy-data:
-  caddy-config:
