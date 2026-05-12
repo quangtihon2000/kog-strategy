@@ -16,7 +16,7 @@ from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 router = APIRouter()
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.get("/", response_class=HTMLResponse, response_model=None)
 async def overview(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
