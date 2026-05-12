@@ -19,6 +19,18 @@ _TEMPLATE_DIR = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 
+def _fmt_ts(value: int | float | None) -> str:
+    if value is None:
+        return "—"
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError, OSError):
+        return "—"
+
+
+templates.env.filters["fmt_ts"] = _fmt_ts
+
+
 def _now_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
