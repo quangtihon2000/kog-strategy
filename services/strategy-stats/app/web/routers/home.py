@@ -48,11 +48,20 @@ async def home(
     zone_positions = sum(s.n_positions for s in zone_by_acct.values())
     zone_pnl = sum(s.total_pnl for s in zone_by_acct.values())
 
-    # Fetch recent conde signals
+    # Fetch recent conde signals that were actually executed (have at least
+    # one outcome). Unexecuted signals (filtered out by the EA or queued but
+    # never opened) are noise on the overview.
+    executed_exists = (
+        select(CondeOutcome.position_id)
+        .where(CondeOutcome.signal_ts == CondeSignal.signal_ts)
+        .where(CondeOutcome.symbol == CondeSignal.symbol)
+        .exists()
+    )
     recent_sig_rows = (
         await session.execute(
             select(CondeSignal)
             .where(CondeSignal.signal_ts >= since_epoch)
+            .where(executed_exists)
             .order_by(CondeSignal.signal_ts.desc())
             .limit(_RECENT_SIGNALS_LIMIT)
         )
