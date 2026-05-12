@@ -12,7 +12,7 @@ from telegram.ext import Application
 from ..alerts import AlertDispatcher
 from ..config import Settings
 from ..transports import Transport
-from . import conde_replies, heartbeat, log_errors, service_edges, signals_new
+from . import conde_lifecycle, heartbeat, log_errors, service_edges, signals_new
 
 
 def register_monitors(
@@ -42,7 +42,8 @@ def register_monitors(
     # Heartbeat (opt-in) — only fires for services that have ever published one.
     jq.run_repeating(heartbeat.tick, interval=60, first=45,
                      name="mon:heartbeat", data=ctx)
-    # Conde reply-once: when the first outcome lands for a signal_ts that we
-    # notified about, reply to those new-signal messages with the stats link.
-    jq.run_repeating(conde_replies.tick, interval=10, first=25,
-                     name="mon:conde_replies", data=ctx)
+    # Conde lifecycle: owns new-signal notif + reply-once on first outcome
+    # in one tick. Phase ordering inside the tick removes the cross-job race
+    # the previous split design (signals_new + conde_replies) had.
+    jq.run_repeating(conde_lifecycle.tick, interval=10, first=25,
+                     name="mon:conde_lifecycle", data=ctx)
