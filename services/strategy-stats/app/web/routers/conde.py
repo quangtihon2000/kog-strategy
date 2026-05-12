@@ -21,7 +21,13 @@ async def overview(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
-) -> HTMLResponse:
+    signal_ts: int | None = None,
+) -> HTMLResponse | RedirectResponse:
+    # Query-string shortcut: /conde/?signal_ts=X mirrors /conde/signal/X so
+    # links pasted from anywhere resolve to the channel deeplink.
+    if signal_ts is not None:
+        return RedirectResponse(url=f"/conde/signal/{signal_ts}", status_code=302)
+
     since_code = normalize_since(since)
     by_channel = await conde_stats.aggregate_since(session, since_to_epoch(since_code))
     rows = sorted(
