@@ -2,6 +2,20 @@
 
 Postgres-backed multi-strategy dashboard. Ingests Redis Streams produced by the MT5 EAs (conde / gvfx / zone), persists signals + outcomes, exposes a server-rendered web UI for stats.
 
+## Data flow
+
+```text
+  MT5 VPS (Windows)                     Linux VPS (this stack)               User
+  ─────────────────                     ──────────────────────               ────
+  EAs (conde/gvfx/zone)                 ingest container                     browser
+     │ XADD                                │ XREADGROUP × 6 streams             ▲
+     ▼                                     ▼                                    │ HTTPS
+  Redis (stunnel TLS + requirepass) ───► Postgres ──► web (FastAPI) ─────────► portfolio-caddy
+        :6380  rediss://                   signals + outcomes                   :443
+```
+
+EAs are the sole writers to the Redis streams; ingest is the sole reader on the `stats_*` consumer groups (separate from the EA-writer groups, so EA stats consumers don't interfere). Outcomes can arrive before their signal during cold replay — no FK is enforced between them.
+
 ## Stack
 
 - FastAPI + Jinja2 + HTMX + Tailwind CDN (single web container)
@@ -51,7 +65,11 @@ Ingest uses `stats_*` group names to avoid colliding with the EA-writer groups:
 | `zone_signals` | `stats_zone_sig` | `(signal_ts, symbol)` |
 | `zone_outcomes` | `stats_zone_out` | `position_id` |
 
-First start with `id=0` → backfills whatever's still in Redis stream retention. `XACK` only on handler success, so failures stay in the PEL for inspection. Postgres uses `INSERT ... ON CONFLICT DO NOTHING`.
+First start with `id=0` → backfills whatever's still in Redis stream retention. On every restart, each consumer first **drains its PEL** (pending entries from the previous run) before tailing live; `XACK` only on handler success, so unhandled failures stay in the PEL for inspection. Postgres uses `INSERT ... ON CONFLICT DO NOTHING`.
+
+### Handler malformation policy
+
+Stream handlers **skip+ack** malformed producer messages (with a WARNING log) rather than raising. Raising would leave the message in the PEL and block tail progress — `XREADGROUP` re-delivers PEL entries on every restart, so a single poison message strands the consumer indefinitely. Failures still surface via WARNING; consumer health is preserved. Fix the producer if a class of malformation persists — receiver lenience is a backstop, not the contract. See [Known upstream issues](#known-upstream-issues) for the current list.
 
 **Conde backfill policy:** `conde_signals` messages without a `channel_id` are skipped (ack'd, not stored). Legacy backfill from before the producer added `channel_id` would otherwise create channel-less rows that pollute per-channel stats — we'd rather lose them than misattribute.
 
@@ -75,6 +93,17 @@ redis-cli XADD conde_signals '*' \
   entry_price 2000 sl 1990 tps 2010,2020,2030 channel_name TEST
 ```
 Open <http://localhost:8080/> → Basic Auth → home page renders 3 KPI cards.
+
+## Querying prod Postgres from your laptop
+
+Postgres on prod is docker-network-only (compose does NOT publish 5432 to the host), so a plain `ssh -L 5432:127.0.0.1:5432` reaches nothing. Use the helper:
+
+```bash
+./scripts/db_tunnel.sh            # 127.0.0.1:5434 → strategy-stats-postgres-1:5432
+psql "postgresql://stats_user:<password>@127.0.0.1:5434/strategy_stats"
+```
+
+Password is `POSTGRES_PASSWORD` from the VPS `.env`. Local port defaults to 5434 to avoid clashing with portfolio-engine's conventional 5433 tunnel; both can run in parallel. Override with `PROD_HOST=...` or `PG_LOCAL=...` if needed.
 
 ## Production deploy (Linux VPS)
 
@@ -219,6 +248,15 @@ HTMX powers `?since=7d|30d|all` selectors and column sorts (`hx-get` + `hx-targe
 - No FK between signals ↔ outcomes (outcome can arrive before signal during cold replay).
 - GVFX outcomes carry `mode_tag` (A/F/S/?) parsed from comment `GVFX_T{ts}_{mode}`; `close_reason` adds `EOD` value for cut-window closes.
 - Zone outcomes carry `tier` (SCALP/NORMAL/MID/UNKNOWN) + `slot_index` parsed from comment `ZB|ZS_(SCALP{n}|T{n}|MID)_{ts}`.
+
+## Known upstream issues
+
+Producer-side bugs the receivers handle defensively (skip+ack). Fix upstream when capacity allows — the receiver tolerance is a backstop, not the contract:
+
+- **`telegram_monitor` zone_signal handler** emits messages with missing `timestamp`, typo `redbox_uppper` (3 p's) instead of `redbox_upper`, literal string `'None'` in numeric fields, and mixed unix-int / ISO datetime timestamp formats.
+- **Cross-contamination**: `type=ZONE_SIGNAL` payloads occasionally land on the `conde_signals` stream. Source not yet traced.
+- **Conde producer** emits `tps` as Python-list-repr (`'[4724, 4740]'`) instead of CSV (`'4724,4740'`).
+- **Redis URL scheme** — README documents `rediss://` (TLS via stunnel on :6380) as the prod default; verify `.env` matches before deploying.
 
 ## Verification
 
