@@ -65,3 +65,29 @@ class AlertDispatcher:
             except Exception as e:
                 log.warning("alert send failed (chat=%s key=%s): %s", chat_id, dedup_key, e)
         return True
+
+    async def send_capture(
+        self,
+        text: str,
+        *,
+        parse_mode: str | None = "Markdown",
+    ) -> list[tuple[int, int]]:
+        """Send `text` to every operator and return [(chat_id, message_id), ...].
+
+        Skips cooldown dedup — caller is responsible for not flooding (e.g.
+        signals_new uses a per-(file, ts) `_SEEN` table to send once per
+        signal). Used when we need the resulting message_ids to later reply
+        to those messages (e.g. position-closed reply on new-signal notif).
+        """
+        refs: list[tuple[int, int]] = []
+        for chat_id in self.chat_ids:
+            try:
+                msg = await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                )
+                refs.append((chat_id, msg.message_id))
+            except Exception as e:
+                log.warning("send_capture failed (chat=%s): %s", chat_id, e)
+        return refs
