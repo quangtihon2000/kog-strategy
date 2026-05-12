@@ -8,6 +8,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg-data:/var/lib/postgresql/data
+    networks:
+      # Unambiguous alias — `postgres` collides with portfolio-engine's
+      # postgres on the shared portfolio-network, and web (which joins both
+      # networks) would otherwise resolve `postgres` to the wrong instance
+      # and fail auth.
+      default:
+        aliases:
+          - strategy-stats-postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -26,7 +34,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: strategy-stats-postgres
       POSTGRES_PORT: 5432
       UPSTREAM_REDIS_URL: ${UPSTREAM_REDIS_URL}
       REDIS_STREAM_PREFIX: ${REDIS_STREAM_PREFIX:-}
@@ -46,7 +54,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_HOST: postgres
+      POSTGRES_HOST: strategy-stats-postgres
       POSTGRES_PORT: 5432
       BASIC_AUTH_USER: ${BASIC_AUTH_USER}
       BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD}

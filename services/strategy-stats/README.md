@@ -31,7 +31,7 @@ Copy `.env.example` → `.env` and fill in. All required:
 | Var | Purpose |
 |---|---|
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Postgres creds (used by compose + app) |
-| `POSTGRES_HOST` / `POSTGRES_PORT` | Default `postgres` / `5432` (compose service name) |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | Default `strategy-stats-postgres` / `5432`. We use an explicit alias (not the bare service name `postgres`) because the web container also joins `portfolio-engine_portfolio-network`, where `postgres` resolves to a different, unrelated DB. |
 | `UPSTREAM_REDIS_URL` | Redis on the **MT5 VPS**. Prod: `rediss://default:<password>@<mt5-vps-host>:6380` (TLS + requirepass). Local dev: `redis://host.docker.internal:6379`. Must NOT point to a local Redis on the Linux VPS — there's nothing there to consume. |
 | `REDIS_STREAM_PREFIX` | Stream namespace prefix. Empty = prod names (`conde_signals`); set `dev_` / `test_` for staging |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Single shared credential for `/` |
