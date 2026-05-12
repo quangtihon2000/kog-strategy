@@ -62,13 +62,12 @@ _SEEN: dict[tuple[str, str, str], str] = {}
 _HYDRATED = False
 
 _REDIS_KEY = "telegram_monitor:signals_new:seen"
-# Conde replies: SET of "{chat_id}:{message_id}" per signal_ts, consumed by
-# conde_replies.py when the first outcome lands so we can reply-once to the
-# original new-signal notification. 7d TTL covers the EA's 24h signal window
-# plus operator weekend slack.
-_CONDE_MSGS_KEY_FMT = "telegram_monitor:conde:signal_msgs:{ts}"
-_CONDE_MSGS_TTL_S = 7 * 24 * 3600
 _redis_client: redis.Redis | None = None
+
+# conde_auto_entry has its own lifecycle monitor (conde_lifecycle.py) that
+# owns new-signal notification + outcome reply in one tick. Skip it here so
+# the user does not get the notif twice.
+_OWNED_BY_LIFECYCLE = frozenset({"conde_auto_entry"})
 
 
 async def _client(url: str) -> redis.Redis:
@@ -135,6 +134,8 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
     for vps, svc in settings.fleet.all_services():
         if svc.signal_dir is None:
             continue
+        if svc.name in _OWNED_BY_LIFECYCLE:
+            continue
         try:
             transport = transports[vps.name]
             files = await transport.list_signal_files(svc.signal_dir)
@@ -185,27 +186,10 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
                 f"```\n{body}\n```"
             )
-            if settings.signal_stats_url and svc.name == "conde_auto_entry":
-                base = settings.signal_stats_url.rstrip("/")
-                text += f"\n[📈 stats]({base}/conde/signal/{ts})"
-            # Conde: capture the resulting (chat_id, message_id) pairs so the
-            # conde_replies monitor can reply-once when the first outcome lands.
-            # Other services use the regular fire-and-forget path.
-            if svc.name == "conde_auto_entry":
-                refs = await alerts.send_capture(text=text)
-                if refs and client is not None:
-                    try:
-                        members = [f"{cid}:{mid}" for cid, mid in refs]
-                        msgs_key = _CONDE_MSGS_KEY_FMT.format(ts=ts)
-                        await client.sadd(msgs_key, *members)
-                        await client.expire(msgs_key, _CONDE_MSGS_TTL_S)
-                    except Exception as e:
-                        log.warning("signals_new: persist conde msg refs failed: %s", e)
-            else:
-                await alerts.notify(
-                    dedup_key=f"sig_new:{vps.name}:{svc.name}:{f.name}:{ts}",
-                    text=text,
-                )
+            await alerts.notify(
+                dedup_key=f"sig_new:{vps.name}:{svc.name}:{f.name}:{ts}",
+                text=text,
+            )
 
     if dirty and client is not None:
         try:
