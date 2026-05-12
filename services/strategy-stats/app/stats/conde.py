@@ -137,6 +137,7 @@ def classify_signal(kinds: list[str]) -> str:
 @dataclass
 class ChannelStats:
     channel: str
+    channel_id: int | None = None
     n_signals: int = 0
     n_executed: int = 0
     n_positions: int = 0
@@ -194,16 +195,29 @@ class ChannelStats:
         return max(0.0, (center - margin) / denom)
 
 
-def aggregate(signals: list[dict], outcomes: list[dict]) -> dict[str, ChannelStats]:
+def aggregate(signals: list[dict], outcomes: list[dict]) -> dict[str | None, ChannelStats]:
     by_sig_ts: dict[int, list[dict]] = {}
     for o in outcomes:
         by_sig_ts.setdefault(o["signal_ts"], []).append(o)
 
-    stats: dict[str, ChannelStats] = {}
+    # Track latest channel_name per channel_id for display name resolution
+    latest_name_by_id: dict[int | None, tuple[int, str]] = {}
+
+    stats: dict[int | None, ChannelStats] = {}
     for sig in signals:
-        ch = sig["channel_name"] or "unknown"
-        cs = stats.setdefault(ch, ChannelStats(channel=ch))
+        cid = sig.get("channel_id")
+        ch_name = sig["channel_name"] or "unknown"
+        if cid not in stats:
+            stats[cid] = ChannelStats(channel=ch_name, channel_id=cid)
+        cs = stats[cid]
         cs.n_signals += 1
+
+        # Track the most recent channel_name for this channel_id
+        ts = sig["signal_ts"]
+        prev = latest_name_by_id.get(cid)
+        if prev is None or ts > prev[0]:
+            latest_name_by_id[cid] = (ts, ch_name)
+            cs.channel = ch_name
 
         matched = by_sig_ts.get(sig["signal_ts"], [])
         if not matched:
@@ -238,7 +252,7 @@ def aggregate(signals: list[dict], outcomes: list[dict]) -> dict[str, ChannelSta
     return stats
 
 
-async def aggregate_since(session: AsyncSession, since_epoch: int) -> dict[str, ChannelStats]:
+async def aggregate_since(session: AsyncSession, since_epoch: int) -> dict[int | None, ChannelStats]:
     signals = await fetch_signals(session, since_epoch)
     outcomes = await fetch_outcomes(session, since_epoch)
     return aggregate(signals, outcomes)
