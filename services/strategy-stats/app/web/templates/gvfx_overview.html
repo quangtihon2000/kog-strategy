@@ -2,15 +2,15 @@
 {% import "_macros.html" as m with context %}
 {% block title %}GVFX — Symbols{% endblock %}
 {% block content %}
-<section class="flex items-center justify-between mb-4">
+<section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <h1 class="text-xl font-semibold">GVFX · per symbol</h1>
   {{ m.since_selector("/gvfx", since) }}
 </section>
 
-<div id="data" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div id="data" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
   {% for r in rows %}
-  <div class="bg-white border border-slate-200 rounded-lg shadow-sm">
-    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200">
+  <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+    <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-200">
       <a class="text-amber-700 hover:underline font-medium" href="/gvfx/symbol/{{ r.symbol }}?since={{ since }}">{{ r.symbol }}</a>
       <div class="text-sm text-slate-600">
         <span class="mr-3">{{ r.n_signals }} signals</span>
@@ -18,6 +18,7 @@
         <span class="font-medium">{{ m.money(r.total_pnl) }}</span>
       </div>
     </div>
+    <div class="overflow-x-auto">
     <table class="min-w-full text-xs">
       <thead class="bg-slate-50 text-slate-500 uppercase tracking-wide">
         <tr>
@@ -42,9 +43,10 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
   </div>
   {% else %}
-  <div class="md:col-span-2 bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-500">No data in this window.</div>
+  <div class="lg:col-span-2 bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-500">No data in this window.</div>
   {% endfor %}
 </div>
 {% endblock %}

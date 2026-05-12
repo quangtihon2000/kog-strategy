@@ -2,12 +2,13 @@
 {% import "_macros.html" as m with context %}
 {% block title %}Conde — Channels{% endblock %}
 {% block content %}
-<section class="flex items-center justify-between mb-4">
+<section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <h1 class="text-xl font-semibold">Conde · per channel</h1>
   {{ m.since_selector("/conde", since) }}
 </section>
 
 <div id="data" class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+  <div class="overflow-x-auto">
   <table class="min-w-full text-sm">
     <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wide">
       <tr>
@@ -50,5 +51,6 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 {% endblock %}

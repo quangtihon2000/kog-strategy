@@ -2,7 +2,7 @@
 {% import "_macros.html" as m with context %}
 {% block title %}Zone — Account {{ account }}{% endblock %}
 {% block content %}
-<section class="flex items-center justify-between mb-4">
+<section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <div>
     <div class="text-xs uppercase tracking-wide text-slate-500">Zone account</div>
     <h1 class="text-xl font-semibold">#{{ account }}</h1>
@@ -25,6 +25,7 @@
       <span class="font-medium">{{ m.money(s.pnl) }}</span>
     </div>
     {% if s.by_tier %}
+    <div class="overflow-x-auto">
     <table class="min-w-full text-xs">
       <thead class="bg-white text-slate-500 uppercase tracking-wide">
         <tr>
@@ -57,6 +58,7 @@
         {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}
     <div class="px-4 py-3 text-xs text-slate-500">No executions for this signal.</div>
     {% endif %}
