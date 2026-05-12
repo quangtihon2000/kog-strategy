@@ -45,11 +45,16 @@ jobs:
             echo "==> Bringing up postgres"
             docker compose up --build -d postgres
 
+            echo "==> Building ingest + web images"
+            # Must build before `compose run` — otherwise alembic runs against
+            # the cached image and code changes (e.g. settings.py) don't apply.
+            docker compose build ingest web
+
             echo "==> Running alembic upgrade head"
             docker compose run --rm ingest alembic upgrade head
 
-            echo "==> Rebuilding ingest + web"
-            docker compose up --build -d ingest web
+            echo "==> Starting ingest + web"
+            docker compose up -d ingest web
 
             echo "==> Pruning dangling images"
             docker image prune -f
