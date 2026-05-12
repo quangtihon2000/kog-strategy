@@ -417,7 +417,7 @@ async def _drain_outcomes(
             consumername=CONSUMER_NAME,
             streams={OUTCOMES_STREAM: ">"},
             count=OUTCOMES_BATCH,
-            block=0,
+            block=None,
         )
     except Exception as e:
         log.warning("conde_lifecycle: xreadgroup failed: %s", e)
