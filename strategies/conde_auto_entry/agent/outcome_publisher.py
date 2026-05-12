@@ -5,8 +5,11 @@ This worker tails that directory and publishes each new file to a Redis Stream s
 `/stats` (and any future reader) can XRANGE a durable, queryable history.
 
 Design choices:
-- Files are NEVER deleted — they are the local working copy / replay source.
-- Dedup uses Redis SET `conde_outcomes:ingested` (SISMEMBER + SADD).
+- Files older than `PURGE_AFTER_S` are deleted hourly to bound disk usage.
+  Redis Stream (maxlen=1M, ~3y) is the long-term source of truth; files
+  are a short-window backup.
+- Dedup uses Redis SET `conde_outcomes:ingested` (SISMEMBER + SADD). The SET
+  TTL (90d) outlives file retention (15d) so a stale file can't be re-ingested.
 - Failures (Redis down, malformed JSON) log + skip; next poll retries.
 - Runs as a daemon thread alongside the main XREADGROUP loop.
 """
@@ -28,6 +31,8 @@ INGESTED_SET_KEY = "conde_outcomes:ingested"
 INGESTED_TTL_SEC = 90 * 24 * 3600   # 90 days — keeps SET bounded
 STREAM_MAXLEN    = 1_000_000        # ~3y at 1k/day, ~200MB ceiling
 POLL_INTERVAL    = 5.0
+PURGE_AFTER_S    = 15 * 24 * 3600   # delete outcome files older than this
+PURGE_INTERVAL_S = 3600             # how often the daemon runs the sweep
 
 
 def _flatten(payload: dict) -> dict:
@@ -78,12 +83,42 @@ def _scan_once(r: redis_lib.Redis, outcomes_dir: Path) -> int:
     return pushed
 
 
+def _purge_old(outcomes_dir: Path, now_wall: float) -> int:
+    """Delete *.json older than PURGE_AFTER_S by mtime. Returns count removed.
+
+    Uses mtime, not filename: position_id is an MT5 ticket — it encodes no date.
+    """
+    if not outcomes_dir.exists():
+        return 0
+    cutoff = now_wall - PURGE_AFTER_S
+    removed = 0
+    for path in outcomes_dir.glob("*.json"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except FileNotFoundError:
+            continue   # raced with another deleter — fine
+        except OSError as exc:
+            log.warning("purge: failed to remove %s: %s", path.name, exc)
+    if removed:
+        log.info("purge: removed %d outcome file(s) older than %d days",
+                 removed, PURGE_AFTER_S // 86400)
+    return removed
+
+
 def run(redis_client: redis_lib.Redis, outcomes_dir: Path) -> None:
     """Daemon loop — call once, never returns. Safe to wrap in threading.Thread."""
     log.info("Outcome publisher started — dir=%s stream=%s", outcomes_dir, STREAM_NAME)
+    # monotonic for cadence (immune to wall-clock jumps), wall time for mtime compare.
+    last_purge = 0.0
     while True:
         try:
             _scan_once(redis_client, outcomes_dir)
+            now_mono = time.monotonic()
+            if now_mono - last_purge >= PURGE_INTERVAL_S:
+                _purge_old(outcomes_dir, time.time())
+                last_purge = now_mono
         except redis_lib.RedisError as exc:
             log.warning("Redis error during outcome scan — will retry: %s", exc)
         except Exception as exc:
