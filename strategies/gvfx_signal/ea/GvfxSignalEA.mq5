@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.00"
+#property version     "1.01"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -11,7 +11,7 @@
 //--- Input Parameters
 input ulong  InpMagic               = 770001;        // Magic number
 input string InpSignalSubdir        = "GvfxSignalEA";// Subdir under MQL5/Files
-input bool   InpUseCommonDir        = false;         // Use MT5 common Files folder
+const bool   InpUseCommonDir        = false;         // Pinned: outcomes path must match publisher. const (not input) so chart-template cache cannot revive it.
 input double InpLotPerOrder         = 0.01;          // Lot per grid level
 input int    InpMaxPositions        = 20;            // Max OPEN positions on this magic+symbol
 input int    InpMaxLossPtsPerOrder  = 10000;         // Hard SL distance per order (points)
