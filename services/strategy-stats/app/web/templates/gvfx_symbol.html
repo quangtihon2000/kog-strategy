@@ -15,6 +15,7 @@
   <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
     <div class="flex flex-wrap items-center gap-4 px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm">
       <span class="text-slate-400 text-xs">#{{ s.signal_ts }}</span>
+      <span class="text-slate-500 text-xs">{{ s.signal_ts | fmt_ts }}</span>
       <span class="px-2 py-0.5 rounded text-xs font-semibold
         {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
         {{ s.direction }}
