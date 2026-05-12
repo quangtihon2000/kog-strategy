@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.06"
+#property version     "1.07"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -19,12 +19,15 @@ input ulong  InpMagic               = 20260421;    // Magic number
 const bool   InpUseCommonDir        = false;       // Pinned: outcomes path must match publisher. const (not input) so chart-template cache cannot revive it.
 input int    InpHistoryLookbackDays = 30;          // History window for restart-safe dedup
 
-input bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop (gate at 1000 pts → only signals with TP1 > 1000 pts get managed)
-input double InpBeTriggerPts        = 1000;        // Profit (pts) to move SL to break-even
-input double InpBeOffsetPts         = 50;          // Offset beyond entry at BE (covers spread+commission)
-input double InpTrailStartPts       = 1000;        // Profit (pts) to start trailing past BE
-input double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
-input double InpTrailStepPts        = 100;          // Minimum SL improvement before modify (anti-spam)
+// BE/Trail params pinned to const — MT5 chart-template cache holds old `input`
+// values across redeploys, silently reverting risk-management knobs. `const`
+// removes them from the F7 Inputs dialog and the .tpl cache entirely.
+const bool   InpEnableTrailing      = true;        // Enable break-even + trailing stop (gate at 1000 pts → only signals with TP1 > 1000 pts get managed)
+const double InpBeTriggerPts        = 1000;        // Profit (pts) to move SL to break-even
+const double InpBeOffsetPts         = 50;          // Offset beyond entry at BE (covers spread+commission)
+const double InpTrailStartPts       = 1000;        // Profit (pts) to start trailing past BE
+const double InpTrailDistPts        = 200;         // SL trails this far behind current price (pts)
+const double InpTrailStepPts        = 100;         // Minimum SL improvement before modify (anti-spam)
 
 input double InpPendingExpiryHours  = 4;           // Pending order expiry (hours, 0 = GTC)
 input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to place pending; beyond → skip signal

@@ -4,7 +4,7 @@
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "3.06"
+#property version     "3.07"
 #property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
@@ -23,11 +23,14 @@ input int      InpMaxScalpPerDir   = 10;         // Max scalp positions per dire
 input double   InpScalpSpacingPts  = 500;        // Min spacing between consecutive scalps (points)
 input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
 input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
-input double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
-input bool     InpEnableTrailing = true;         // Enable trailing stop (non-scalp positions)
-input double   InpTrailStartPts  = 200;          // Profit to activate trailing (points)
-input double   InpTrailDistPts   = 150;          // Trail SL this far behind current price (points)
-input double   InpTrailStepPts   = 20;           // Minimum SL improvement before modify (points)
+// BE/Trail params pinned to const — MT5 chart-template cache holds old `input`
+// values across redeploys, silently reverting risk-management knobs. `const`
+// removes them from the F7 Inputs dialog and the .tpl cache entirely.
+const double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
+const bool     InpEnableTrailing = true;         // Enable trailing stop (non-scalp positions)
+const double   InpTrailStartPts  = 200;          // Profit to activate trailing (points)
+const double   InpTrailDistPts   = 150;          // Trail SL this far behind current price (points)
+const double   InpTrailStepPts   = 20;           // Minimum SL improvement before modify (points)
 input long     InpMaxSpreadPts   = 30;           // Max spread (points) to allow entries; 0 disables check
 
 //+------------------------------------------------------------------+
