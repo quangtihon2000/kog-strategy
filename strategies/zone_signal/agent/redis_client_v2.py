@@ -2,7 +2,6 @@ import hashlib
 import json
 import logging
 import time
-from datetime import datetime
 
 import redis
 
@@ -61,7 +60,9 @@ def push_zone_signal(ocr_data: dict) -> bool:
         resistance   = ",".join(map(str, ocr_data.get("resistance", [])))
 
         # 4. Build the final payload (all values must be strings for Redis Stream)
-        now = datetime.now()
+        # `timestamp` is unix epoch seconds — preserved end-to-end so the EA's
+        # position comment, the agent JSON file, and strategy-stats all use the
+        # same value as the join key.
         zone_signal = {
             "symbol":        symbol,
             "redbox_upper":  redbox_upper,
@@ -70,12 +71,11 @@ def push_zone_signal(ocr_data: dict) -> bool:
             "targets_below": targets_below,
             "support":       support,
             "resistance":    resistance,
-            "timestamp":     now.strftime("%Y-%m-%d %H:%M:%S"),
-            "timestamp_raw": str(int(time.time())),  # must be string
+            "timestamp":     str(int(time.time())),
         }
 
         # 5. Dedup — hash nội dung, exclude timestamp để tránh false miss
-        dedup_fields = {k: v for k, v in zone_signal.items() if "timestamp" not in k}
+        dedup_fields = {k: v for k, v in zone_signal.items() if k != "timestamp"}
         content_hash = hashlib.md5(
             json.dumps(dedup_fields, sort_keys=True).encode()
         ).hexdigest()

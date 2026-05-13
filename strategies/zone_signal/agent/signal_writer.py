@@ -15,9 +15,13 @@ class SignalWriter:
     Writes ZoneSignal to `{base_dir}/{account_id}.json` atomically.
 
     Write flow:
-        1. Stamp a fresh timestamp onto the signal.
-        2. Serialize to JSON and write to `{account_id}.tmp`.
-        3. os.replace(tmp, target) — atomic rename at the OS level.
+        1. Serialize to JSON and write to `{account_id}.tmp`.
+        2. os.replace(tmp, target) — atomic rename at the OS level.
+
+    `sig.timestamp` is preserved from upstream Redis stream — the EA embeds
+    it in every position comment for dedup, and strategy-stats joins
+    ZoneOutcome ↔ ZoneSignal on that same value. Re-stamping here would
+    break both invariants.
 
     The EA always sees either the complete old file or the complete new file,
     never a partial write.  No explicit file locking is needed.
@@ -33,8 +37,6 @@ class SignalWriter:
 
     def write(self, sig: ZoneSignal) -> None:
         sig.validate()
-        sig.timestamp = int(time.time())   # always stamp at write time
-
         self._tmp_path.write_text(sig.to_json(), encoding="ascii")
 
         for attempt in range(2):
