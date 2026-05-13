@@ -48,42 +48,56 @@ async def symbol_detail(
     symbol: str,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
+    signal_ts: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
 
-    sig_rows = (
-        await session.execute(
-            select(GvfxSignal)
-            .where(GvfxSignal.symbol == symbol)
-            .where(GvfxSignal.signal_ts >= since_epoch)
-            .order_by(GvfxSignal.signal_ts.desc())
-            .limit(500)
-        )
-    ).scalars().all()
-    if not sig_rows:
-        raise HTTPException(status_code=404, detail=f"symbol '{symbol}' not found")
+    if signal_ts is not None:
+        # Deeplink mode: fetch only the specific signal, ignore window.
+        sig_rows = (
+            await session.execute(
+                select(GvfxSignal)
+                .where(GvfxSignal.symbol == symbol)
+                .where(GvfxSignal.signal_ts == signal_ts)
+                .order_by(GvfxSignal.signal_ts.desc())
+            )
+        ).scalars().all()
+    else:
+        sig_rows = (
+            await session.execute(
+                select(GvfxSignal)
+                .where(GvfxSignal.symbol == symbol)
+                .where(GvfxSignal.signal_ts >= since_epoch)
+                .order_by(GvfxSignal.signal_ts.desc())
+                .limit(500)
+            )
+        ).scalars().all()
+        if not sig_rows:
+            raise HTTPException(status_code=404, detail=f"symbol '{symbol}' not found")
 
     ts_set = {s.signal_ts for s in sig_rows}
-    out_rows = (
-        await session.execute(
-            select(GvfxOutcome)
-            .where(GvfxOutcome.symbol == symbol)
-            .where(GvfxOutcome.signal_ts.in_(ts_set))
-        )
-    ).scalars().all()
+    out_rows: list[GvfxOutcome] = []
+    if ts_set:
+        out_rows = (
+            await session.execute(
+                select(GvfxOutcome)
+                .where(GvfxOutcome.symbol == symbol)
+                .where(GvfxOutcome.signal_ts.in_(ts_set))
+            )
+        ).scalars().all()
     out_by_ts: dict[int, list[GvfxOutcome]] = {}
     for o in out_rows:
         if o.signal_ts is not None:
             out_by_ts.setdefault(o.signal_ts, []).append(o)
 
+    def _tag_order(o: GvfxOutcome) -> tuple:
+        return (o.mode_tag or "￿", o.account, o.position_id)
+
     signals = []
     for s in sig_rows:
         outs = out_by_ts.get(s.signal_ts, [])
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
-        by_tag: dict[str | None, list[GvfxOutcome]] = {}
-        for o in outs:
-            by_tag.setdefault(o.mode_tag, []).append(o)
         signals.append(
             {
                 "signal_ts": s.signal_ts,
@@ -96,7 +110,7 @@ async def symbol_detail(
                 "high_price": s.high_price,
                 "n_positions": len(outs),
                 "pnl": pnl,
-                "by_tag": by_tag,
+                "outcomes": sorted(outs, key=_tag_order),
             }
         )
 
@@ -110,5 +124,6 @@ async def symbol_detail(
             "since": since_code,
             "symbol": symbol,
             "signals": signals,
+            "signal_ts_filter": signal_ts,
         },
     )

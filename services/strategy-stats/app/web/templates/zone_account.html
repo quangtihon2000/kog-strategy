@@ -7,10 +7,27 @@
     <div class="text-xs uppercase tracking-wide text-slate-500">Zone account</div>
     <h1 class="text-xl font-semibold">#{{ account }}</h1>
   </div>
-  {{ m.since_selector("/zone/account/" ~ account, since) }}
+  <div class="flex flex-wrap items-center gap-3">
+    {% if signal_ts_filter is not none %}
+    <div class="flex items-center gap-2">
+      <span class="px-2 py-1 rounded text-xs bg-slate-100 text-slate-500">viewing single signal</span>
+      <a class="text-xs text-amber-700 hover:underline" href="/zone/account/{{ account }}?since={{ since }}">clear filter</a>
+    </div>
+    <div class="opacity-40 pointer-events-none">
+      {{ m.since_selector("/zone/account/" ~ account, since) }}
+    </div>
+    {% else %}
+    {{ m.since_selector("/zone/account/" ~ account, since) }}
+    {% endif %}
+  </div>
 </section>
 
 <div id="data" class="space-y-4">
+  {% if signal_ts_filter is not none and not signals %}
+  <div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-500">
+    No signal found for ts={{ signal_ts_filter }}.
+  </div>
+  {% else %}
   {% for s in signals %}
   <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
     <div class="flex flex-wrap items-center gap-4 px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm">
@@ -25,7 +42,7 @@
       <span class="ml-auto text-slate-600">{{ s.n_positions }} positions</span>
       <span class="font-medium">{{ m.money(s.pnl) }}</span>
     </div>
-    {% if s.by_tier %}
+    {% if s.outcomes %}
     <div class="overflow-x-auto">
     <table class="min-w-full text-xs">
       <thead class="bg-white text-slate-500 uppercase tracking-wide">
@@ -42,20 +59,18 @@
         </tr>
       </thead>
       <tbody class="divide-y divide-slate-100">
-        {% for tier, outs in s.by_tier.items() %}
-          {% for o in outs %}
-          <tr class="hover:bg-slate-50">
-            <td class="px-3 py-1.5 font-mono">{{ tier if tier is not none else "—" }}</td>
-            <td class="px-3 py-1.5 text-right font-mono">{{ o.slot_index if o.slot_index is not none else "—" }}</td>
-            <td class="px-3 py-1.5 font-mono">{{ o.position_id }}</td>
-            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.volume) }}</td>
-            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.entry_price) }}</td>
-            <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.exit_price) }}</td>
-            <td class="px-3 py-1.5 text-slate-500">{{ o.closed_at.strftime("%Y-%m-%d %H:%M") if o.closed_at else "—" }}</td>
-            <td class="px-3 py-1.5">{{ o.close_reason or "—" }}</td>
-            <td class="px-3 py-1.5 text-right">{{ m.money(o.profit + (o.swap or 0) + (o.commission or 0)) }}</td>
-          </tr>
-          {% endfor %}
+        {% for o in s.outcomes %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-3 py-1.5 font-mono">{{ o.tier if o.tier is not none else "—" }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ o.slot_index if o.slot_index is not none else "—" }}</td>
+          <td class="px-3 py-1.5 font-mono">{{ o.position_id }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.volume) }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.entry_price) }}</td>
+          <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.exit_price) }}</td>
+          <td class="px-3 py-1.5 text-slate-500">{{ o.closed_at.strftime("%Y-%m-%d %H:%M") if o.closed_at else "—" }}</td>
+          <td class="px-3 py-1.5"><span class="text-slate-600">{{ o.close_reason or "—" }}</span></td>
+          <td class="px-3 py-1.5 text-right">{{ m.money(o.profit + (o.swap or 0) + (o.commission or 0)) }}</td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
@@ -67,5 +82,6 @@
   {% else %}
   <div class="bg-white border border-slate-200 rounded-lg p-6 text-center text-slate-500">No signals in this window.</div>
   {% endfor %}
+  {% endif %}
 </div>
 {% endblock %}

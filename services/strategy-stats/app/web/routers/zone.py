@@ -48,21 +48,33 @@ async def account_detail(
     account: int,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
+    signal_ts: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
 
-    out_rows = (
-        await session.execute(
-            select(ZoneOutcome)
-            .where(ZoneOutcome.account == account)
-            .where(ZoneOutcome.signal_ts >= since_epoch)
-            .order_by(ZoneOutcome.signal_ts.desc(), ZoneOutcome.closed_at.desc())
-            .limit(1000)
-        )
-    ).scalars().all()
-    if not out_rows:
-        raise HTTPException(status_code=404, detail=f"account {account} has no outcomes")
+    if signal_ts is not None:
+        # Deeplink mode: fetch only the specific signal's outcomes, ignore window.
+        out_rows = (
+            await session.execute(
+                select(ZoneOutcome)
+                .where(ZoneOutcome.account == account)
+                .where(ZoneOutcome.signal_ts == signal_ts)
+                .order_by(ZoneOutcome.closed_at.desc())
+            )
+        ).scalars().all()
+    else:
+        out_rows = (
+            await session.execute(
+                select(ZoneOutcome)
+                .where(ZoneOutcome.account == account)
+                .where(ZoneOutcome.signal_ts >= since_epoch)
+                .order_by(ZoneOutcome.signal_ts.desc(), ZoneOutcome.closed_at.desc())
+                .limit(1000)
+            )
+        ).scalars().all()
+        if not out_rows:
+            raise HTTPException(status_code=404, detail=f"account {account} has no outcomes")
 
     # Collect signal_ts to fetch matching signal rows for context.
     ts_keys = {(o.signal_ts, o.symbol) for o in out_rows if o.signal_ts is not None}
@@ -77,17 +89,19 @@ async def account_detail(
         ).scalars().all()
         sig_by_key = {(s.signal_ts, s.symbol): s for s in sig_rows}
 
-    # Group outcomes by signal then by tier.
+    # Group outcomes by signal; flatten positions within each signal so the
+    # template iterates a single list (tier becomes a column, matching the
+    # conde channel page layout).
     by_signal: dict[tuple[int | None, str], list[ZoneOutcome]] = {}
     for o in out_rows:
         by_signal.setdefault((o.signal_ts, o.symbol), []).append(o)
 
+    def _tier_order(o: ZoneOutcome) -> tuple:
+        return (o.tier or "￿", o.slot_index if o.slot_index is not None else -1, o.position_id)
+
     signals = []
     for (sig_ts, sym), outs in by_signal.items():
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
-        by_tier: dict[str | None, list[ZoneOutcome]] = {}
-        for o in outs:
-            by_tier.setdefault(o.tier, []).append(o)
         sig = sig_by_key.get((sig_ts, sym)) if sig_ts is not None else None
         signals.append(
             {
@@ -97,7 +111,7 @@ async def account_detail(
                 "redbox_lower": sig.redbox_lower if sig else None,
                 "n_positions": len(outs),
                 "pnl": pnl,
-                "by_tier": by_tier,
+                "outcomes": sorted(outs, key=_tier_order),
             }
         )
     signals.sort(key=lambda x: (x["signal_ts"] or 0), reverse=True)
@@ -112,5 +126,6 @@ async def account_detail(
             "since": since_code,
             "account": account,
             "signals": signals,
+            "signal_ts_filter": signal_ts,
         },
     )
