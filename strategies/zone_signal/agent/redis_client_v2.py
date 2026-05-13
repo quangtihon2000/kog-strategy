@@ -1,12 +1,15 @@
 import hashlib
 import json
 import logging
-import time
-from datetime import datetime
+import os
+import sys
 
 import redis
 
 from config import load_settings
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
+from agent_lib.timefmt import now_unix  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +64,6 @@ def push_zone_signal(ocr_data: dict) -> bool:
         resistance   = ",".join(map(str, ocr_data.get("resistance", [])))
 
         # 4. Build the final payload (all values must be strings for Redis Stream)
-        now = datetime.now()
         zone_signal = {
             "symbol":        symbol,
             "redbox_upper":  redbox_upper,
@@ -70,8 +72,7 @@ def push_zone_signal(ocr_data: dict) -> bool:
             "targets_below": targets_below,
             "support":       support,
             "resistance":    resistance,
-            "timestamp":     now.strftime("%Y-%m-%d %H:%M:%S"),
-            "timestamp_raw": str(int(time.time())),  # must be string
+            "timestamp":     str(now_unix()),
         }
 
         # 5. Dedup — hash nội dung, exclude timestamp để tránh false miss
