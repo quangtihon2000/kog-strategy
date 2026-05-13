@@ -3,13 +3,17 @@
 import hashlib
 import json
 import logging
+import os
 import re
-import time
+import sys
 import unicodedata
 
 import redis
 
 from config import load_settings
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
+from agent_lib.timefmt import now_unix  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +95,7 @@ def push_conde_signal(data: dict) -> bool:
             return False
         tps = ",".join(str(x) for x in tps_list)
 
-        timestamp = int(data.get("timestamp", int(time.time())))
+        timestamp = int(data.get("timestamp", now_unix()))
 
         conde_signal = {
             "timestamp":    str(timestamp),   # Redis Stream fields must be strings

@@ -1,9 +1,13 @@
 """ZoneSignal dataclass — the single source of truth for signal shape."""
 
 import json
-import time
+import os
+import sys
 from dataclasses import asdict, dataclass, field
 from typing import List
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
+from agent_lib.timefmt import now_unix  # noqa: E402
 
 
 @dataclass
@@ -13,7 +17,7 @@ class ZoneSignal:
     redbox_lower: float
     targets_above: List[float]
     targets_below: List[float]
-    timestamp: int = field(default_factory=lambda: int(time.time()))
+    timestamp: int = field(default_factory=now_unix)
 
     # ------------------------------------------------------------------
     def validate(self) -> None:

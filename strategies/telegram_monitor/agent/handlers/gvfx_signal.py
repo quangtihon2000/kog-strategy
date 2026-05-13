@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import html
 import logging
-import time
+import os
+import sys
 
 from redis.asyncio import Redis
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -34,6 +35,9 @@ from telegram.ext import (
 )
 
 from .auth import auth_required
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "shared"))
+from agent_lib.timefmt import now_unix  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +141,7 @@ async def _publish(
     use_atr: bool,
 ) -> None:
     payload = {
-        "timestamp": str(int(time.time())),
+        "timestamp": str(now_unix()),
         "symbol": DEFAULT_SYMBOL,
         "target": str(target),
         "direction": direction,

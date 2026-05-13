@@ -8,12 +8,10 @@ Malformed messages observed in prod (skip + ack with WARNING, don't strand PEL):
 - `timestamp` field missing entirely
 - producer typo `redbox_uppper` (3 p's) instead of `redbox_upper`
 - literal string `'None'` in numeric fields
-- two timestamp formats coexist: unix int (`'1778205600'`) and ISO datetime (`'2026-04-20 11:53:18'`)
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,13 +46,9 @@ def _clean(v: str | None) -> str | None:
 
 
 def _parse_ts(raw: str) -> int | None:
-    """Accept unix int or ISO datetime; return unix seconds or None."""
+    """Parse unix seconds; return None if unparseable."""
     try:
         return int(raw)
-    except ValueError:
-        pass
-    try:
-        return int(datetime.fromisoformat(raw).timestamp())
     except ValueError:
         return None
 

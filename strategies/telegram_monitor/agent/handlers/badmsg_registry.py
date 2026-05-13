@@ -13,9 +13,13 @@ Bad message alert with another Edit button.
 
 from __future__ import annotations
 
-import time
+import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "shared"))
+from agent_lib.timefmt import now_unix  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -36,7 +40,7 @@ def _csv(v: Any) -> str:
 def _flatten_zone(d: dict[str, Any]) -> dict[str, str]:
     # zone_signal re-stamps timestamp at write time; we still send a fresh one.
     return {
-        "timestamp": str(int(time.time())),
+        "timestamp": str(now_unix()),
         "symbol": str(d["symbol"]),
         "redbox_upper": str(d["redbox_upper"]),
         "redbox_lower": str(d["redbox_lower"]),
