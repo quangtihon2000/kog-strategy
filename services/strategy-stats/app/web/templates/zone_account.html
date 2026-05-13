@@ -6,6 +6,7 @@
   <div>
     <div class="text-xs uppercase tracking-wide text-slate-500">Zone account</div>
     <h1 class="text-xl font-semibold">#{{ account }}</h1>
+    {{ m.signal_count(signals) }}
   </div>
   <div class="flex flex-wrap items-center gap-3">
     {% if signal_ts_filter is not none %}

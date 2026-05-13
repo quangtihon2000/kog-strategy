@@ -40,3 +40,10 @@
 {% macro pct(v) -%}
 {% if v is none %}—{% else %}{{ "%.1f%%"|format(v * 100) }}{% endif %}
 {%- endmacro %}
+
+{% macro signal_count(signals) -%}
+{% set total_positions = signals|sum(attribute='n_positions') %}
+<div class="text-xs text-slate-500 mt-1">
+  {{ signals|length }} signals · {{ total_positions }} positions
+</div>
+{%- endmacro %}
