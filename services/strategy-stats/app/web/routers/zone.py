@@ -22,10 +22,12 @@ async def overview(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
     since_dt = datetime.fromtimestamp(since_epoch, tz=timezone.utc)
+    executed_only = bool(executed)
 
     # zone_signal agent re-stamps `timestamp` at write time, so
     # ZoneOutcome.signal_ts (from EA comment) almost never matches
@@ -74,6 +76,8 @@ async def overview(
 
     signals = []
     for (sig_ts, sym), outs in by_key.items():
+        if executed_only and not outs:
+            continue
         sig = sig_by_key.get((sig_ts, sym)) if sig_ts is not None else None
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         signals.append(
@@ -99,6 +103,7 @@ async def overview(
             "since": since_code,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )
 
@@ -110,9 +115,11 @@ async def account_detail(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
+    executed_only = bool(executed)
 
     if signal_ts is not None:
         # Deeplink mode: fetch only the specific signal's outcomes, ignore window.
@@ -162,6 +169,8 @@ async def account_detail(
 
     signals = []
     for (sig_ts, sym), outs in by_signal.items():
+        if executed_only and not outs:
+            continue
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         sig = sig_by_key.get((sig_ts, sym)) if sig_ts is not None else None
         signals.append(
@@ -188,5 +197,6 @@ async def account_detail(
             "account": account,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )
