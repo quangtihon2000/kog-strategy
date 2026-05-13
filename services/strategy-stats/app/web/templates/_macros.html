@@ -47,3 +47,18 @@
   {{ signals|length }} signals · {{ total_positions }} positions
 </div>
 {%- endmacro %}
+
+{% macro profit_summary(signals) -%}
+{% set executed = signals | selectattr('n_positions') | list %}
+{% set wins = executed | selectattr('pnl', 'gt', 0) | list %}
+{% set losses = executed | selectattr('pnl', 'lt', 0) | list %}
+{% set total = executed | sum(attribute='pnl') %}
+{% set win_sum = wins | sum(attribute='pnl') %}
+{% set loss_sum = losses | sum(attribute='pnl') %}
+<div class="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+  <span>P&amp;L {{ money(total) }}</span>
+  <span><span class="text-emerald-600">▲</span> {{ wins|length }} {{ money(win_sum) }}</span>
+  <span><span class="text-rose-600">▼</span> {{ losses|length }} {{ money(loss_sum) }}</span>
+  {% if executed %}<span>WR {{ "%.0f%%"|format(wins|length / executed|length * 100) }}</span>{% endif %}
+</div>
+{%- endmacro %}
