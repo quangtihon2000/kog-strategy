@@ -4,7 +4,7 @@
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "ZoneSignal EA"
-#property version     "3.06"
+#property version     "3.07"
 #property description "Three-tier entry: Scalp (breakout), Normal (retrace), Mid (zone)"
 
 #include <Trade\Trade.mqh>
@@ -129,7 +129,7 @@ void OnTick() {
          PrintFormat("[Signal] BUY T1 reached (Bid %.5f >= T1 %.5f) → BE + BUY direction DONE",
                      tickBid, g_sig.targets_above[0]);
          MoveSignalToBreakEven(POSITION_TYPE_BUY);
-         g_buyDone     = true;
+         MarkDirectionDone(POSITION_TYPE_BUY);
          g_t1BuyTicket = 0;
       }
       if (!g_sellDone && ArraySize(g_sig.targets_below) > 0
@@ -137,7 +137,7 @@ void OnTick() {
          PrintFormat("[Signal] SELL T1 reached (Ask %.5f <= T1 %.5f) → BE + SELL direction DONE",
                      tickAsk, g_sig.targets_below[0]);
          MoveSignalToBreakEven(POSITION_TYPE_SELL);
-         g_sellDone     = true;
+         MarkDirectionDone(POSITION_TYPE_SELL);
          g_t1SellTicket = 0;
       }
       if (g_buyDone && g_sellDone && g_sig.valid) {
@@ -263,13 +263,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
       if (dir == POSITION_TYPE_BUY && closedPosId == g_t1BuyTicket && g_t1BuyTicket != 0) {
          PrintFormat("[Signal] BUY T1 (#%d) hit TP → BE + BUY direction DONE", closedPosId);
          MoveSignalToBreakEven(POSITION_TYPE_BUY);
-         g_buyDone     = true;
+         MarkDirectionDone(POSITION_TYPE_BUY);
          g_t1BuyTicket = 0;
       }
       else if (dir == POSITION_TYPE_SELL && closedPosId == g_t1SellTicket && g_t1SellTicket != 0) {
          PrintFormat("[Signal] SELL T1 (#%d) hit TP → BE + SELL direction DONE", closedPosId);
          MoveSignalToBreakEven(POSITION_TYPE_SELL);
-         g_sellDone     = true;
+         MarkDirectionDone(POSITION_TYPE_SELL);
          g_t1SellTicket = 0;
       }
    }
@@ -466,6 +466,47 @@ void UpdateTrailingStops() {
 }
 
 //+------------------------------------------------------------------+
+//| Direction-DONE persistence — survives EA reload / MT5 restart.   |
+//| Why: g_buyDone/g_sellDone live in memory; without persistence,   |
+//| reloading the EA while the same signal file is still on disk     |
+//| would re-arm a direction that already hit T1 (TP or price-reach) |
+//| and re-enter trades. GlobalVariableSet persists across restart   |
+//| in the terminal data folder, keyed per magic+ts+direction.       |
+//+------------------------------------------------------------------+
+string GvDoneKey(const ENUM_POSITION_TYPE dir, const ulong ts) {
+   return StringFormat("ZSEA_%I64u_%I64u_%s",
+                       (ulong)InpMagic, ts,
+                       dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
+}
+
+void MarkDirectionDone(const ENUM_POSITION_TYPE dir) {
+   if (dir == POSITION_TYPE_BUY)  g_buyDone  = true;
+   else                            g_sellDone = true;
+   if (g_lastSigTs == 0) return;
+   string key = GvDoneKey(dir, g_lastSigTs);
+   GlobalVariableSet(key, 1.0);
+   GlobalVariablesFlush();
+}
+
+void HydrateDirectionDone(const ulong ts) {
+   if (GlobalVariableCheck(GvDoneKey(POSITION_TYPE_BUY,  ts))) g_buyDone  = true;
+   if (GlobalVariableCheck(GvDoneKey(POSITION_TYPE_SELL, ts))) g_sellDone = true;
+}
+
+void GcStaleGlobals(const ulong currentTs) {
+   string prefix = StringFormat("ZSEA_%I64u_", (ulong)InpMagic);
+   string keepBuy  = GvDoneKey(POSITION_TYPE_BUY,  currentTs);
+   string keepSell = GvDoneKey(POSITION_TYPE_SELL, currentTs);
+   int total = GlobalVariablesTotal();
+   for (int i = total - 1; i >= 0; i--) {
+      string name = GlobalVariableName(i);
+      if (StringFind(name, prefix) != 0) continue;
+      if (name == keepBuy || name == keepSell) continue;
+      GlobalVariableDel(name);
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Poll JSON file and apply if a new timestamp is detected          |
 //+------------------------------------------------------------------+
 void CheckSignalFile() {
@@ -497,6 +538,22 @@ void ApplySignal(const ZoneSignal &sig) {
    g_t1SellTicket     = 0;
    ArrayResize(g_signalTickets, 0);   // clear ticket tracking
    ArrayResize(g_scalpTickets, 0);
+
+   //--- Persistence: drop stale per-signal globals from prior timestamps,
+   //    then rehydrate done flags for THIS timestamp. Covers the case where
+   //    the EA reloads (re-attach, recompile, MT5 restart) while the signal
+   //    file on disk still carries a ts whose T1 already fired.
+   GcStaleGlobals(sig.timestamp);
+   HydrateDirectionDone(sig.timestamp);
+   if (g_buyDone && g_sellDone) {
+      g_sig.valid = false;
+      Print("[Signal] Rehydrated as fully done — both directions had reached T1");
+   } else if (g_buyDone || g_sellDone) {
+      PrintFormat("[Signal] Rehydrated done flags — BUY=%s SELL=%s",
+                  g_buyDone ? "DONE" : "open",
+                  g_sellDone ? "DONE" : "open");
+   }
+
    PrintFormat("[Signal] Applied — Zone %.5f – %.5f | Targets above: %d | below: %d",
                sig.redbox_lower, sig.redbox_upper,
                ArraySize(sig.targets_above), ArraySize(sig.targets_below));
@@ -519,7 +576,7 @@ void ProcessNewBar() {
       int nAbove = ArraySize(g_sig.targets_above);
       if (nAbove > 0 && ask >= g_sig.targets_above[0]) {
          PrintFormat("[Signal] BUY IGNORED — price %.5f already at/past T1 (%.5f)", ask, g_sig.targets_above[0]);
-         g_buyDone = true;
+         MarkDirectionDone(POSITION_TYPE_BUY);
       } else {
          Print("[Signal] Close ABOVE zone → BUY breakout confirmed");
          g_breakoutBuy = true;
@@ -530,7 +587,7 @@ void ProcessNewBar() {
       int nBelow = ArraySize(g_sig.targets_below);
       if (nBelow > 0 && bid <= g_sig.targets_below[0]) {
          PrintFormat("[Signal] SELL IGNORED — price %.5f already at/past T1 (%.5f)", bid, g_sig.targets_below[0]);
-         g_sellDone = true;
+         MarkDirectionDone(POSITION_TYPE_SELL);
       } else {
          Print("[Signal] Close BELOW zone → SELL breakout confirmed");
          g_breakoutSell = true;
