@@ -8,6 +8,7 @@
     <h1 class="text-xl font-semibold">{{ channel_name }}</h1>
     <div class="text-xs text-slate-400">id: {{ channel_id }}</div>
     {{ m.signal_count(signals) }}
+    {{ m.profit_summary(signals) }}
   </div>
   <div class="flex flex-wrap items-center gap-3">
     {% if signal_ts_filter is not none %}
