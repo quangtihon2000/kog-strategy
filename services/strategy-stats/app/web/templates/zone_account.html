@@ -41,6 +41,24 @@
           <span class="font-mono">{{ "%.2f"|format(s.redbox_lower) }} – {{ "%.2f"|format(s.redbox_upper) }}</span>
         </span>
       {% endif %}
+      {% if s.targets_above %}
+        <span class="text-slate-600">↑
+          <span class="font-mono">
+            {%- for t in s.targets_above -%}
+              {{ "%.2f"|format(t) }}{% if not loop.last %}, {% endif %}
+            {%- endfor -%}
+          </span>
+        </span>
+      {% endif %}
+      {% if s.targets_below %}
+        <span class="text-slate-600">↓
+          <span class="font-mono">
+            {%- for t in s.targets_below -%}
+              {{ "%.2f"|format(t) }}{% if not loop.last %}, {% endif %}
+            {%- endfor -%}
+          </span>
+        </span>
+      {% endif %}
       <span class="ml-auto text-slate-600">{{ s.n_positions }} positions</span>
       <span class="font-medium">{{ m.money(s.pnl) }}</span>
     </div>
