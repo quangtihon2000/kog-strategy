@@ -1,7 +1,6 @@
 """Home overview — three KPI cards (conde / gvfx / zone) for the selected window."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -21,6 +20,7 @@ from app.models import (
 from app.stats import conde as conde_stats
 from app.stats import gvfx as gvfx_stats
 from app.stats import zone as zone_stats
+from agent_lib.timefmt import fmt_ict_compact
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
@@ -29,7 +29,10 @@ _RECENT_SIGNALS_LIMIT = 15
 
 
 def _fmt_ts(ts: int) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+    try:
+        return fmt_ict_compact(ts)
+    except ValueError:
+        return "—"
 
 
 def _pnl(outs) -> float:

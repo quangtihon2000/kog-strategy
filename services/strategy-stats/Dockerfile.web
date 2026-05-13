@@ -2,18 +2,20 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/srv/shared
 
 WORKDIR /srv
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml ./
+COPY services/strategy-stats/pyproject.toml ./
 RUN uv pip install --system --no-cache .
 
-COPY alembic.ini ./
-COPY migrations ./migrations
-COPY app ./app
+COPY services/strategy-stats/alembic.ini ./
+COPY services/strategy-stats/migrations ./migrations
+COPY services/strategy-stats/app ./app
+COPY shared ./shared
 
 EXPOSE 8080
 

@@ -10,15 +10,19 @@ readable before its formatter lands.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import sys
+from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "shared"))
+from agent_lib.timefmt import fmt_ict
 
 
 def _ts_to_str(ts: int | float | None) -> str:
     if not ts:
         return "-"
     try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return fmt_ict(int(ts))
     except (ValueError, OSError, OverflowError):
         return str(ts)
 

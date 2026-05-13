@@ -6,13 +6,13 @@ is a one-line change on the dashboard router below.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from agent_lib.timefmt import fmt_ict, now_unix
 from app.web.routers import conde, gvfx, home, zone
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -23,7 +23,7 @@ def _fmt_ts(value: int | float | None) -> str:
     if value is None:
         return "—"
     try:
-        return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        return fmt_ict(int(value))
     except (TypeError, ValueError, OSError):
         return "—"
 
@@ -32,7 +32,7 @@ templates.env.filters["fmt_ts"] = _fmt_ts
 
 
 def _now_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return fmt_ict(now_unix())
 
 
 def create_app() -> FastAPI:

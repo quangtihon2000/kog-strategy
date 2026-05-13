@@ -22,9 +22,11 @@ import logging
 import os
 import sys
 from dataclasses import asdict
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "shared"))
+from agent_lib.timefmt import fmt_ict, fmt_ict_compact
 
 import redis as redis_lib
 from dotenv import load_dotenv
@@ -76,13 +78,19 @@ def _fmt_r(v: Optional[float]) -> str:
 def _fmt_ts(epoch_s: int) -> str:
     if not epoch_s:
         return "—"
-    return datetime.fromtimestamp(epoch_s, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        return fmt_ict(epoch_s)
+    except ValueError:
+        return "—"
 
 
 def _fmt_ts_short(epoch_s: int) -> str:
     if not epoch_s:
         return "—"
-    return datetime.fromtimestamp(epoch_s, tz=timezone.utc).strftime("%m-%d %H:%M")
+    try:
+        return fmt_ict_compact(epoch_s)
+    except ValueError:
+        return "—"
 
 
 def _kind_color(kind: str) -> str:
