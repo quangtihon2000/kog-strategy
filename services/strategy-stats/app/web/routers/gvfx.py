@@ -21,9 +21,11 @@ async def overview(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
+    executed_only = bool(executed)
 
     if signal_ts is not None:
         sig_rows = (
@@ -62,6 +64,8 @@ async def overview(
     signals = []
     for s in sig_rows:
         outs = out_by_key.get((s.signal_ts, s.symbol), [])
+        if executed_only and not outs:
+            continue
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         signals.append(
             {
@@ -89,6 +93,7 @@ async def overview(
             "since": since_code,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )
 
@@ -100,9 +105,11 @@ async def symbol_detail(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
+    executed_only = bool(executed)
 
     if signal_ts is not None:
         # Deeplink mode: fetch only the specific signal, ignore window.
@@ -148,6 +155,8 @@ async def symbol_detail(
     signals = []
     for s in sig_rows:
         outs = out_by_ts.get(s.signal_ts, [])
+        if executed_only and not outs:
+            continue
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         signals.append(
             {
@@ -176,5 +185,6 @@ async def symbol_detail(
             "symbol": symbol,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )

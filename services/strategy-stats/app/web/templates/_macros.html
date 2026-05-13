@@ -1,13 +1,24 @@
-{% macro since_selector(path, current) -%}
-<form class="flex items-center gap-2 text-sm">
-  <label for="since" class="text-slate-600">Window</label>
-  <select name="since" id="since"
-          hx-get="{{ path }}" hx-target="#data" hx-push-url="true"
-          class="border border-slate-300 rounded px-2 py-1 bg-white">
-    {% for code, label in since_choices %}
-      <option value="{{ code }}" {% if code == current %}selected{% endif %}>{{ label }}</option>
-    {% endfor %}
-  </select>
+{% macro since_selector(path, current, executed=none) -%}
+<form class="flex flex-wrap items-center gap-3 text-sm" method="get" action="{{ path }}">
+  <label class="flex items-center gap-2">
+    <span class="text-slate-600">Window</span>
+    <select name="since"
+            onchange="this.form.submit()"
+            class="border border-slate-300 rounded px-2 py-1 bg-white">
+      {% for code, label in since_choices %}
+        <option value="{{ code }}" {% if code == current %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if executed is not none %}
+  <label class="flex items-center gap-1.5">
+    <input type="checkbox" name="executed" value="1"
+           {% if executed %}checked{% endif %}
+           onchange="this.form.submit()"
+           class="rounded border-slate-300">
+    <span class="text-slate-600">Only with positions</span>
+  </label>
+  {% endif %}
 </form>
 {%- endmacro %}
 

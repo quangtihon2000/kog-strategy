@@ -21,9 +21,11 @@ async def overview(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
+    executed_only = bool(executed)
 
     if signal_ts is not None:
         sig_rows = (
@@ -69,6 +71,8 @@ async def overview(
     signals = []
     for s in sig_rows:
         outs = out_by_ts.get(s.signal_ts, [])
+        if executed_only and not outs:
+            continue
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         ch_name = (
             channel_name_by_id.get(s.channel_id)
@@ -101,6 +105,7 @@ async def overview(
             "since": since_code,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )
 
@@ -137,9 +142,11 @@ async def channel_detail(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
+    executed: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
     since_epoch = since_to_epoch(since_code)
+    executed_only = bool(executed)
 
     # Resolve display name from Channel table first
     channel_row = (
@@ -196,6 +203,8 @@ async def channel_detail(
     signals = []
     for s in sig_rows:
         outs = out_by_ts.get(s.signal_ts, [])
+        if executed_only and not outs:
+            continue
         pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
         signals.append(
             {
@@ -223,5 +232,6 @@ async def channel_detail(
             "channel_name": channel_name,
             "signals": signals,
             "signal_ts_filter": signal_ts,
+            "executed_only": executed_only,
         },
     )
