@@ -10,31 +10,87 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_session
 from app.models import Channel, CondeOutcome, CondeSignal
-from app.stats import conde as conde_stats
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
 
 
-@router.get("/", response_class=HTMLResponse, response_model=None)
+@router.get("/", response_class=HTMLResponse)
 async def overview(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
     signal_ts: int | None = None,
-) -> HTMLResponse | RedirectResponse:
-    # Query-string shortcut: /conde/?signal_ts=X mirrors /conde/signal/X so
-    # links pasted from anywhere resolve to the channel deeplink.
-    if signal_ts is not None:
-        return RedirectResponse(url=f"/conde/signal/{signal_ts}", status_code=302)
-
+) -> HTMLResponse:
     since_code = normalize_since(since)
-    by_channel = await conde_stats.aggregate_since(session, since_to_epoch(since_code))
-    rows = sorted(
-        by_channel.values(),
-        key=lambda s: (s.n_classified, s.confidence_lo95),
-        reverse=True,
-    )
+    since_epoch = since_to_epoch(since_code)
+
+    if signal_ts is not None:
+        sig_rows = (
+            await session.execute(
+                select(CondeSignal)
+                .where(CondeSignal.signal_ts == signal_ts)
+                .order_by(CondeSignal.signal_ts.desc())
+            )
+        ).scalars().all()
+    else:
+        sig_rows = (
+            await session.execute(
+                select(CondeSignal)
+                .where(CondeSignal.signal_ts >= since_epoch)
+                .order_by(CondeSignal.signal_ts.desc())
+                .limit(500)
+            )
+        ).scalars().all()
+
+    ts_set = {s.signal_ts for s in sig_rows}
+    out_rows: list[CondeOutcome] = []
+    if ts_set:
+        out_rows = (
+            await session.execute(
+                select(CondeOutcome).where(CondeOutcome.signal_ts.in_(ts_set))
+            )
+        ).scalars().all()
+    out_by_ts: dict[int, list[CondeOutcome]] = {}
+    for o in out_rows:
+        if o.signal_ts is not None:
+            out_by_ts.setdefault(o.signal_ts, []).append(o)
+
+    channel_ids = {s.channel_id for s in sig_rows if s.channel_id is not None}
+    channel_name_by_id: dict[int, str] = {}
+    if channel_ids:
+        ch_rows = (
+            await session.execute(
+                select(Channel).where(Channel.channel_id.in_(channel_ids))
+            )
+        ).scalars().all()
+        channel_name_by_id = {c.channel_id: c.name for c in ch_rows}
+
+    signals = []
+    for s in sig_rows:
+        outs = out_by_ts.get(s.signal_ts, [])
+        pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
+        ch_name = (
+            channel_name_by_id.get(s.channel_id)
+            or s.channel_name
+            or (f"channel:{s.channel_id}" if s.channel_id is not None else "—")
+        )
+        signals.append(
+            {
+                "signal_ts": s.signal_ts,
+                "symbol": s.symbol,
+                "direction": s.direction,
+                "entry_price": s.entry_price,
+                "sl": s.sl,
+                "tps": s.tps,
+                "channel_id": s.channel_id,
+                "channel_name": ch_name,
+                "outcomes": outs,
+                "n_positions": len(outs),
+                "pnl": pnl,
+            }
+        )
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
@@ -43,7 +99,8 @@ async def overview(
             "now_str": request.state.now_str,
             "since_choices": SINCE_CHOICES,
             "since": since_code,
-            "rows": rows,
+            "signals": signals,
+            "signal_ts_filter": signal_ts,
         },
     )
 
