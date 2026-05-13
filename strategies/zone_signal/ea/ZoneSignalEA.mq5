@@ -99,7 +99,7 @@ void OnDeinit(const int reason) {
 //+------------------------------------------------------------------+
 void OnTick() {
    //--- Check signal file on every new second (tick-level polling)
-   datetime now = TimeCurrent();
+   datetime now = TimeCurrent();  // broker-local, throttle only — không dùng cho dedup/timestamp
    if (now != g_lastTickCheck) {
       g_lastTickCheck = now;
       CheckSignalFile();
@@ -884,7 +884,7 @@ bool LoadSignal(const string filename, ZoneSignal &sig) {
 
    //--- Timestamp: expiry check (only for "fresh" signals we haven't seen before)
    ulong ts  = (ulong)StringToInteger(ts_str);
-   ulong now = (ulong)TimeGMT();
+   ulong now = (ulong)TimeGMT();  // UTC — so sánh với signal.timestamp (Unix UTC) để validate freshness
 
    if (ts != g_lastSigTs) {
       if (ts > now) {

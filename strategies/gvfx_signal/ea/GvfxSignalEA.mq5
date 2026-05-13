@@ -280,7 +280,7 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mo
 
 //+------------------------------------------------------------------+
 void OnTick() {
-   datetime now = TimeCurrent();
+   datetime now = TimeCurrent();  // broker-local, throttle only — không dùng cho dedup/timestamp
    if (now == g_lastTickCheck) return;
    g_lastTickCheck = now;
 
@@ -424,9 +424,9 @@ bool IsSpreadOK(const string tag) {
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
    if (spread > InpMaxSpreadPts) {
       static datetime lastWarn = 0;
-      if (TimeCurrent() - lastWarn >= 30) {
+      if (TimeCurrent() - lastWarn >= 30) {  // broker-local, throttle only — warn rate-limiter
          PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
-         lastWarn = TimeCurrent();
+         lastWarn = TimeCurrent();  // broker-local, throttle only — warn rate-limiter anchor
       }
       return false;
    }
@@ -446,7 +446,7 @@ bool TargetReached(const GvfxSig &sig) {
 //| Refresh midnight server-time anchor and recompute realized P&L   |
 //+------------------------------------------------------------------+
 void RefreshDailyAnchor() {
-   datetime srv = TimeTradeServer();
+   datetime srv = TimeTradeServer();  // server-local — EOD anchor phải theo broker TZ, không phải UTC
    MqlDateTime mdt; TimeToStruct(srv, mdt);
    mdt.hour = 0; mdt.min = 0; mdt.sec = 0;
    datetime midnight = StructToTime(mdt);
@@ -466,7 +466,7 @@ void RefreshDailyAnchor() {
 //| 0 if the broker reports no session today (e.g. weekend).         |
 //+------------------------------------------------------------------+
 datetime TodaySessionCloseTime() {
-   datetime srv = TimeTradeServer();
+   datetime srv = TimeTradeServer();  // server-local — session windows (DOW + to/from) là broker TZ
    MqlDateTime mdt; TimeToStruct(srv, mdt);
    mdt.hour = 0; mdt.min = 0; mdt.sec = 0;
    datetime midnight = StructToTime(mdt);
@@ -492,7 +492,7 @@ bool IsEodWindow() {
    datetime closeAt = TodaySessionCloseTime();
    if (closeAt == 0) return false;
    datetime triggerAt = closeAt - (datetime)(InpEodCutLeadMins * 60);
-   return TimeTradeServer() >= triggerAt;
+   return TimeTradeServer() >= triggerAt;  // server-local — so sánh với triggerAt cũng từ server TZ
 }
 
 //+------------------------------------------------------------------+
@@ -539,7 +539,7 @@ void MarkSignalReached(const ulong ts) {
 //+------------------------------------------------------------------+
 double ComputeRealizedSince(const datetime fromTime) {
    double total = 0;
-   if (!HistorySelect(fromTime, TimeCurrent() + 60)) return 0;
+   if (!HistorySelect(fromTime, TimeCurrent() + 60)) return 0;  // broker-local OK — upper bound chỉ cần > now
    int n = HistoryDealsTotal();
    for (int i = 0; i < n; i++) {
       ulong d = HistoryDealGetTicket(i);
@@ -741,8 +741,8 @@ ulong ScanMaxSeenTimestamp() {
       if (ts > maxTs) maxTs = ts;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
-   if (HistorySelect(from, TimeCurrent() + 60)) {
+   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   if (HistorySelect(from, TimeCurrent() + 60)) {  // broker-local OK — upper bound chỉ cần > now
       int deals = HistoryDealsTotal();
       for (int i = deals - 1; i >= 0; i--) {
          ulong d = HistoryDealGetTicket(i);

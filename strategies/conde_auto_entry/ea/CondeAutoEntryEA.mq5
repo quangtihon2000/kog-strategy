@@ -222,7 +222,7 @@ void OnTradeTransaction(
 
 //+------------------------------------------------------------------+
 void OnTick() {
-   datetime now = TimeCurrent();
+   datetime now = TimeCurrent();  // broker-local, throttle only — không dùng cho dedup/timestamp
    if (now == g_lastTickCheck) return;
    g_lastTickCheck = now;
 
@@ -333,7 +333,7 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
    if (usePending) {
       pendType = PickPendingType(dir, sig.entry_price, market);
       if (InpPendingExpiryHours > 0)
-         expiry = TimeCurrent() + (datetime)(InpPendingExpiryHours * 3600);
+         expiry = TimeCurrent() + (datetime)(InpPendingExpiryHours * 3600);  // broker-local OK — ORDER_TIME_EXPIRATION dùng server TZ
    }
 
    PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%s  mode=%s",
@@ -666,8 +666,8 @@ bool TradeExistsByComment(const string comment) {
       if (OrderGetString(ORDER_COMMENT) == comment) return true;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
-   if (!HistorySelect(from, TimeCurrent() + 60)) return false;
+   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   if (!HistorySelect(from, TimeCurrent() + 60)) return false;  // broker-local OK — upper bound chỉ cần > now
 
    int deals = HistoryDealsTotal();
    for (int i = deals - 1; i >= 0; i--) {
@@ -714,8 +714,8 @@ ulong ScanMaxSeenTimestamp() {
       if (ts > maxTs) maxTs = ts;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);
-   if (HistorySelect(from, TimeCurrent() + 60)) {
+   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   if (HistorySelect(from, TimeCurrent() + 60)) {  // broker-local OK — upper bound chỉ cần > now
       int deals = HistoryDealsTotal();
       for (int i = deals - 1; i >= 0; i--) {
          ulong deal = HistoryDealGetTicket(i);
@@ -827,7 +827,7 @@ bool LoadSignal(const string filename, CondeSignal &sig) {
 
    //--- Timestamp freshness
    ulong ts  = (ulong)StringToInteger(ts_str);
-   ulong now = (ulong)TimeGMT();
+   ulong now = (ulong)TimeGMT();  // UTC — so sánh với signal.timestamp (Unix UTC) để validate freshness
    if (ts > now) {
       PrintFormat("[Validation] Timestamp in future (ts=%s now=%s)",
                   IntegerToString(ts), IntegerToString(now));
