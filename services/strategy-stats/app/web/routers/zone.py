@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_session
 from app.models import ZoneOutcome, ZoneSignal
-from app.stats import zone as zone_stats
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
@@ -21,14 +20,66 @@ async def overview(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
+    signal_ts: int | None = None,
 ) -> HTMLResponse:
     since_code = normalize_since(since)
-    by_account = await zone_stats.aggregate_since(session, since_to_epoch(since_code))
-    rows = sorted(
-        by_account.values(),
-        key=lambda s: (s.n_positions, s.total_pnl),
-        reverse=True,
-    )
+    since_epoch = since_to_epoch(since_code)
+
+    if signal_ts is not None:
+        sig_rows = (
+            await session.execute(
+                select(ZoneSignal)
+                .where(ZoneSignal.signal_ts == signal_ts)
+                .order_by(ZoneSignal.signal_ts.desc())
+            )
+        ).scalars().all()
+    else:
+        sig_rows = (
+            await session.execute(
+                select(ZoneSignal)
+                .where(ZoneSignal.signal_ts >= since_epoch)
+                .order_by(ZoneSignal.signal_ts.desc())
+                .limit(500)
+            )
+        ).scalars().all()
+
+    ts_set = {s.signal_ts for s in sig_rows}
+    out_rows: list[ZoneOutcome] = []
+    if ts_set:
+        out_rows = (
+            await session.execute(
+                select(ZoneOutcome).where(ZoneOutcome.signal_ts.in_(ts_set))
+            )
+        ).scalars().all()
+    out_by_key: dict[tuple[int, str], list[ZoneOutcome]] = {}
+    for o in out_rows:
+        if o.signal_ts is not None:
+            out_by_key.setdefault((o.signal_ts, o.symbol), []).append(o)
+
+    def _tier_order(o: ZoneOutcome) -> tuple:
+        return (
+            o.tier or "￿",
+            o.slot_index if o.slot_index is not None else -1,
+            o.account,
+            o.position_id,
+        )
+
+    signals = []
+    for s in sig_rows:
+        outs = out_by_key.get((s.signal_ts, s.symbol), [])
+        pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in outs)
+        signals.append(
+            {
+                "signal_ts": s.signal_ts,
+                "symbol": s.symbol,
+                "redbox_upper": s.redbox_upper,
+                "redbox_lower": s.redbox_lower,
+                "n_positions": len(outs),
+                "pnl": pnl,
+                "outcomes": sorted(outs, key=_tier_order),
+            }
+        )
+
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
@@ -37,7 +88,8 @@ async def overview(
             "now_str": request.state.now_str,
             "since_choices": SINCE_CHOICES,
             "since": since_code,
-            "rows": rows,
+            "signals": signals,
+            "signal_ts_filter": signal_ts,
         },
     )
 
