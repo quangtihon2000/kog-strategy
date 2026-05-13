@@ -44,7 +44,10 @@ New timestamp → breakout detected (M15 close) → scalp/normal/mid entries
 }
 ```
 
-- `timestamp` is **re-stamped** at write time (unlike CondeSignal)
+- `timestamp` is **NOT re-stamped** — producer-supplied (unix epoch seconds), preserved end-to-end
+- This is critical because `timestamp` is embedded in each position's comment
+  (`ZB_T{n}_{ts}`, `ZS_T{n}_{ts}`, scalp/mid variants) and strategy-stats joins
+  `ZoneOutcome.signal_ts ↔ ZoneSignal.signal_ts` on that same value
 - File path: `data/{account}.json` (e.g., `data/5100000.json`)
 - EA reads from `MQL5/Files/ZoneSignalEA/{account}.json` via symlink
 

@@ -29,11 +29,11 @@ async def overview(
     since_dt = datetime.fromtimestamp(since_epoch, tz=timezone.utc)
     executed_only = bool(executed)
 
-    # zone_signal agent re-stamps `timestamp` at write time, so
-    # ZoneOutcome.signal_ts (from EA comment) almost never matches
-    # ZoneSignal.signal_ts (from upstream Redis stream). Iterate from
-    # outcomes so positions are never dropped; signal metadata (redbox)
-    # is best-effort and may be absent.
+    # Iterate from outcomes so positions are never dropped if a matching
+    # ZoneSignal row is missing (legacy outcomes from before the producer
+    # timestamp was unified, or signals that came in before the ingest
+    # consumer caught up). When the join lands, redbox/targets render;
+    # otherwise the card still shows the position summary without chips.
     if signal_ts is not None:
         out_rows = (
             await session.execute(

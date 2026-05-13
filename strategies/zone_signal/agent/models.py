@@ -3,6 +3,7 @@
 import json
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import List
 
 
@@ -58,19 +59,41 @@ class ZoneSignal:
         Build a ZoneSignal from a flat Redis Stream field dict.
 
         Expected keys:
+            timestamp     : str (unix int, may also be ISO datetime for
+                            in-flight legacy messages)
             symbol        : str          e.g. "XAUUSD"
             redbox_upper  : str (float)  e.g. "2350.00"
             redbox_lower  : str (float)  e.g. "2340.00"
             targets_above : str          e.g. "2360.0,2370.0"  (comma-separated)
             targets_below : str          e.g. "2330.0,2320.0"  (comma-separated)
         """
-        return cls(
+        kwargs = dict(
             symbol=d["symbol"],
             redbox_upper=float(d["redbox_upper"]),
             redbox_lower=float(d["redbox_lower"]),
             targets_above=[float(x) for x in str(d["targets_above"]).split(",")],
             targets_below=[float(x) for x in str(d["targets_below"]).split(",")],
         )
+        ts = cls._parse_ts(d.get("timestamp") or d.get("timestamp_raw"))
+        if ts is not None:
+            kwargs["timestamp"] = ts
+        return cls(**kwargs)
+
+    @staticmethod
+    def _parse_ts(raw) -> int | None:
+        # Accept unix int or ISO datetime; mirrors strategy-stats ingest
+        # so the upstream signal_ts and the EA-embedded timestamp stay
+        # in lock-step.
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+        try:
+            return int(datetime.fromisoformat(str(raw)).timestamp())
+        except ValueError:
+            return None
 
     # ------------------------------------------------------------------
     def to_json(self) -> str:
