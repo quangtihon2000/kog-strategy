@@ -1,0 +1,157 @@
+name: Redeploy Agent
+
+# Manual trigger to redeploy a single agent (regenerate .env from current
+# GitHub secrets/vars, then restart the NSSM service). Use this after rotating
+# an account ID, Redis URL, or any other secret/var the agent reads — no code
+# push needed.
+#
+# Scope: only the selected agent is touched. Other agents keep running.
+
+on:
+  workflow_dispatch:
+    inputs:
+      strategy:
+        description: 'Strategy whose agent to redeploy'
+        type: choice
+        required: true
+        default: gvfx_signal
+        options:
+          - zone_signal
+          - conde_auto_entry
+          - gvfx_signal
+          - telegram_monitor
+
+jobs:
+  redeploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false  # preserve agent runtime: .venv, .env, data/*.json, logs/
+
+      - name: Resolve service name from deploy.json
+        id: resolve
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $config = Get-Content "deploy.json" -Raw | ConvertFrom-Json
+          $strat = $config.strategies.'${{ inputs.strategy }}'
+          if (-not $strat -or -not $strat.agent -or -not $strat.agent.enabled) {
+            throw "Strategy '${{ inputs.strategy }}' has no enabled agent in deploy.json"
+          }
+          $svc = $strat.agent.service_name
+          Write-Host "Resolved service: $svc"
+          echo "service_name=$svc" >> $env:GITHUB_OUTPUT
+
+      - name: Stop agent service
+        shell: powershell
+        run: |
+          $svc = '${{ steps.resolve.outputs.service_name }}'
+          $nssm = Get-Command nssm -ErrorAction SilentlyContinue
+          if (-not $nssm) {
+            Write-Host "NSSM not installed - nothing to stop"
+            return
+          }
+          if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
+            Write-Host "[$svc] service not installed - skip (run setup-agent.ps1 + 'nssm install' on the VPS first)"
+            return
+          }
+          $status = (& nssm status $svc 2>&1) | Out-String
+          if ($status -match "RUNNING|PAUSED|START_PENDING|STOP_PENDING") {
+            Write-Host "[$svc] stopping (status: $($status.Trim()))"
+            & nssm stop $svc 2>&1 | Write-Host
+            # Poll until SCM reports SERVICE_STOPPED -- matches deploy.yml.
+            for ($i = 0; $i -lt 15; $i++) {
+              Start-Sleep -Seconds 1
+              $post = (& nssm status $svc 2>&1) | Out-String
+              if ($post -match "SERVICE_STOPPED") { break }
+            }
+            Write-Host "[$svc] post-stop status: $($post.Trim())"
+          } else {
+            Write-Host "[$svc] not running - skip (status: $($status.Trim()))"
+          }
+
+      - name: Regenerate .env and refresh venv via setup-agent.ps1
+        shell: powershell
+        env:
+          # Mirror the env block from deploy.yml so setup-agent.ps1 picks up
+          # the latest secret/var values for whichever strategy was chosen.
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          # zone_signal
+          ZONE_SIGNAL_MT5_ACCOUNTS: ${{ secrets.ZONE_SIGNAL_MT5_ACCOUNTS }}
+          ZONE_SIGNAL_REDIS_STREAM: ${{ vars.ZONE_SIGNAL_REDIS_STREAM }}
+          ZONE_SIGNAL_REDIS_GROUP: ${{ vars.ZONE_SIGNAL_REDIS_GROUP }}
+          ZONE_SIGNAL_REDIS_CONSUMER: ${{ vars.ZONE_SIGNAL_REDIS_CONSUMER }}
+          # conde_auto_entry
+          CONDE_AUTO_ENTRY_MT5_ACCOUNTS: ${{ secrets.CONDE_AUTO_ENTRY_MT5_ACCOUNTS }}
+          CONDE_AUTO_ENTRY_MT5_SYMBOLS: ${{ vars.CONDE_AUTO_ENTRY_MT5_SYMBOLS }}
+          CONDE_AUTO_ENTRY_REDIS_STREAM: ${{ vars.CONDE_AUTO_ENTRY_REDIS_STREAM }}
+          CONDE_AUTO_ENTRY_REDIS_GROUP: ${{ vars.CONDE_AUTO_ENTRY_REDIS_GROUP }}
+          CONDE_AUTO_ENTRY_REDIS_CONSUMER: ${{ vars.CONDE_AUTO_ENTRY_REDIS_CONSUMER }}
+          # gvfx_signal
+          GVFX_SIGNAL_MT5_ACCOUNTS: ${{ secrets.GVFX_SIGNAL_MT5_ACCOUNTS }}
+          GVFX_SIGNAL_MT5_SYMBOLS: ${{ vars.GVFX_SIGNAL_MT5_SYMBOLS }}
+          GVFX_SIGNAL_REDIS_STREAM: ${{ vars.GVFX_SIGNAL_REDIS_STREAM }}
+          GVFX_SIGNAL_REDIS_GROUP: ${{ vars.GVFX_SIGNAL_REDIS_GROUP }}
+          GVFX_SIGNAL_REDIS_CONSUMER: ${{ vars.GVFX_SIGNAL_REDIS_CONSUMER }}
+          # telegram_monitor
+          TELEGRAM_MONITOR_TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_MONITOR_BOT_TOKEN }}
+          TELEGRAM_MONITOR_TELEGRAM_ALLOWED_USER_IDS: ${{ vars.TELEGRAM_MONITOR_ALLOWED_USER_IDS }}
+          TELEGRAM_MONITOR_TELEGRAM_ALERT_CHAT_IDS: ${{ vars.TELEGRAM_MONITOR_ALERT_CHAT_IDS }}
+          TELEGRAM_MONITOR_TELEGRAM_SIGNAL_STATS_URL: ${{ vars.TELEGRAM_MONITOR_SIGNAL_STATS_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\scripts\setup-agent.ps1 -Strategies '["${{ inputs.strategy }}"]'
+
+      - name: Start agent service
+        shell: powershell
+        run: |
+          # Same retry logic as deploy.yml's "Start agent services" step --
+          # NSSM AppThrottle + SCM pending states can return SERVICE_PAUSED
+          # on a single start, so we retry up to 3 times.
+          $ErrorActionPreference = 'Continue'
+          $svc = '${{ steps.resolve.outputs.service_name }}'
+          $nssm = Get-Command nssm -ErrorAction SilentlyContinue
+          if (-not $nssm) {
+            Write-Host "NSSM not installed - nothing to start"
+            return
+          }
+          if (-not (Get-Service -Name $svc -ErrorAction SilentlyContinue)) {
+            Write-Host "[$svc] service not installed - skip"
+            return
+          }
+          $status = (& nssm status $svc 2>&1) | Out-String
+          if ($status -match "RUNNING|START_PENDING") {
+            Write-Host "[$svc] already running - done"
+            return
+          }
+          if ($status -match "PAUSED|PAUSE_PENDING|CONTINUE_PENDING") {
+            Write-Host "[$svc] unsticking from $($status.Trim()) via stop"
+            & nssm stop $svc 2>&1 | Write-Host
+            Start-Sleep -Seconds 2
+          }
+          $up = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "[$svc] starting attempt $attempt (was: $($status.Trim()))"
+            & nssm start $svc 2>&1 | Write-Host
+            Start-Sleep -Seconds 3
+            $post = (& nssm status $svc 2>&1) | Out-String
+            if ($post -match "RUNNING|START_PENDING") {
+              Write-Host "[$svc] up (status: $($post.Trim()))"
+              $up = $true
+              break
+            }
+            Write-Host "[$svc] attempt $attempt failed (status: $($post.Trim())) -- unsticking"
+            & nssm stop $svc 2>&1 | Write-Host
+            Start-Sleep -Seconds 3
+            $status = (& nssm status $svc 2>&1) | Out-String
+          }
+          if (-not $up) {
+            throw "[$svc] FAILED to start after 3 attempts"
+          }
+
+      - name: Summary
+        shell: powershell
+        run: |
+          Write-Host "Redeployed agent: ${{ inputs.strategy }} (${{ steps.resolve.outputs.service_name }})"
