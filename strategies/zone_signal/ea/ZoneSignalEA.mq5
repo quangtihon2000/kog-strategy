@@ -23,11 +23,11 @@ input int      InpMaxScalpPerDir   = 10;         // Max scalp positions per dire
 input double   InpScalpSpacingPts  = 500;        // Min spacing between consecutive scalps (points)
 input double   InpRetracePts    = 200;           // Normal entry: max retrace distance from redbox (points)
 input bool     InpEnableMidEntry = true;         // Enable mid-zone entry (optional)
-input double   InpBeProfitPts   = 70;            // Profit locked when moving to BE (points)
+input double   InpBeProfitPts   = 200;           // Profit locked when moving to BE (points)
 input bool     InpEnableTrailing = true;         // Enable trailing stop (non-scalp positions)
-input double   InpTrailStartPts  = 200;          // Profit to activate trailing (points)
-input double   InpTrailDistPts   = 150;          // Trail SL this far behind current price (points)
-input double   InpTrailStepPts   = 20;           // Minimum SL improvement before modify (points)
+input double   InpTrailStartPts  = 500;          // Profit to activate trailing (points)
+input double   InpTrailDistPts   = 300;          // Trail SL this far behind current price (points)
+input double   InpTrailStepPts   = 50;           // Minimum SL improvement before modify (points)
 input long     InpMaxSpreadPts   = 30;           // Max spread (points) to allow entries; 0 disables check
 
 //+------------------------------------------------------------------+
