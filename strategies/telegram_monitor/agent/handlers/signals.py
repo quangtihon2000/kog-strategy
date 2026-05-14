@@ -28,7 +28,7 @@ def _humanize(seconds: float) -> str:
 
 async def send_signals(message: Message, transport: Transport, vps: Vps, svc: Service) -> None:
     if svc.signal_dir is None:
-        await message.reply_text(f"{vps.name}/{svc.name} has no signal directory configured")
+        await message.reply_text(f"{svc.name} has no signal directory configured")
         return
     files = await transport.list_signal_files(svc.signal_dir)
     if not files:
@@ -41,7 +41,7 @@ async def send_signals(message: Message, transport: Transport, vps: Vps, svc: Se
     glyph = "🟢" if age <= threshold_s else "🔴"
     # HTML parse mode: paths/names contain `_` which break legacy Markdown.
     parts = [
-        f"<b>{html.escape(vps.name)}/{html.escape(svc.name)}</b> — "
+        f"<b>{html.escape(svc.name)}</b> — "
         f"<code>{html.escape(svc.signal_dir)}</code>",
         f"{glyph} <b>{html.escape(newest.name)}</b> — "
         f"{_humanize(age)} ago, {newest.size_bytes}B",

@@ -85,7 +85,7 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         await alerts.notify(
             dedup_key=f"heartbeat:{vps.name}:{svc.name}",
             text=(
-                f"💔 *{vps.name}/{svc.name}* — heartbeat missing "
+                f"💔 *{svc.name}* — heartbeat missing "
                 f"(last seen: {age_txt} ago)"
             ),
         )

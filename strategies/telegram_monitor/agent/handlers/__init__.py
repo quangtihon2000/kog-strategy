@@ -44,7 +44,7 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     transports: dict[str, Transport] = context.application.bot_data["transports"]
     found = settings.fleet.find_service(svc_name)
     if not found or found[0].name != vps_name:
-        await query.message.reply_text(f"unknown service: {vps_name}/{svc_name}")
+        await query.message.reply_text(f"unknown service: {svc_name}")
         return
     vps, svc = found
     transport = transports[vps.name]
@@ -52,17 +52,17 @@ async def _on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if action == "logs":
         if svc.mt5_logs and len(svc.mt5_logs) > 1:
             await query.message.reply_text(
-                f"{vps.name}/{svc.name} runs on multiple accounts — pick one:",
+                f"{svc.name} runs on multiple accounts — pick one:",
                 reply_markup=account_keyboard(vps.name, svc.name, svc.mt5_logs),
             )
         else:
             await query.message.reply_text(
-                f"{vps.name}/{svc.name} — how many lines?",
+                f"{svc.name} — how many lines?",
                 reply_markup=lines_keyboard(vps.name, svc.name, None),
             )
     elif action == "logs_acct":
         await query.message.reply_text(
-            f"{vps.name}/{svc.name} acct {mt5_account} — how many lines?",
+            f"{svc.name} acct {mt5_account} — how many lines?",
             reply_markup=lines_keyboard(vps.name, svc.name, mt5_account),
         )
     elif action == "logs_n":

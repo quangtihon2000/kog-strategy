@@ -88,7 +88,7 @@ async def send_logs(
     """
     if svc.mt5_logs and mt5_account is None and len(svc.mt5_logs) > 1:
         await message.reply_text(
-            f"{vps.name}/{svc.name} runs on multiple accounts — pick one:",
+            f"{svc.name} runs on multiple accounts — pick one:",
             reply_markup=account_keyboard(vps.name, svc.name, svc.mt5_logs),
         )
         return
@@ -103,14 +103,14 @@ async def send_logs(
         else:
             target = svc.mt5_logs[0]
 
-    py_label = f"{vps.name}/{svc.name} agent"
+    py_label = f"{svc.name} agent"
     py_block = await _render_log_block(transport, py_label, svc.log_dir, n)
 
     if target is None:
         await message.reply_html(py_block)
         return
 
-    mt5_label = f"{vps.name}/{svc.name} MT5 acct {target.account}"
+    mt5_label = f"{svc.name} MT5 acct {target.account}"
     mt5_block = await _render_log_block(transport, mt5_label, target.log_dir, n)
     # Two messages — each <pre> is independently size-bounded by TAIL_CHUNK_CHARS.
     await message.reply_html(py_block)
@@ -147,7 +147,7 @@ async def start_tail(message: Message, application: Application, transport: Tran
     )
     await message.reply_html(
         f"streaming <code>{html.escape(active.name)}</code> "
-        f"({html.escape(vps.name)}/{html.escape(svc.name)}) — /tailstop to end"
+        f"({html.escape(svc.name)}) — /tailstop to end"
     )
 
 
