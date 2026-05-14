@@ -70,6 +70,24 @@ _redis_client: redis.Redis | None = None
 _OWNED_BY_LIFECYCLE = frozenset({"conde_auto_entry"})
 
 
+def _account_from_fname(fname: str) -> str:
+    stem = fname[:-5] if fname.endswith(".json") else fname
+    return stem.split("_", 1)[0] if "_" in stem else stem
+
+
+def _compact_header(svc_name: str, fname: str, data: dict) -> str:
+    account = _account_from_fname(fname)
+    if svc_name == "gvfx_signal":
+        direction = str(data.get("direction", "?")).upper()
+        target = data.get("target", "-")
+        return f"gvfx {direction} {target} - {account}"
+    if svc_name == "zone_signal":
+        lower = data.get("redbox_lower", "-")
+        upper = data.get("redbox_upper", "-")
+        return f"zone {lower}—{upper} - {account}"
+    return f"{svc_name} - {account}"
+
+
 async def _client(url: str) -> redis.Redis:
     global _redis_client
     if _redis_client is None:
@@ -182,8 +200,9 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             if prev is None:
                 continue
             body = format_signal(svc.name, data)
+            header = _compact_header(svc.name, f.name, data)
             text = (
-                f"🆕 *{vps.name}/{svc.name}* — new signal `{f.name}`\n"
+                f"{header}\n"
                 f"```\n{body}\n```"
             )
             await alerts.notify(
