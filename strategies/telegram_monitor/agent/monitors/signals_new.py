@@ -51,7 +51,7 @@ async def _alert_bad_signal(
     await alerts.notify(
         dedup_key=f"sig_bad:{vps_name}:{svc_name}:{fname}:{digest}",
         text=(
-            f"⚠️ *{vps_name}/{svc_name}* — bad signal `{fname}`\n"
+            f"⚠️ *{svc_name}* — bad signal `{fname}`\n"
             f"reason: {reason}\n"
             f"```\n{body}\n```"
         ),

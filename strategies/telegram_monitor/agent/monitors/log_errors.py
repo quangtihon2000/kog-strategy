@@ -86,7 +86,7 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             await alerts.notify(
                 dedup_key=f"log_err:{vps.name}:{svc.name}:{_hash(snippet)}",
                 text=(
-                    f"⚠️ *{vps.name}/{svc.name}* — error in `{active.name}`\n"
+                    f"⚠️ *{svc.name}* — error in `{active.name}`\n"
                     f"```\n{snippet}\n```"
                 ),
                 reply_markup=reply_markup,

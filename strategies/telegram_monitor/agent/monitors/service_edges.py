@@ -94,12 +94,12 @@ async def tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         if prev == ServiceState.RUNNING and st.state != ServiceState.RUNNING:
             await alerts.notify(
                 dedup_key=f"svc_down:{vps.name}:{svc.name}",
-                text=f"🔴 *{vps.name}/{svc.name}* — `{prev.value}` → `{st.state.value}`",
+                text=f"🔴 *{svc.name}* — `{prev.value}` → `{st.state.value}`",
             )
         elif st.state == ServiceState.RUNNING and prev != ServiceState.RUNNING:
             await alerts.notify(
                 dedup_key=f"svc_up:{vps.name}:{svc.name}",
-                text=f"🟢 *{vps.name}/{svc.name}* — recovered (`{st.state.value}`)",
+                text=f"🟢 *{svc.name}* — recovered (`{st.state.value}`)",
             )
 
     if dirty and client is not None:

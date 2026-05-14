@@ -81,14 +81,9 @@ async def _status_all(update, settings: Settings, transports: dict[str, Transpor
     results = await asyncio.gather(*(probe(v, s) for v, s in pairs))
 
     lines = ["*Fleet status*"]
-    by_vps: dict[str, list[str]] = {}
-    for vps, svc, st, age in results:
+    for _vps, svc, st, age in results:
         glyph = _STATE_GLYPH.get(st.state, "❓")
-        line = f"{glyph} `{svc.name}` — {st.state.value}{_signal_segment(age, svc)}"
-        by_vps.setdefault(vps.name, []).append(line)
-    for vps_name, items in by_vps.items():
-        lines.append(f"\n_{vps_name}_")
-        lines.extend(items)
+        lines.append(f"{glyph} `{svc.name}` — {st.state.value}{_signal_segment(age, svc)}")
     await update.effective_message.reply_markdown("\n".join(lines))
 
 
@@ -101,7 +96,7 @@ async def _status_one(update, settings: Settings, transports: dict[str, Transpor
     st = await transports[vps.name].get_service_status(svc.nssm_service)
     glyph = _STATE_GLYPH.get(st.state, "❓")
     body = (
-        f"{glyph} *{svc.name}* on _{vps.name}_\n"
+        f"{glyph} *{svc.name}*\n"
         f"state: `{st.state.value}`\n"
         f"nssm: `{svc.nssm_service}`\n\n"
         f"```\n{st.raw[:1500]}\n```"
