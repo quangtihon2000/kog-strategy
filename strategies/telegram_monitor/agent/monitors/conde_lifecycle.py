@@ -239,8 +239,11 @@ async def _alert_bad_signal(
 def _new_signal_text(vps_name: str, svc_name: str, fname: str,
                      data: dict, ts: str, stats_url: str) -> str:
     body = format_signal(svc_name, data)
+    direction = str(data.get("direction", "?")).upper()
+    market_price = data.get("entry_price", "-")
+    account = fname.split("_", 1)[0] if "_" in fname else fname
     text = (
-        f"🆕 *{vps_name}/{svc_name}* — new signal `{fname}`\n"
+        f"conde {direction} {market_price} - {account}\n"
         f"```\n{body}\n```"
     )
     if stats_url:
