@@ -55,17 +55,37 @@ datetime g_eodCutDoneAnchor = 0;  // == g_dailyAnchor while today's EOD cut is i
 GvfxSig  g_currentSig;
 int      g_atrHandle    = INVALID_HANDLE;
 
+// === Shadow globals: init from inputs in OnInit, overlaid by per-account JSON config ===
+ulong             g_cfg_Magic;
+string            g_cfg_SignalSubdir;
+double            g_cfg_LotPerOrder;
+int               g_cfg_MaxPositions;
+int               g_cfg_MaxLossPtsPerOrder;
+int               g_cfg_EodCutLeadMins;
+int               g_cfg_MaxSpreadPts;
+int               g_cfg_HistoryLookbackDays;
+ENUM_TIMEFRAMES   g_cfg_AtrTimeframe;
+int               g_cfg_AtrPeriod;
+double            g_cfg_AtrStepMult;
+double            g_cfg_AtrTpMult;
+int               g_cfg_AtrMinPts;
+int               g_cfg_AtrMaxPts;
+bool              g_cfg_Enabled = true;
+
 //+------------------------------------------------------------------+
 int OnInit() {
-   g_trade.SetExpertMagicNumber(InpMagic);
+   InitShadowsFromInputs();
+   LoadAccountConfig();
+
+   g_trade.SetExpertMagicNumber(g_cfg_Magic);
    ZeroMemory(g_currentSig);
 
-   g_atrHandle = iATR(_Symbol, InpAtrTimeframe, InpAtrPeriod);
+   g_atrHandle = iATR(_Symbol, g_cfg_AtrTimeframe, g_cfg_AtrPeriod);
    if (g_atrHandle == INVALID_HANDLE)
       PrintFormat("[GVFX] iATR(%s, tf=%d, period=%d) failed — fallback to signal step/tp",
-                  _Symbol, (int)InpAtrTimeframe, InpAtrPeriod);
+                  _Symbol, (int)g_cfg_AtrTimeframe, g_cfg_AtrPeriod);
 
-   g_signalFile = InpSignalSubdir + "\\"
+   g_signalFile = g_cfg_SignalSubdir + "\\"
                 + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))
                 + "_" + _Symbol + ".json";
 
@@ -113,7 +133,7 @@ void OnDeinit(const int reason) {
 //| Create GvfxSignalEA\outcomes\ if missing                         |
 //+------------------------------------------------------------------+
 void EnsureOutcomesDir() {
-   string path = InpSignalSubdir + "\\outcomes";
+   string path = g_cfg_SignalSubdir + "\\outcomes";
    if (InpUseCommonDir) {
       if (FolderCreate(path, FILE_COMMON)) return;
    }
@@ -181,8 +201,8 @@ void OnTradeTransaction(
          break;
       }
    }
-   if (in_magic != (long)InpMagic) return;
-   if (signal_ts == 0)             return;
+   if (in_magic != (long)g_cfg_Magic) return;
+   if (signal_ts == 0)                return;
 
    double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
    double profit     = HistoryDealGetDouble(deal_ticket, DEAL_PROFIT);
@@ -211,7 +231,7 @@ void OnTradeTransaction(
    json += "\"account\":"         + IntegerToString(account)            + ",";
    json += "\"symbol\":\""        + _Symbol                             + "\",";
    json += "\"direction\":\""     + direction                           + "\",";
-   json += "\"magic\":"           + IntegerToString((long)InpMagic)     + ",";
+   json += "\"magic\":"           + IntegerToString((long)g_cfg_Magic)  + ",";
    json += "\"volume\":"          + DoubleToString(volume, 2)           + ",";
    json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
    json += "\"exit_price\":"      + DoubleToString(exit_price, digits)  + ",";
@@ -223,7 +243,7 @@ void OnTradeTransaction(
    json += "\"close_reason\":\""  + close_reason                        + "\"";
    json += "}";
 
-   string path  = InpSignalSubdir + "\\outcomes\\" + IntegerToString(position_id) + ".json";
+   string path  = g_cfg_SignalSubdir + "\\outcomes\\" + IntegerToString(position_id) + ".json";
    int    flags = FILE_WRITE | FILE_TXT | FILE_ANSI;
    if (InpUseCommonDir) flags |= FILE_COMMON;
 
@@ -269,10 +289,10 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mo
    }
    double atrPrice = buf[0];
    int    pt       = (_Point > 0) ? (int)MathRound(atrPrice / _Point) : 0;
-   int    stepRaw  = (int)MathRound(pt * InpAtrStepMult);
-   int    tpRaw    = (int)MathRound(pt * InpAtrTpMult);
-   int    lo       = MathMax(1, InpAtrMinPts);
-   int    hi       = MathMax(lo, InpAtrMaxPts);
+   int    stepRaw  = (int)MathRound(pt * g_cfg_AtrStepMult);
+   int    tpRaw    = (int)MathRound(pt * g_cfg_AtrTpMult);
+   int    lo       = MathMax(1, g_cfg_AtrMinPts);
+   int    hi       = MathMax(lo, g_cfg_AtrMaxPts);
    stepPts = MathMax(lo, MathMin(hi, stepRaw));
    tpPts   = MathMax(lo, MathMin(hi, tpRaw));
    mode    = "A";
@@ -309,6 +329,9 @@ void OnTick() {
          return;
       }
    }
+
+   //--- Account disabled via JSON config: skip new entries but track signal ts
+   if (!g_cfg_Enabled) return;
 
    //--- Load current signal
    GvfxSig sig;
@@ -347,7 +370,7 @@ void OnTick() {
    //    ±step radius of the current price (price-based grid spacing, not last-entry).
    if (!g_signalActive) return;
    if (g_eodCutDoneAnchor == g_dailyAnchor && g_eodCutDoneAnchor > 0) return;
-   if (g_openCount >= InpMaxPositions) return;
+   if (g_openCount >= g_cfg_MaxPositions) return;
    if (!IsSpreadOK("Entry")) return;
 
    bool   isBuy      = (g_currentSig.direction == "BUY");
@@ -382,7 +405,7 @@ void OnTick() {
 //| Open one market position with hard SL + TP per signal             |
 //+------------------------------------------------------------------+
 bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, const string mode) {
-   double lot = NormalizeLot(InpLotPerOrder);
+   double lot = NormalizeLot(g_cfg_LotPerOrder);
    if (lot <= 0) {
       Print("[GVFX] lot normalized to 0 — skip");
       return false;
@@ -392,8 +415,8 @@ bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, cons
                         : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    ENUM_POSITION_TYPE dir = isBuy ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
 
-   double slRaw = isBuy ? entry - InpMaxLossPtsPerOrder * _Point
-                        : entry + InpMaxLossPtsPerOrder * _Point;
+   double slRaw = isBuy ? entry - g_cfg_MaxLossPtsPerOrder * _Point
+                        : entry + g_cfg_MaxLossPtsPerOrder * _Point;
    double tpRaw = isBuy ? entry + tpPts * _Point
                         : entry - tpPts * _Point;
 
@@ -420,12 +443,12 @@ bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, cons
 //| Spread gate                                                      |
 //+------------------------------------------------------------------+
 bool IsSpreadOK(const string tag) {
-   if (InpMaxSpreadPts <= 0) return true;
+   if (g_cfg_MaxSpreadPts <= 0) return true;
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   if (spread > InpMaxSpreadPts) {
+   if (spread > g_cfg_MaxSpreadPts) {
       static datetime lastWarn = 0;
       if (TimeCurrent() - lastWarn >= 30) {  // broker-local, throttle only — warn rate-limiter
-         PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
+         PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)g_cfg_MaxSpreadPts);
          lastWarn = TimeCurrent();  // broker-local, throttle only — warn rate-limiter anchor
       }
       return false;
@@ -488,10 +511,10 @@ datetime TodaySessionCloseTime() {
 //| close — open the EOD cut evaluation window.                      |
 //+------------------------------------------------------------------+
 bool IsEodWindow() {
-   if (InpEodCutLeadMins < 0) return false;
+   if (g_cfg_EodCutLeadMins < 0) return false;
    datetime closeAt = TodaySessionCloseTime();
    if (closeAt == 0) return false;
-   datetime triggerAt = closeAt - (datetime)(InpEodCutLeadMins * 60);
+   datetime triggerAt = closeAt - (datetime)(g_cfg_EodCutLeadMins * 60);
    return TimeTradeServer() >= triggerAt;  // server-local — so sánh với triggerAt cũng từ server TZ
 }
 
@@ -499,7 +522,7 @@ bool IsEodWindow() {
 //| Per-instance global var name for EOD-cut anchor persistence      |
 //+------------------------------------------------------------------+
 string EodAnchorVarName() {
-   return "GVFX_EodCut_" + IntegerToString((long)InpMagic) + "_" + _Symbol;
+   return "GVFX_EodCut_" + IntegerToString((long)g_cfg_Magic) + "_" + _Symbol;
 }
 
 //+------------------------------------------------------------------+
@@ -519,7 +542,7 @@ void ArmEodSuppression() {
 //| across restarts even if price has since retreated.               |
 //+------------------------------------------------------------------+
 string ReachedTsVarName() {
-   return "GVFX_Reached_" + IntegerToString((long)InpMagic) + "_" + _Symbol;
+   return "GVFX_Reached_" + IntegerToString((long)g_cfg_Magic) + "_" + _Symbol;
 }
 
 bool SignalAlreadyReached(const ulong ts) {
@@ -544,7 +567,7 @@ double ComputeRealizedSince(const datetime fromTime) {
    for (int i = 0; i < n; i++) {
       ulong d = HistoryDealGetTicket(i);
       if (d == 0) continue;
-      if (HistoryDealGetInteger(d, DEAL_MAGIC)  != (long)InpMagic) continue;
+      if (HistoryDealGetInteger(d, DEAL_MAGIC)  != (long)g_cfg_Magic) continue;
       if (HistoryDealGetString(d, DEAL_SYMBOL)  != _Symbol)        continue;
       total += HistoryDealGetDouble(d, DEAL_PROFIT)
              + HistoryDealGetDouble(d, DEAL_SWAP)
@@ -562,8 +585,8 @@ void RefreshOpenStats(int &openCount, double &floating) {
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
       if (!PositionSelectByTicket(t))                              continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
       openCount++;
       floating += PositionGetDouble(POSITION_PROFIT)
                 + PositionGetDouble(POSITION_SWAP);
@@ -577,9 +600,9 @@ void RefreshOpenStats(int &openCount, double &floating) {
 bool HasOpenWithinStep(const double price, const double stepPrice) {
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
-      if (!PositionSelectByTicket(t))                              continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      if (!PositionSelectByTicket(t))                               continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
       double e = PositionGetDouble(POSITION_PRICE_OPEN);
       if (MathAbs(price - e) < stepPrice) return true;
    }
@@ -592,18 +615,18 @@ bool HasOpenWithinStep(const double price, const double stepPrice) {
 void CloseAllAndCancel() {
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
-      if (!PositionSelectByTicket(t))                              continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      if (!PositionSelectByTicket(t))                               continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
       bool ok = g_trade.PositionClose(t);
       PrintFormat("[GVFX cut] Close #%d  %s", t,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
    for (int i = OrdersTotal() - 1; i >= 0; i--) {
       ulong t = OrderGetTicket(i);
-      if (t == 0)                                                  continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)         continue;
-      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                continue;
+      if (t == 0)                                                   continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)       continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                 continue;
       bool ok = g_trade.OrderDelete(t);
       PrintFormat("[GVFX cut] Cancel pending #%d  %s", t,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
@@ -624,9 +647,9 @@ void PartialEodTrimLosers() {
 
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
-      if (!PositionSelectByTicket(t))                              continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
+      if (!PositionSelectByTicket(t))                               continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
       double pnl = PositionGetDouble(POSITION_PROFIT)
                  + PositionGetDouble(POSITION_SWAP);
       if (pnl >= 0) continue;
@@ -725,30 +748,30 @@ ulong ScanMaxSeenTimestamp() {
 
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong t = PositionGetTicket(i);
-      if (!PositionSelectByTicket(t))                              continue;
-      if (PositionGetString(POSITION_SYMBOL) != _Symbol)           continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)    continue;
+      if (!PositionSelectByTicket(t))                               continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
       ulong ts = ParseTsFromComment(PositionGetString(POSITION_COMMENT));
       if (ts > maxTs) maxTs = ts;
    }
 
    for (int i = OrdersTotal() - 1; i >= 0; i--) {
       ulong t = OrderGetTicket(i);
-      if (t == 0)                                                  continue;
-      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)         continue;
+      if (t == 0)                                                   continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                 continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)       continue;
       ulong ts = ParseTsFromComment(OrderGetString(ORDER_COMMENT));
       if (ts > maxTs) maxTs = ts;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   datetime from = TimeCurrent() - (datetime)(g_cfg_HistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
    if (HistorySelect(from, TimeCurrent() + 60)) {  // broker-local OK — upper bound chỉ cần > now
       int deals = HistoryDealsTotal();
       for (int i = deals - 1; i >= 0; i--) {
          ulong d = HistoryDealGetTicket(i);
          if (d == 0)                                                          continue;
          if (HistoryDealGetString(d, DEAL_SYMBOL)  != _Symbol)                continue;
-         if (HistoryDealGetInteger(d, DEAL_MAGIC)  != (long)InpMagic)         continue;
+         if (HistoryDealGetInteger(d, DEAL_MAGIC)  != (long)g_cfg_Magic)       continue;
          ulong ts = ParseTsFromComment(HistoryDealGetString(d, DEAL_COMMENT));
          if (ts > maxTs) maxTs = ts;
       }
@@ -757,7 +780,7 @@ ulong ScanMaxSeenTimestamp() {
          ulong o = HistoryOrderGetTicket(i);
          if (o == 0)                                                          continue;
          if (HistoryOrderGetString(o, ORDER_SYMBOL)  != _Symbol)              continue;
-         if (HistoryOrderGetInteger(o, ORDER_MAGIC)  != (long)InpMagic)       continue;
+         if (HistoryOrderGetInteger(o, ORDER_MAGIC)  != (long)g_cfg_Magic)     continue;
          ulong ts = ParseTsFromComment(HistoryOrderGetString(o, ORDER_COMMENT));
          if (ts > maxTs) maxTs = ts;
       }
@@ -854,6 +877,85 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    sig.use_atr   = useAtr;
    sig.valid     = true;
    return true;
+}
+
+//+------------------------------------------------------------------+
+//| JSON typed getters (complement the existing JsonGetString)       |
+//+------------------------------------------------------------------+
+bool JsonGetBool(const string json, const string key, bool defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   if (v == "true" || v == "1") return true;
+   if (v == "false" || v == "0") return false;
+   return defval;
+}
+
+double JsonGetDouble(const string json, const string key, double defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToDouble(v);
+}
+
+long JsonGetLong(const string json, const string key, long defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToInteger(v);
+}
+
+//+------------------------------------------------------------------+
+//| Copy every input into its shadow global (called first in OnInit) |
+//+------------------------------------------------------------------+
+void InitShadowsFromInputs() {
+   g_cfg_Magic               = InpMagic;
+   g_cfg_SignalSubdir        = InpSignalSubdir;
+   g_cfg_LotPerOrder         = InpLotPerOrder;
+   g_cfg_MaxPositions        = InpMaxPositions;
+   g_cfg_MaxLossPtsPerOrder  = InpMaxLossPtsPerOrder;
+   g_cfg_EodCutLeadMins      = InpEodCutLeadMins;
+   g_cfg_MaxSpreadPts        = InpMaxSpreadPts;
+   g_cfg_HistoryLookbackDays = InpHistoryLookbackDays;
+   g_cfg_AtrTimeframe        = InpAtrTimeframe;
+   g_cfg_AtrPeriod           = InpAtrPeriod;
+   g_cfg_AtrStepMult         = InpAtrStepMult;
+   g_cfg_AtrTpMult           = InpAtrTpMult;
+   g_cfg_AtrMinPts           = InpAtrMinPts;
+   g_cfg_AtrMaxPts           = InpAtrMaxPts;
+   g_cfg_Enabled             = true;
+}
+
+//+------------------------------------------------------------------+
+//| Load per-account JSON overlay from GvfxSignalEA\config\<acc>.json|
+//| Falls back silently to defaults (shadow already init'd from Inp*)|
+//+------------------------------------------------------------------+
+void LoadAccountConfig() {
+   long   account = AccountInfoInteger(ACCOUNT_LOGIN);
+   string path    = "GvfxSignalEA\\config\\" + IntegerToString(account) + ".json";
+   string json    = ReadFileToString(path);
+   if (json == "") {
+      PrintFormat("[Config] No override at %s — defaults", path);
+      return;
+   }
+
+   g_cfg_Enabled             = JsonGetBool  (json, "enabled",                true);
+   g_cfg_Magic               = (ulong)JsonGetLong  (json, "InpMagic",               (long)g_cfg_Magic);
+   string _subdir = JsonGetString(json, "InpSignalSubdir");
+   if (_subdir != "") g_cfg_SignalSubdir = _subdir;   // keep existing shadow if key absent
+   g_cfg_LotPerOrder         = JsonGetDouble(json, "InpLotPerOrder",         g_cfg_LotPerOrder);
+   g_cfg_MaxPositions        = (int)JsonGetLong  (json, "InpMaxPositions",        (long)g_cfg_MaxPositions);
+   g_cfg_MaxLossPtsPerOrder  = (int)JsonGetLong  (json, "InpMaxLossPtsPerOrder",  (long)g_cfg_MaxLossPtsPerOrder);
+   g_cfg_EodCutLeadMins      = (int)JsonGetLong  (json, "InpEodCutLeadMins",      (long)g_cfg_EodCutLeadMins);
+   g_cfg_MaxSpreadPts        = (int)JsonGetLong  (json, "InpMaxSpreadPts",        (long)g_cfg_MaxSpreadPts);
+   g_cfg_HistoryLookbackDays = (int)JsonGetLong  (json, "InpHistoryLookbackDays", (long)g_cfg_HistoryLookbackDays);
+   // InpAtrTimeframe intentionally skipped — enum cast from arbitrary int is unsafe
+   g_cfg_AtrPeriod           = (int)JsonGetLong  (json, "InpAtrPeriod",           (long)g_cfg_AtrPeriod);
+   g_cfg_AtrStepMult         = JsonGetDouble(json, "InpAtrStepMult",         g_cfg_AtrStepMult);
+   g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
+   g_cfg_AtrMinPts           = (int)JsonGetLong  (json, "InpAtrMinPts",           (long)g_cfg_AtrMinPts);
+   g_cfg_AtrMaxPts           = (int)JsonGetLong  (json, "InpAtrMaxPts",           (long)g_cfg_AtrMaxPts);
+
+   PrintFormat("[Config] Loaded acc=%I64d enabled=%s magic=%I64u lot=%.2f maxpos=%d",
+               account, g_cfg_Enabled ? "true" : "false",
+               g_cfg_Magic, g_cfg_LotPerOrder, g_cfg_MaxPositions);
 }
 
 //+------------------------------------------------------------------+

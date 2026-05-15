@@ -1,20 +1,23 @@
-﻿<#
+<#
 .SYNOPSIS
     Setup Python agents - venv, pip install, and register as Windows service.
 .DESCRIPTION
     For each strategy with an agent, creates a Python venv, installs deps,
     writes .env, and prints an install hint if the NSSM service is missing.
     Service start/stop is owned by the workflow's Stop/Start steps that
-    bracket this script — this script does NOT touch service state.
+    bracket this script - this script does NOT touch service state.
 .PARAMETER Strategies
     JSON array of strategy names. e.g. '["zone_signal","conde_auto_entry"]'
 #>
 param(
     [Parameter(Mandatory)]
-    [string]$Strategies
+    [string]$Strategies,
+
+    [string]$Vps = $env:GH_RUNNER_VPS
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\_lib.ps1"
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $Config = Get-Content "$RepoRoot\deploy.json" -Raw | ConvertFrom-Json
 
@@ -25,6 +28,24 @@ foreach ($name in $strategyList) {
     if (-not $strat -or -not $strat.agent -or -not $strat.agent.enabled) {
         Write-Host "[$name] No agent configured - skipping"
         continue
+    }
+
+    # VPS filter: skip strategies whose deploy_to terminals all belong to other VPS.
+    # Exception: if deploy_to is empty (e.g. telegram_monitor on Linux), treat as
+    # "deploys everywhere" and do not filter -- preserves existing behavior.
+    if ($Vps -and $strat.deploy_to -and @($strat.deploy_to).Count -gt 0) {
+        $localTerminals = Get-LocalTerminals -Deploy $Config -Vps $Vps
+        $hasLocal = $false
+        foreach ($termName in @($strat.deploy_to)) {
+            if ($localTerminals.ContainsKey($termName)) {
+                $hasLocal = $true
+                break
+            }
+        }
+        if (-not $hasLocal) {
+            Write-Host "[$name] No terminals on VPS=$Vps - skipping agent setup"
+            continue
+        }
     }
 
     $agentDir = Join-Path $RepoRoot $strat.agent.agent_dir
@@ -53,8 +74,30 @@ foreach ($name in $strategyList) {
         return $val
     }
 
+    # Derive MT5_ACCOUNTS from deploy.json terminals[strategy.deploy_to[]].accounts
+    # when not set via env. Single source of truth - env override still wins.
+    function Resolve-AccountsFromDeploy($Config, $stratName) {
+        $strat = $Config.strategies.$stratName
+        if (-not $strat -or -not $strat.deploy_to) { return $null }
+        $accts = New-Object System.Collections.Generic.List[string]
+        foreach ($termName in $strat.deploy_to) {
+            $term = $Config.terminals.$termName
+            if ($term -and $term.accounts) {
+                foreach ($a in $term.accounts) { [void]$accts.Add("$a") }
+            }
+        }
+        if ($accts.Count -eq 0) { return $null }
+        return ($accts -join ',')
+    }
+
     foreach ($key in $required) {
         $val = Resolve-EnvValue $prefix $key
+        if ([string]::IsNullOrEmpty($val) -and $key -eq 'MT5_ACCOUNTS') {
+            $val = Resolve-AccountsFromDeploy $Config $name
+            if (-not [string]::IsNullOrEmpty($val)) {
+                Write-Host "[$name] MT5_ACCOUNTS resolved from deploy.json: $val"
+            }
+        }
         if ([string]::IsNullOrEmpty($val)) {
             $missing += $key
         } else {
@@ -70,6 +113,9 @@ foreach ($name in $strategyList) {
 
     foreach ($key in $optional) {
         $val = Resolve-EnvValue $prefix $key
+        if ([string]::IsNullOrEmpty($val) -and $key -eq 'MT5_ACCOUNTS') {
+            $val = Resolve-AccountsFromDeploy $Config $name
+        }
         if (-not [string]::IsNullOrEmpty($val)) {
             $envLines += "$key=$val"
         }
