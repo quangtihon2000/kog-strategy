@@ -12,6 +12,7 @@ historic stats stay correlatable.
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -256,3 +257,118 @@ async def aggregate_since(session: AsyncSession, since_epoch: int) -> dict[int |
     signals = await fetch_signals(session, since_epoch)
     outcomes = await fetch_outcomes(session, since_epoch)
     return aggregate(signals, outcomes)
+
+
+# ---------------------------------------------------------------------------
+# Per-account aggregation (cho dashboard per-account Conde)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CondeAccountChannelBucket:
+    channel_id: int | None
+    channel_name: str
+    n_signals: int = 0
+    n_positions: int = 0
+    total_pnl: float = 0.0
+    kinds: Counter = field(default_factory=Counter)  # WIN_CLEAN/WIN_TRAIL/WIN_MIXED/SAVED/LOSS/MANUAL/NO_EXEC
+
+
+@dataclass
+class CondeAccountSummary:
+    account: int
+    n_signals: int = 0
+    n_positions: int = 0
+    total_pnl: float = 0.0
+    buckets: dict[int | None, CondeAccountChannelBucket] = field(default_factory=dict)  # keyed by channel_id
+
+
+async def aggregate_by_account(
+    session: AsyncSession,
+    since_epoch: int,
+    account: int | None = None,
+) -> dict[int, CondeAccountSummary]:
+    """Aggregate conde outcomes by account (top-level) → channel (drilldown).
+
+    - account=None: tất cả accounts (dùng cho overview card "Top accounts").
+    - account=N: single account (detail page).
+
+    Sử dụng signal_ts >= since_epoch để match với cách aggregate_since hoạt động.
+    Outcomes không có account (NULL) bị bỏ qua.
+    """
+    # Fetch outcomes trong window, optional filter by account
+    out_stmt = select(CondeOutcome).where(CondeOutcome.signal_ts >= since_epoch)
+    if account is not None:
+        out_stmt = out_stmt.where(CondeOutcome.account == account)
+    out_rows: list[CondeOutcome] = (await session.execute(out_stmt)).scalars().all()
+
+    if not out_rows:
+        return {}
+
+    # Group outcomes by signal_ts để classify_signal hoạt động đúng
+    out_by_sig: dict[int, list[CondeOutcome]] = {}
+    for o in out_rows:
+        if o.signal_ts is not None:
+            out_by_sig.setdefault(o.signal_ts, []).append(o)
+
+    # Fetch signals tương ứng để lấy channel_id, channel_name, entry/sl cho classify_outcome
+    ts_set = set(out_by_sig.keys())
+    sig_by_ts: dict[int, CondeSignal] = {}
+    if ts_set:
+        sig_rows: list[CondeSignal] = (
+            await session.execute(select(CondeSignal).where(CondeSignal.signal_ts.in_(ts_set)))
+        ).scalars().all()
+        sig_by_ts = {s.signal_ts: s for s in sig_rows}
+
+    result: dict[int, CondeAccountSummary] = {}
+
+    # Iterate outcomes grouped per (account, signal_ts) để classify_signal đúng
+    # Key: (account, signal_ts) → list[CondeOutcome]
+    by_acct_sig: dict[tuple[int, int], list[CondeOutcome]] = {}
+    for o in out_rows:
+        if o.account is None or o.signal_ts is None:
+            continue
+        by_acct_sig.setdefault((o.account, o.signal_ts), []).append(o)
+
+    for (acct, sig_ts), positions in by_acct_sig.items():
+        summary = result.setdefault(acct, CondeAccountSummary(account=acct))
+        sig = sig_by_ts.get(sig_ts)
+
+        ch_id = sig.channel_id if sig else None
+        ch_name = (sig.channel_name or f"channel:{ch_id}") if sig else "(unknown)"
+
+        bucket = summary.buckets.setdefault(
+            ch_id,
+            CondeAccountChannelBucket(channel_id=ch_id, channel_name=ch_name),
+        )
+
+        # Classify từng outcome rồi aggregate classify_signal per-signal-per-account
+        sig_dict: dict | None = None
+        if sig is not None:
+            sig_dict = {
+                "entry_price": sig.entry_price,
+                "sl": sig.sl,
+            }
+        outcome_dicts = [
+            {
+                "close_reason": o.close_reason,
+                "direction": o.direction,
+                "exit_price": o.exit_price,
+            }
+            for o in positions
+        ]
+        kinds_list = [classify_outcome(od, sig_dict) for od in outcome_dicts]
+        signal_class = classify_signal(kinds_list)
+
+        bucket.n_signals += 1
+        bucket.n_positions += len(positions)
+        bucket.kinds[signal_class] += 1
+
+        pnl = sum(o.profit + (o.swap or 0.0) + (o.commission or 0.0) for o in positions)
+        bucket.total_pnl += pnl
+
+        summary.n_signals += 1
+        summary.n_positions += len(positions)
+        summary.total_pnl += pnl
+
+    return result
