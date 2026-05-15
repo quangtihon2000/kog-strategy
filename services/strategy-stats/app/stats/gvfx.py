@@ -182,17 +182,6 @@ async def aggregate_by_account(
     if not out_rows:
         return {}
 
-    # Fetch signals để đếm n_signals per (account, signal_ts, symbol)
-    ts_set = {o.signal_ts for o in out_rows if o.signal_ts is not None}
-    sig_by_key: dict[tuple[int, str], GvfxSignal] = {}
-    if ts_set:
-        sig_rows: list[GvfxSignal] = (
-            await session.execute(
-                select(GvfxSignal).where(GvfxSignal.signal_ts.in_(ts_set))
-            )
-        ).scalars().all()
-        sig_by_key = {(s.signal_ts, s.symbol): s for s in sig_rows}
-
     result: dict[int, GvfxAccountSummary] = {}
 
     # Group by (account, signal_ts, symbol) để đếm signal một lần per (account, signal)
