@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "label": "GvfxSignal — mt5_2 (demo 25318677)",
+  "owner": "quang",
+
+  "InpMagic": 770001,
+  "InpSignalSubdir": "GvfxSignalEA",
+  "InpLotPerOrder": 0.01,
+  "InpMaxPositions": 20,
+  "InpMaxLossPtsPerOrder": 10000,
+  "InpEodCutLeadMins": 5,
+  "InpMaxSpreadPts": 30,
+  "InpHistoryLookbackDays": 7,
+
+  "InpAtrPeriod": 14,
+  "InpAtrStepMult": 1.0,
+  "InpAtrTpMult": 0.95,
+  "InpAtrMinPts": 500,
+  "InpAtrMaxPts": 5000
+}
