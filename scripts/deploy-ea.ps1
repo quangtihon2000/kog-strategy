@@ -6,10 +6,13 @@
 # Param Strategies: JSON array of strategy names. Example: ["zone_signal","gvfx_signal"]
 param(
     [Parameter(Mandatory)]
-    [string]$Strategies
+    [string]$Strategies,
+
+    [string]$Vps = $env:GH_RUNNER_VPS
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\_lib.ps1"
 $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $Config = Get-Content "$RepoRoot\deploy.json" -Raw | ConvertFrom-Json
 
@@ -41,6 +44,14 @@ foreach ($name in $strategyList) {
         $terminal = $Config.terminals.$termName
         if (-not $terminal) {
             Write-Warning "[$name] Terminal '$termName' not found in config - skipping"
+            continue
+        }
+
+        # VPS filter: skip terminals that belong to a different VPS.
+        # When $Vps is empty (manual run), process all terminals.
+        $termVps = if ($terminal.vps) { $terminal.vps } else { 'vps-sg' }
+        if ($Vps -and $termVps -ne $Vps) {
+            Write-Host "[$name/$termName] Skipped - belongs to $termVps, current VPS=$Vps"
             continue
         }
 

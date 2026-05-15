@@ -40,15 +40,18 @@ kog_strategy/
 │   ├── zone_signal/                 # Zone breakout M15
 │   │   ├── ea/ZoneSignalEA.mq5
 │   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   ├── config/accounts/         # Per-account JSON overrides (<acc>.json)
 │   │   ├── data/                    # Runtime: agent writes, EA reads
 │   │   └── EA_LOGIC.md
 │   ├── conde_auto_entry/            # JSON signal auto entry
 │   │   ├── ea/CondeAutoEntryEA.mq5
 │   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   ├── config/accounts/         # Per-account JSON overrides
 │   │   └── data/
 │   ├── gvfx_signal/                 # Grid DCA from target-price signal
 │   │   ├── ea/GvfxSignalEA.mq5
 │   │   ├── agent/                   # Python: Redis → JSON signal writer
+│   │   ├── config/accounts/         # Per-account JSON overrides
 │   │   └── data/
 │   └── telegram_monitor/            # Read-only Telegram fleet monitor
 │       └── agent/
@@ -56,11 +59,14 @@ kog_strategy/
 │   └── agent_lib/
 │       └── redis_consumer.py        # Common Redis Stream consumer
 ├── scripts/                         # CI/CD PowerShell scripts (VPS)
-│   ├── deploy-ea.ps1                # Copy .mq5 + compile in-place at each terminal
-│   ├── setup-agent.ps1              # venv + pip + service restart
+│   ├── _lib.ps1                     # Helpers (Get-LocalTerminals by VPS)
+│   ├── deploy-ea.ps1                # Copy .mq5 + compile in-place (VPS-filtered)
+│   ├── setup-agent.ps1              # venv + pip + service restart (VPS-filtered)
+│   ├── deploy-account-configs.ps1   # Sync per-account JSON to MT5 Files
+│   ├── validate-account-configs.ps1 # CI pre-check (Rule 1 uniqueness + Rule 2 eligibility)
 │   └── link_ea.ps1                  # Legacy symlink helper
-├── .github/workflows/deploy.yml     # CI/CD pipeline
-├── deploy.json                      # EA → MT5 instance mapping
+├── .github/workflows/deploy.yml     # CI/CD pipeline (multi-VPS matrix)
+├── deploy.json                      # Terminal → VPS/accounts mapping; strategy deploy_to
 └── README.md
 ```
 
@@ -87,12 +93,21 @@ kog_strategy/
 
 ### Configuration
 
-Edit `deploy.json` to map strategies to MT5 terminals:
+Edit `deploy.json` to map strategies to MT5 terminals. Each terminal declares
+the **VPS** it lives on and the **accounts** that log into it; each strategy
+lists the terminals it deploys to:
 
 ```json
 {
   "terminals": {
-    "terminal_1": { "hash": "YOUR_MT5_DATA_HASH", "label": "Main Account" }
+    "terminal_1": {
+      "vps": "vps-sg",
+      "hash": "YOUR_MT5_DATA_HASH",
+      "label": "Main Account",
+      "mt5_install_dir": "C:\\Program Files\\MetaTrader 5",
+      "user_profile": "QuangXAU",
+      "accounts": [25312392]
+    }
   },
   "strategies": {
     "zone_signal": {
@@ -103,15 +118,32 @@ Edit `deploy.json` to map strategies to MT5 terminals:
 }
 ```
 
+- `vps` — GitHub Actions runner label (e.g. `vps-sg`). The CI matrix dispatches
+  per-VPS jobs and each runner only touches its own terminals.
+- `accounts` — every account ID must appear in **exactly one** terminal across
+  the whole file. This is enforced by `validate-account-configs.ps1` (Rule 1)
+  in the `validate-configs` job (runs on `ubuntu-latest` before any VPS job).
+- Per-account input overrides live at
+  `strategies/<strat>/config/accounts/<account>.json`. The same validator
+  (Rule 2) ensures each `<account>` is eligible for that strategy via
+  `strategies.<strat>.deploy_to → terminals[*].accounts`.
+
 ### Manual deploy
 
 ```powershell
-# Deploy + compile in-place at each terminal
-.\scripts\deploy-ea.ps1 -Strategies '["zone_signal","gvfx_signal"]'
+# Deploy + compile in-place at each terminal on this VPS
+.\scripts\deploy-ea.ps1 -Strategies '["zone_signal","gvfx_signal"]' -Vps 'vps-sg'
 
-# Setup agents
-.\scripts\setup-agent.ps1 -Strategies '["zone_signal"]'
+# Setup agents on this VPS
+.\scripts\setup-agent.ps1 -Strategies '["zone_signal"]' -Vps 'vps-sg'
+
+# Sync per-account JSON overrides into each terminal's MQL5/Files/<EAName>/config/
+.\scripts\deploy-account-configs.ps1 -Strategies '["zone_signal"]' -Vps 'vps-sg'
 ```
+
+`-Vps` defaults to the `GH_RUNNER_VPS` environment variable when omitted, so on
+a runner machine you can drop the flag. Terminals whose `vps` field doesn't
+match are skipped silently.
 
 ### VPS Setup (one-time)
 

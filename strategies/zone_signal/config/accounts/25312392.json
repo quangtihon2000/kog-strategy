@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "label": "ZoneSignal — mt5_8 (QuangXAU)",
+  "owner": "quang",
+
+  "InpLotPerTarget": 0.02,
+  "InpMaxLots": 0.10,
+  "InpMaxPositions": 10,
+  "InpMinTpPts": 300,
+  "InpSlBufferPts": 200,
+  "InpMagic": 20240416,
+
+  "InpScalpTpPts": 400,
+  "InpScalpBufPts": 500,
+  "InpMaxScalpPerDir": 10,
+  "InpScalpSpacingPts": 500,
+  "InpRetracePts": 200,
+
+  "InpEnableMidEntry": true,
+  "InpBeProfitPts": 70,
+
+  "InpEnableTrailing": true,
+  "InpTrailStartPts": 200,
+  "InpTrailDistPts": 150,
+  "InpTrailStepPts": 20,
+
+  "InpMaxSpreadPts": 30
+}
