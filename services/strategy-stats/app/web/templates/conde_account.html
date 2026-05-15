@@ -1,60 +1,28 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m with context %}
-{% block title %}Conde — Signals{% endblock %}
+{% block title %}Conde — Account {{ account }}{% endblock %}
 {% block content %}
 <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <div>
-    <div class="text-xs uppercase tracking-wide text-slate-500">Conde</div>
-    <h1 class="text-xl font-semibold">Signals · per signal_ts</h1>
+    <div class="text-xs uppercase tracking-wide text-slate-500">Conde account</div>
+    <h1 class="text-xl font-semibold">#{{ account }}</h1>
     {{ m.signal_count(signals) }}
-    {{ m.profit_summary(signals) }}
   </div>
   <div class="flex flex-wrap items-center gap-3">
     {% if signal_ts_filter is not none %}
     <div class="flex items-center gap-2">
       <span class="px-2 py-1 rounded text-xs bg-slate-100 text-slate-500">viewing single signal</span>
       <a class="text-xs text-amber-700 hover:underline"
-         href="/conde/?since={{ since }}{% if executed_only %}&executed=1{% endif %}">clear filter</a>
+         href="/conde/account/{{ account }}?since={{ since }}{% if executed_only %}&executed=1{% endif %}">clear filter</a>
     </div>
     <div class="opacity-40 pointer-events-none">
-      {{ m.since_selector("/conde/", since, executed_only) }}
+      {{ m.since_selector("/conde/account/" ~ account, since, executed_only) }}
     </div>
     {% else %}
-    {{ m.since_selector("/conde/", since, executed_only) }}
+    {{ m.since_selector("/conde/account/" ~ account, since, executed_only) }}
     {% endif %}
   </div>
 </section>
-
-{% if top_accounts %}
-<div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden mb-4">
-  <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm font-semibold text-slate-700">Top accounts</div>
-  <div class="overflow-x-auto">
-  <table class="min-w-full text-xs">
-    <thead class="bg-white text-slate-500 uppercase tracking-wide">
-      <tr>
-        <th class="px-3 py-2 text-left">Account</th>
-        <th class="px-3 py-2 text-right">Signals</th>
-        <th class="px-3 py-2 text-right">Positions</th>
-        <th class="px-3 py-2 text-right">P&amp;L</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-slate-100">
-      {% for row in top_accounts %}
-      <tr class="hover:bg-slate-50">
-        <td class="px-3 py-1.5">
-          <a class="text-amber-700 hover:underline font-mono"
-             href="/conde/account/{{ row.account }}?since={{ since }}">{{ row.account }}</a>
-        </td>
-        <td class="px-3 py-1.5 text-right">{{ row.n_signals }}</td>
-        <td class="px-3 py-1.5 text-right">{{ row.n_positions }}</td>
-        <td class="px-3 py-1.5 text-right">{{ m.money(row.total_pnl) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-</div>
-{% endif %}
 
 <div id="data" class="space-y-4">
   {% if signal_ts_filter is not none and not signals %}
@@ -65,21 +33,28 @@
   {% for s in signals %}
   <div class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
     <div class="flex flex-wrap items-center gap-4 px-4 py-3 bg-slate-50 border-b border-slate-200 text-sm">
-      <span class="text-slate-400 text-xs">#{{ s.signal_ts }}</span>
+      <span class="text-slate-400 text-xs">#{{ s.signal_ts if s.signal_ts is not none else "—" }}</span>
       <span class="text-slate-500 text-xs">{{ s.signal_ts | fmt_ts }}</span>
       {% if s.channel_id is not none %}
       <a class="font-medium text-amber-700 hover:underline"
          href="/conde/channel/{{ s.channel_id }}?since={{ since }}">{{ s.channel_name }}</a>
-      {% else %}
+      {% elif s.channel_name is not none %}
       <span class="font-medium text-slate-400">{{ s.channel_name }}</span>
       {% endif %}
       <span class="font-medium">{{ s.symbol }}</span>
+      {% if s.direction is not none %}
       <span class="px-2 py-0.5 rounded text-xs font-semibold
         {% if s.direction == 'BUY' %}bg-emerald-100 text-emerald-700{% else %}bg-rose-100 text-rose-700{% endif %}">
         {{ s.direction }}
       </span>
+      {% endif %}
+      {% if s.entry_price is not none %}
       <span class="text-slate-600">entry <span class="font-mono">{{ "%.2f"|format(s.entry_price) }}</span></span>
+      {% endif %}
+      {% if s.sl is not none %}
       <span class="text-slate-600">SL <span class="font-mono">{{ "%.2f"|format(s.sl) }}</span></span>
+      {% endif %}
+      {% if s.tps %}
       <span class="text-slate-600">TPs
         <span class="font-mono">
           {%- for tp in s.tps -%}
@@ -87,6 +62,7 @@
           {%- endfor -%}
         </span>
       </span>
+      {% endif %}
       <span class="ml-auto text-slate-600">{{ s.n_positions }} positions</span>
       <span class="font-medium">{{ m.money(s.pnl) }}</span>
     </div>
@@ -95,7 +71,6 @@
     <table class="min-w-full text-xs">
       <thead class="bg-white text-slate-500 uppercase tracking-wide">
         <tr>
-          <th class="px-3 py-2 text-left">Account</th>
           <th class="px-3 py-2 text-left">Position</th>
           <th class="px-3 py-2 text-right">Vol</th>
           <th class="px-3 py-2 text-right">Entry</th>
@@ -108,7 +83,6 @@
       <tbody class="divide-y divide-slate-100">
         {% for o in s.outcomes %}
         <tr class="hover:bg-slate-50">
-          <td class="px-3 py-1.5">{{ o.account }}</td>
           <td class="px-3 py-1.5 font-mono">{{ o.position_id }}</td>
           <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.volume) }}</td>
           <td class="px-3 py-1.5 text-right font-mono">{{ "%.2f"|format(o.entry_price) }}</td>

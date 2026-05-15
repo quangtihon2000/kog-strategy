@@ -136,3 +136,95 @@ async def aggregate_since(
     signals = await fetch_signals(session, since_epoch)
     outcomes = await fetch_outcomes(session, since_epoch)
     return aggregate(signals, outcomes)
+
+
+# ---------------------------------------------------------------------------
+# Per-account aggregation (cho dashboard per-account GVFX)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class GvfxAccountSymbolBucket:
+    symbol: str
+    mode_tag: str | None
+    n_signals: int = 0
+    n_positions: int = 0
+    total_pnl: float = 0.0
+    close_reasons: Counter = field(default_factory=Counter)
+
+
+@dataclass
+class GvfxAccountSummary:
+    account: int
+    n_signals: int = 0
+    n_positions: int = 0
+    total_pnl: float = 0.0
+    buckets: dict[tuple[str, str | None], GvfxAccountSymbolBucket] = field(default_factory=dict)
+
+
+async def aggregate_by_account(
+    session: AsyncSession,
+    since_epoch: int,
+    account: int | None = None,
+) -> dict[int, GvfxAccountSummary]:
+    """Aggregate GVFX outcomes by account (top-level) → (symbol, mode_tag) (drilldown).
+
+    - account=None: tất cả accounts (dùng cho overview card "Top accounts").
+    - account=N: single account (detail page).
+
+    Outcomes không có account (NULL) bị bỏ qua.
+    """
+    out_stmt = select(GvfxOutcome).where(GvfxOutcome.signal_ts >= since_epoch)
+    if account is not None:
+        out_stmt = out_stmt.where(GvfxOutcome.account == account)
+    out_rows: list[GvfxOutcome] = (await session.execute(out_stmt)).scalars().all()
+
+    if not out_rows:
+        return {}
+
+    # Fetch signals để đếm n_signals per (account, signal_ts, symbol)
+    ts_set = {o.signal_ts for o in out_rows if o.signal_ts is not None}
+    sig_by_key: dict[tuple[int, str], GvfxSignal] = {}
+    if ts_set:
+        sig_rows: list[GvfxSignal] = (
+            await session.execute(
+                select(GvfxSignal).where(GvfxSignal.signal_ts.in_(ts_set))
+            )
+        ).scalars().all()
+        sig_by_key = {(s.signal_ts, s.symbol): s for s in sig_rows}
+
+    result: dict[int, GvfxAccountSummary] = {}
+
+    # Group by (account, signal_ts, symbol) để đếm signal một lần per (account, signal)
+    by_acct_sig: dict[tuple[int, int, str], list[GvfxOutcome]] = {}
+    for o in out_rows:
+        if o.account is None or o.signal_ts is None:
+            continue
+        by_acct_sig.setdefault((o.account, o.signal_ts, o.symbol), []).append(o)
+
+    for (acct, sig_ts, sym), positions in by_acct_sig.items():
+        summary = result.setdefault(acct, GvfxAccountSummary(account=acct))
+        summary.n_signals += 1
+
+        pnl = sum(p.profit + (p.swap or 0.0) + (p.commission or 0.0) for p in positions)
+        summary.n_positions += len(positions)
+        summary.total_pnl += pnl
+
+        # Group positions by mode_tag để drilldown bucket
+        by_tag: dict[str | None, list[GvfxOutcome]] = {}
+        for p in positions:
+            by_tag.setdefault(p.mode_tag, []).append(p)
+
+        for tag, tag_positions in by_tag.items():
+            bucket = summary.buckets.setdefault(
+                (sym, tag),
+                GvfxAccountSymbolBucket(symbol=sym, mode_tag=tag),
+            )
+            bucket.n_signals += 1
+            bucket.n_positions += len(tag_positions)
+            tag_pnl = sum(p.profit + (p.swap or 0.0) + (p.commission or 0.0) for p in tag_positions)
+            bucket.total_pnl += tag_pnl
+            for p in tag_positions:
+                bucket.close_reasons[(p.close_reason or "?").upper()] += 1
+
+    return result
