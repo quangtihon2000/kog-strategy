@@ -30,6 +30,27 @@ input double   InpTrailDistPts   = 300;          // Trail SL this far behind cur
 input double   InpTrailStepPts   = 50;           // Minimum SL improvement before modify (points)
 input long     InpMaxSpreadPts   = 30;           // Max spread (points) to allow entries; 0 disables check
 
+//--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
+double  g_cfg_LotPerTarget;
+double  g_cfg_MaxLots;
+int     g_cfg_MaxPositions;
+double  g_cfg_MinTpPts;
+double  g_cfg_SlBufferPts;
+ulong   g_cfg_Magic;
+double  g_cfg_ScalpTpPts;
+double  g_cfg_ScalpBufPts;
+int     g_cfg_MaxScalpPerDir;
+double  g_cfg_ScalpSpacingPts;
+double  g_cfg_RetracePts;
+bool    g_cfg_EnableMidEntry;
+double  g_cfg_BeProfitPts;
+bool    g_cfg_EnableTrailing;
+double  g_cfg_TrailStartPts;
+double  g_cfg_TrailDistPts;
+double  g_cfg_TrailStepPts;
+long    g_cfg_MaxSpreadPts;
+bool    g_cfg_Enabled = true;
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -71,22 +92,23 @@ ulong      g_t1SellTicket  = 0;       // ticket of SELL target 1 (for BE trigger
 
 //+------------------------------------------------------------------+
 int OnInit() {
-   g_trade.SetExpertMagicNumber(InpMagic);
+   InitShadowsFromInputs();
+   LoadAccountConfig();
+
+   g_trade.SetExpertMagicNumber(g_cfg_Magic);
    g_trade.SetDeviationInPoints(30);
    ZeroMemory(g_sig);
-
-   //--- Derive signal file name from account number (Files/ZoneSignalEA/{account}.json)
    g_signalFile = "ZoneSignalEA\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
 
    if (!IsPeriod(PERIOD_M15))
       Print("[WARN] EA is attached to a non-M15 chart. Logic still uses M15 bars.");
-
-   if (InpEnableTrailing && InpTrailDistPts >= InpTrailStartPts)
-      PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
-                  InpTrailDistPts, InpTrailStartPts);
+   if (g_cfg_EnableTrailing && g_cfg_TrailDistPts >= g_cfg_TrailStartPts)
+      PrintFormat("[WARN] g_cfg_TrailDistPts (%.0f) >= g_cfg_TrailStartPts (%.0f) — trail would lock a loss on activation",
+                  g_cfg_TrailDistPts, g_cfg_TrailStartPts);
+   if (!g_cfg_Enabled)
+      Print("[Config] DISABLED — managing existing positions only, no new entries");
 
    EnsureOutcomesDir();
-
    Print("[ZoneSignalEA] Initialized. Signal file: ", g_signalFile);
    return INIT_SUCCEEDED;
 }
@@ -102,6 +124,10 @@ void OnTick() {
    datetime now = TimeCurrent();  // broker-local, throttle only — không dùng cho dedup/timestamp
    if (now != g_lastTickCheck) {
       g_lastTickCheck = now;
+      if (!g_cfg_Enabled) {
+         UpdateTrailingStops();
+         return;
+      }
       CheckSignalFile();
    }
 
@@ -145,19 +171,19 @@ void OnTick() {
          g_sig.valid = false;
       }
 
-      // 1) Scalp entries — up to InpMaxScalpPerDir per direction per signal.
+      // 1) Scalp entries — up to g_cfg_MaxScalpPerDir per direction per signal.
       //    Slot accounting: currently-open scalps + SL-consumed slots. TP frees the slot.
       if (g_breakoutBuy && !g_buyDone && !g_scalpBuyBlocked
-          && CountOpenScalps(POSITION_TYPE_BUY) + g_scalpBuySlConsumed < InpMaxScalpPerDir)
+          && CountOpenScalps(POSITION_TYPE_BUY) + g_scalpBuySlConsumed < g_cfg_MaxScalpPerDir)
          OpenScalpEntry(POSITION_TYPE_BUY);
       if (g_breakoutSell && !g_sellDone && !g_scalpSellBlocked
-          && CountOpenScalps(POSITION_TYPE_SELL) + g_scalpSellSlConsumed < InpMaxScalpPerDir)
+          && CountOpenScalps(POSITION_TYPE_SELL) + g_scalpSellSlConsumed < g_cfg_MaxScalpPerDir)
          OpenScalpEntry(POSITION_TYPE_SELL);
 
       // 2) Normal entries — triggers immediately when price hits retrace zone
       if (g_breakoutBuy && !g_normalBuyDone && !g_buyDone) {
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         double retraceLim = g_sig.redbox_upper + InpRetracePts * _Point;
+         double retraceLim = g_sig.redbox_upper + g_cfg_RetracePts * _Point;
          if (ask >= g_sig.redbox_upper && ask <= retraceLim) {
             PrintFormat("[Normal] BUY retrace near redbox (Ask %.5f) → opening target positions", ask);
             OpenTrades(POSITION_TYPE_BUY);
@@ -166,7 +192,7 @@ void OnTick() {
       }
       if (g_breakoutSell && !g_normalSellDone && !g_sellDone) {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         double retraceLim = g_sig.redbox_lower - InpRetracePts * _Point;
+         double retraceLim = g_sig.redbox_lower - g_cfg_RetracePts * _Point;
          if (bid <= g_sig.redbox_lower && bid >= retraceLim) {
             PrintFormat("[Normal] SELL retrace near redbox (Bid %.5f) → opening target positions", bid);
             OpenTrades(POSITION_TYPE_SELL);
@@ -229,7 +255,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
          break;
       }
    }
-   if (in_magic != (long)InpMagic) return;   // not our position
+   if (in_magic != (long)g_cfg_Magic) return;   // not our position
 
    //--- Emit outcome JSON (covers TP/SL/EXPERT/OTHER incl. manual closes)
    WriteZoneOutcome(deal, (long)closedPosId, in_comment, in_direction,
@@ -308,7 +334,7 @@ void MoveSignalToBreakEven(const ENUM_POSITION_TYPE dir) {
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       double currentSL = PositionGetDouble(POSITION_SL);
       double tp        = PositionGetDouble(POSITION_TP);
-      double offset    = InpBeProfitPts * _Point;
+      double offset    = g_cfg_BeProfitPts * _Point;
       double newSL     = (dir == POSITION_TYPE_BUY)
                          ? NormalizeDouble(openPrice + offset, _Digits)
                          : NormalizeDouble(openPrice - offset, _Digits);
@@ -323,7 +349,7 @@ void MoveSignalToBreakEven(const ENUM_POSITION_TYPE dir) {
 
       bool ok = g_trade.PositionModify(ticket, newSL, tp);
       PrintFormat("[BE] Ticket #%d SL: %.5f → %.5f (entry %.5f +%.0f pts)  %s",
-                  ticket, currentSL, newSL, openPrice, InpBeProfitPts,
+                  ticket, currentSL, newSL, openPrice, g_cfg_BeProfitPts,
                   ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
    }
 }
@@ -393,7 +419,7 @@ void ResetReEntryFlagsIfDrained(const ENUM_POSITION_TYPE dir, const ulong closed
    for (int i = PositionsTotal() - 1; i >= 0; --i) {
       ulong t = PositionGetTicket(i);
       if (t == 0 || t == closedPosId) continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic)       continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)       continue;
       if (PositionGetString (POSITION_SYMBOL) != _Symbol)             continue;
       if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
       remaining++;
@@ -421,7 +447,7 @@ void ResetReEntryFlagsIfDrained(const ENUM_POSITION_TYPE dir, const ulong closed
 //| Trailing stop manager — R7/R8/R9/R10, excludes scalp (R12)       |
 //+------------------------------------------------------------------+
 void UpdateTrailingStops() {
-   if (!InpEnableTrailing || !g_sig.valid) return;
+   if (!g_cfg_EnableTrailing || !g_sig.valid) return;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -439,17 +465,17 @@ void UpdateTrailingStops() {
       double profitPts = (type == POSITION_TYPE_BUY)
                          ? (bid - openPrice) / _Point
                          : (openPrice - ask) / _Point;
-      if (profitPts < InpTrailStartPts) continue;  // R9
+      if (profitPts < g_cfg_TrailStartPts) continue;  // R9
 
       double desiredSL = (type == POSITION_TYPE_BUY)
-                         ? NormalizeDouble(bid - InpTrailDistPts * _Point, _Digits)
-                         : NormalizeDouble(ask + InpTrailDistPts * _Point, _Digits);
+                         ? NormalizeDouble(bid - g_cfg_TrailDistPts * _Point, _Digits)
+                         : NormalizeDouble(ask + g_cfg_TrailDistPts * _Point, _Digits);
 
       //--- R7 + R10: strictly improving AND clears step threshold
       if (type == POSITION_TYPE_BUY) {
-         if (desiredSL < currentSL + InpTrailStepPts * _Point) continue;
+         if (desiredSL < currentSL + g_cfg_TrailStepPts * _Point) continue;
       } else {
-         if (currentSL != 0 && desiredSL > currentSL - InpTrailStepPts * _Point) continue;
+         if (currentSL != 0 && desiredSL > currentSL - g_cfg_TrailStepPts * _Point) continue;
       }
 
       //--- R8: never cross TP
@@ -475,7 +501,7 @@ void UpdateTrailingStops() {
 //+------------------------------------------------------------------+
 string GvDoneKey(const ENUM_POSITION_TYPE dir, const ulong ts) {
    return StringFormat("ZSEA_%I64u_%I64u_%s",
-                       (ulong)InpMagic, ts,
+                       (ulong)g_cfg_Magic, ts,
                        dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
 }
 
@@ -494,7 +520,7 @@ void HydrateDirectionDone(const ulong ts) {
 }
 
 void GcStaleGlobals(const ulong currentTs) {
-   string prefix = StringFormat("ZSEA_%I64u_", (ulong)InpMagic);
+   string prefix = StringFormat("ZSEA_%I64u_", (ulong)g_cfg_Magic);
    string keepBuy  = GvDoneKey(POSITION_TYPE_BUY,  currentTs);
    string keepSell = GvDoneKey(POSITION_TYPE_SELL, currentTs);
    int total = GlobalVariablesTotal();
@@ -595,7 +621,7 @@ void ProcessNewBar() {
    }
 
    //--- 2) Mid-zone reentry (M15 close based, optional blocked if direction is done)
-   if (InpEnableMidEntry && close1 >= g_sig.redbox_lower && close1 <= g_sig.redbox_upper) {
+   if (g_cfg_EnableMidEntry && close1 >= g_sig.redbox_lower && close1 <= g_sig.redbox_upper) {
       if (g_breakoutBuy && !g_midEntryBuyDone && !g_buyDone) {
          Print("[MidZone] Price back in zone → opening extra BUY at mid-zone");
          OpenMidZoneEntry(POSITION_TYPE_BUY);
@@ -611,13 +637,13 @@ void ProcessNewBar() {
 
 //+------------------------------------------------------------------+
 //| Spread gate — refuse entries when broker spread blows out.       |
-//| Returns true if check disabled (InpMaxSpreadPts <= 0).           |
+//| Returns true if check disabled (g_cfg_MaxSpreadPts <= 0).           |
 //+------------------------------------------------------------------+
 bool IsSpreadOK(const string tag) {
-   if (InpMaxSpreadPts <= 0) return true;
+   if (g_cfg_MaxSpreadPts <= 0) return true;
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   if (spread > InpMaxSpreadPts) {
-      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
+   if (spread > g_cfg_MaxSpreadPts) {
+      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)g_cfg_MaxSpreadPts);
       return false;
    }
    return true;
@@ -628,25 +654,25 @@ bool IsSpreadOK(const string tag) {
 //+------------------------------------------------------------------+
 void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
    if (!IsSpreadOK("Scalp")) return;
-   double buffer   = InpSlBufferPts * _Point;
-   double lotSize  = MathMin(InpLotPerTarget, InpMaxLots);
+   double buffer   = g_cfg_SlBufferPts * _Point;
+   double lotSize  = MathMin(g_cfg_LotPerTarget, g_cfg_MaxLots);
    double midZone  = NormalizeDouble((g_sig.redbox_upper + g_sig.redbox_lower) / 2.0, _Digits);
 
    //--- Check max positions cap
-   if (CountOpenPositions(dir) >= InpMaxPositions) {
+   if (CountOpenPositions(dir) >= g_cfg_MaxPositions) {
       PrintFormat("[Scalp SKIP] Max positions (%d) reached for %s",
-                  InpMaxPositions, dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
+                  g_cfg_MaxPositions, dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
       return;
    }
 
-   double spacing = InpScalpSpacingPts * _Point;
+   double spacing = g_cfg_ScalpSpacingPts * _Point;
 
    if (dir == POSITION_TYPE_BUY) {
       int n = ArraySize(g_sig.targets_above);
       if (n == 0) return;
 
       double entry        = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      double scalpCeiling = g_sig.targets_above[0] - InpScalpBufPts * _Point;
+      double scalpCeiling = g_sig.targets_above[0] - g_cfg_ScalpBufPts * _Point;
 
       //--- Entry must be in scalp zone: [midZone, scalpCeiling]
       if (entry < midZone || entry > scalpCeiling) {
@@ -655,11 +681,11 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
-      //--- Spacing: at least InpScalpSpacingPts away from every currently-open BUY scalp
+      //--- Spacing: at least g_cfg_ScalpSpacingPts away from every currently-open BUY scalp
       if (!ScalpSpacingOk(POSITION_TYPE_BUY, entry, spacing)) return;
 
       double sl    = NormalizeDouble(g_sig.redbox_lower - buffer, _Digits);
-      double rawTp = entry + InpScalpTpPts * _Point;
+      double rawTp = entry + g_cfg_ScalpTpPts * _Point;
       double tp    = NormalizeDouble(MathMin(rawTp, g_sig.targets_above[0]), _Digits);
 
       if (tp <= entry) {
@@ -671,7 +697,7 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       string comment = StringFormat("ZB_SCALP%d_%d", slot, (int)g_sig.timestamp);
       bool   ok      = g_trade.Buy(lotSize, _Symbol, entry, sl, tp, comment);
       PrintFormat("[Scalp BUY #%d/%d] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
-                  slot, InpMaxScalpPerDir, lotSize, entry, sl, tp,
+                  slot, g_cfg_MaxScalpPerDir, lotSize, entry, sl, tp,
                   ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
@@ -684,7 +710,7 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       if (n == 0) return;
 
       double entry      = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      double scalpFloor = g_sig.targets_below[0] + InpScalpBufPts * _Point;
+      double scalpFloor = g_sig.targets_below[0] + g_cfg_ScalpBufPts * _Point;
 
       //--- Entry must be in scalp zone: [scalpFloor, midZone]
       if (entry > midZone || entry < scalpFloor) {
@@ -693,11 +719,11 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
          return;
       }
 
-      //--- Spacing: at least InpScalpSpacingPts away from every currently-open SELL scalp
+      //--- Spacing: at least g_cfg_ScalpSpacingPts away from every currently-open SELL scalp
       if (!ScalpSpacingOk(POSITION_TYPE_SELL, entry, spacing)) return;
 
       double sl    = NormalizeDouble(g_sig.redbox_upper + buffer, _Digits);
-      double rawTp = entry - InpScalpTpPts * _Point;
+      double rawTp = entry - g_cfg_ScalpTpPts * _Point;
       double tp    = NormalizeDouble(MathMax(rawTp, g_sig.targets_below[0]), _Digits);
 
       if (tp >= entry) {
@@ -709,7 +735,7 @@ void OpenScalpEntry(const ENUM_POSITION_TYPE dir) {
       string comment = StringFormat("ZS_SCALP%d_%d", slot, (int)g_sig.timestamp);
       bool   ok      = g_trade.Sell(lotSize, _Symbol, entry, sl, tp, comment);
       PrintFormat("[Scalp SELL #%d/%d] lots=%.2f  entry=%.5f  sl=%.5f  tp=%.5f  %s",
-                  slot, InpMaxScalpPerDir, lotSize, entry, sl, tp,
+                  slot, g_cfg_MaxScalpPerDir, lotSize, entry, sl, tp,
                   ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
       if (ok) {
          ulong ticket = g_trade.ResultOrder();
@@ -730,13 +756,13 @@ bool ScalpSpacingOk(const ENUM_POSITION_TYPE dir, const double entry, const doub
       ulong ticket = g_scalpTickets[i];
       if (!PositionSelectByTicket(ticket)) continue;
       if (PositionGetString(POSITION_SYMBOL)  != _Symbol)        continue;
-      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic) continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)g_cfg_Magic) continue;
       if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       if (MathAbs(entry - openPrice) < spacing) {
          PrintFormat("[Scalp SKIP] %s entry %.5f too close to open scalp #%d @ %.5f (need %.0f pts)",
                      dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
-                     entry, ticket, openPrice, InpScalpSpacingPts);
+                     entry, ticket, openPrice, g_cfg_ScalpSpacingPts);
          return false;
       }
    }
@@ -748,13 +774,13 @@ bool ScalpSpacingOk(const ENUM_POSITION_TYPE dir, const double entry, const doub
 //+------------------------------------------------------------------+
 void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
    if (!IsSpreadOK("MidZone")) return;
-   double buffer  = InpSlBufferPts * _Point;
-   double lotSize = MathMin(InpLotPerTarget, InpMaxLots);
+   double buffer  = g_cfg_SlBufferPts * _Point;
+   double lotSize = MathMin(g_cfg_LotPerTarget, g_cfg_MaxLots);
 
    //--- Check max positions cap
-   if (CountOpenPositions(dir) >= InpMaxPositions) {
+   if (CountOpenPositions(dir) >= g_cfg_MaxPositions) {
       PrintFormat("[MidZone SKIP] Max positions (%d) reached for %s",
-                  InpMaxPositions, dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
+                  g_cfg_MaxPositions, dir == POSITION_TYPE_BUY ? "BUY" : "SELL");
       return;
    }
 
@@ -765,8 +791,8 @@ void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
       double sl    = NormalizeDouble(g_sig.redbox_lower - buffer, _Digits);
       double tp    = NormalizeDouble(g_sig.targets_above[n - 1], _Digits); // last target
       double tpDist = (tp - entry) / _Point;
-      if (tp <= entry || tpDist < InpMinTpPts) {
-         PrintFormat("[MidZone SKIP] BUY TP distance %.0f pts < min %.0f pts", tpDist, InpMinTpPts);
+      if (tp <= entry || tpDist < g_cfg_MinTpPts) {
+         PrintFormat("[MidZone SKIP] BUY TP distance %.0f pts < min %.0f pts", tpDist, g_cfg_MinTpPts);
          return;
       }
       string comment = StringFormat("ZB_MID_%d", (int)g_sig.timestamp);
@@ -782,8 +808,8 @@ void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
       double sl    = NormalizeDouble(g_sig.redbox_upper + buffer, _Digits);
       double tp    = NormalizeDouble(g_sig.targets_below[n - 1], _Digits); // last target
       double tpDist = (entry - tp) / _Point;
-      if (tp >= entry || tpDist < InpMinTpPts) {
-         PrintFormat("[MidZone SKIP] SELL TP distance %.0f pts < min %.0f pts", tpDist, InpMinTpPts);
+      if (tp >= entry || tpDist < g_cfg_MinTpPts) {
+         PrintFormat("[MidZone SKIP] SELL TP distance %.0f pts < min %.0f pts", tpDist, g_cfg_MinTpPts);
          return;
       }
       string comment = StringFormat("ZS_MID_%d", (int)g_sig.timestamp);
@@ -800,8 +826,8 @@ void OpenMidZoneEntry(const ENUM_POSITION_TYPE dir) {
 //+------------------------------------------------------------------+
 void OpenTrades(const ENUM_POSITION_TYPE dir) {
    if (!IsSpreadOK("Trades")) return;
-   double buffer  = InpSlBufferPts * _Point;
-   double lotSize = MathMin(InpLotPerTarget, InpMaxLots); // respect max lots cap
+   double buffer  = g_cfg_SlBufferPts * _Point;
+   double lotSize = MathMin(g_cfg_LotPerTarget, g_cfg_MaxLots); // respect max lots cap
 
    if (dir == POSITION_TYPE_BUY) {
       double entry   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -810,8 +836,8 @@ void OpenTrades(const ENUM_POSITION_TYPE dir) {
       int    opened  = CountOpenPositions(POSITION_TYPE_BUY); // BUY positions only
 
       for (int i = 0; i < n; i++) {
-         if (opened >= InpMaxPositions) {
-            PrintFormat("[SKIP] BUY target #%d — max positions (%d) reached", i+1, InpMaxPositions);
+         if (opened >= g_cfg_MaxPositions) {
+            PrintFormat("[SKIP] BUY target #%d — max positions (%d) reached", i+1, g_cfg_MaxPositions);
             break;
          }
          double tp = NormalizeDouble(g_sig.targets_above[i], _Digits);
@@ -820,8 +846,8 @@ void OpenTrades(const ENUM_POSITION_TYPE dir) {
             continue;
          }
          double tpDist = (tp - entry) / _Point;
-         if (tpDist < InpMinTpPts) {
-            PrintFormat("[SKIP] BUY target #%d — TP distance %.0f pts < min %.0f pts", i+1, tpDist, InpMinTpPts);
+         if (tpDist < g_cfg_MinTpPts) {
+            PrintFormat("[SKIP] BUY target #%d — TP distance %.0f pts < min %.0f pts", i+1, tpDist, g_cfg_MinTpPts);
             continue;
          }
          string comment = StringFormat("ZB_T%d_%d", i+1, (int)g_sig.timestamp);
@@ -844,8 +870,8 @@ void OpenTrades(const ENUM_POSITION_TYPE dir) {
       int    opened  = CountOpenPositions(POSITION_TYPE_SELL); // SELL positions only
 
       for (int i = 0; i < n; i++) {
-         if (opened >= InpMaxPositions) {
-            PrintFormat("[SKIP] SELL target #%d — max positions (%d) reached", i+1, InpMaxPositions);
+         if (opened >= g_cfg_MaxPositions) {
+            PrintFormat("[SKIP] SELL target #%d — max positions (%d) reached", i+1, g_cfg_MaxPositions);
             break;
          }
          double tp = NormalizeDouble(g_sig.targets_below[i], _Digits);
@@ -854,8 +880,8 @@ void OpenTrades(const ENUM_POSITION_TYPE dir) {
             continue;
          }
          double tpDist = (entry - tp) / _Point;
-         if (tpDist < InpMinTpPts) {
-            PrintFormat("[SKIP] SELL target #%d — TP distance %.0f pts < min %.0f pts", i+1, tpDist, InpMinTpPts);
+         if (tpDist < g_cfg_MinTpPts) {
+            PrintFormat("[SKIP] SELL target #%d — TP distance %.0f pts < min %.0f pts", i+1, tpDist, g_cfg_MinTpPts);
             continue;
          }
          string comment = StringFormat("ZS_T%d_%d", i+1, (int)g_sig.timestamp);
@@ -889,7 +915,7 @@ int CountOpenScalps(const ENUM_POSITION_TYPE dir) {
       ulong ticket = g_scalpTickets[i];
       if (!PositionSelectByTicket(ticket)) continue;
       if (PositionGetString(POSITION_SYMBOL)  != _Symbol)        continue;
-      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic) continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)g_cfg_Magic) continue;
       if ((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != dir) continue;
       count++;
    }
@@ -903,7 +929,7 @@ int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
       ulong ticket = PositionGetTicket(i);
       if (PositionSelectByTicket(ticket)) {
          if (PositionGetString(POSITION_SYMBOL)   == _Symbol            &&
-             PositionGetInteger(POSITION_MAGIC)   == (long)InpMagic     &&
+             PositionGetInteger(POSITION_MAGIC)   == (long)g_cfg_Magic     &&
              PositionGetInteger(POSITION_TYPE)    == (long)dir)
             count++;
       }
@@ -1037,6 +1063,94 @@ string JsonGetString(const string json, const string key) {
       StringTrimRight(val);
       return val;
    }
+}
+
+//+------------------------------------------------------------------+
+//| JSON scalar helpers — parse typed values via JsonGetString       |
+//+------------------------------------------------------------------+
+bool JsonGetBool(const string &json, const string key, bool defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   if (v == "true" || v == "1") return true;
+   if (v == "false" || v == "0") return false;
+   return defval;
+}
+
+double JsonGetDouble(const string &json, const string key, double defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToDouble(v);
+}
+
+long JsonGetLong(const string &json, const string key, long defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToInteger(v);
+}
+
+//+------------------------------------------------------------------+
+//| Copy Inp* inputs into mutable g_cfg_* shadows                   |
+//+------------------------------------------------------------------+
+void InitShadowsFromInputs() {
+   g_cfg_LotPerTarget    = InpLotPerTarget;
+   g_cfg_MaxLots         = InpMaxLots;
+   g_cfg_MaxPositions    = InpMaxPositions;
+   g_cfg_MinTpPts        = InpMinTpPts;
+   g_cfg_SlBufferPts     = InpSlBufferPts;
+   g_cfg_Magic           = InpMagic;
+   g_cfg_ScalpTpPts      = InpScalpTpPts;
+   g_cfg_ScalpBufPts     = InpScalpBufPts;
+   g_cfg_MaxScalpPerDir  = InpMaxScalpPerDir;
+   g_cfg_ScalpSpacingPts = InpScalpSpacingPts;
+   g_cfg_RetracePts      = InpRetracePts;
+   g_cfg_EnableMidEntry  = InpEnableMidEntry;
+   g_cfg_BeProfitPts     = InpBeProfitPts;
+   g_cfg_EnableTrailing  = InpEnableTrailing;
+   g_cfg_TrailStartPts   = InpTrailStartPts;
+   g_cfg_TrailDistPts    = InpTrailDistPts;
+   g_cfg_TrailStepPts    = InpTrailStepPts;
+   g_cfg_MaxSpreadPts    = InpMaxSpreadPts;
+   g_cfg_Enabled         = true;
+}
+
+//+------------------------------------------------------------------+
+//| Load per-account JSON config and overlay g_cfg_* shadows        |
+//+------------------------------------------------------------------+
+void LoadAccountConfig() {
+   string path = "ZoneSignalEA\\config\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
+   string json = ReadFileToString(path);
+   if (json == "") {
+      Print("[Config] no per-account config at ", path, " — using EA inputs");
+      return;
+   }
+
+   // meta block
+   g_cfg_Enabled         = JsonGetBool(json,   "enabled",            g_cfg_Enabled);
+   string label          = JsonGetString(json, "label");
+   string owner          = JsonGetString(json, "owner");
+
+   // inputs block
+   g_cfg_LotPerTarget    = JsonGetDouble(json, "InpLotPerTarget",    g_cfg_LotPerTarget);
+   g_cfg_MaxLots         = JsonGetDouble(json, "InpMaxLots",         g_cfg_MaxLots);
+   g_cfg_MaxPositions    = (int)JsonGetLong(json, "InpMaxPositions", (long)g_cfg_MaxPositions);
+   g_cfg_MinTpPts        = JsonGetDouble(json, "InpMinTpPts",        g_cfg_MinTpPts);
+   g_cfg_SlBufferPts     = JsonGetDouble(json, "InpSlBufferPts",     g_cfg_SlBufferPts);
+   g_cfg_Magic           = (ulong)JsonGetLong(json, "InpMagic",      (long)g_cfg_Magic);
+   g_cfg_ScalpTpPts      = JsonGetDouble(json, "InpScalpTpPts",      g_cfg_ScalpTpPts);
+   g_cfg_ScalpBufPts     = JsonGetDouble(json, "InpScalpBufPts",     g_cfg_ScalpBufPts);
+   g_cfg_MaxScalpPerDir  = (int)JsonGetLong(json, "InpMaxScalpPerDir", (long)g_cfg_MaxScalpPerDir);
+   g_cfg_ScalpSpacingPts = JsonGetDouble(json, "InpScalpSpacingPts", g_cfg_ScalpSpacingPts);
+   g_cfg_RetracePts      = JsonGetDouble(json, "InpRetracePts",      g_cfg_RetracePts);
+   g_cfg_EnableMidEntry  = JsonGetBool(json,   "InpEnableMidEntry",  g_cfg_EnableMidEntry);
+   g_cfg_BeProfitPts     = JsonGetDouble(json, "InpBeProfitPts",     g_cfg_BeProfitPts);
+   g_cfg_EnableTrailing  = JsonGetBool(json,   "InpEnableTrailing",  g_cfg_EnableTrailing);
+   g_cfg_TrailStartPts   = JsonGetDouble(json, "InpTrailStartPts",   g_cfg_TrailStartPts);
+   g_cfg_TrailDistPts    = JsonGetDouble(json, "InpTrailDistPts",    g_cfg_TrailDistPts);
+   g_cfg_TrailStepPts    = JsonGetDouble(json, "InpTrailStepPts",    g_cfg_TrailStepPts);
+   g_cfg_MaxSpreadPts    = JsonGetLong(json,   "InpMaxSpreadPts",    g_cfg_MaxSpreadPts);
+
+   PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
+               path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);
 }
 
 //+------------------------------------------------------------------+
@@ -1185,7 +1299,7 @@ void WriteZoneOutcome(const ulong  deal_ticket,
    json += "\"account\":"         + IntegerToString(account)            + ",";
    json += "\"symbol\":\""        + _Symbol                             + "\",";
    json += "\"direction\":\""     + direction                           + "\",";
-   json += "\"magic\":"           + IntegerToString((long)InpMagic)     + ",";
+   json += "\"magic\":"           + IntegerToString((long)g_cfg_Magic)     + ",";
    json += "\"volume\":"          + DoubleToString(volume, 2)           + ",";
    json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
    json += "\"exit_price\":"      + DoubleToString(exit_price, digits)  + ",";

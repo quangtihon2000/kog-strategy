@@ -37,6 +37,30 @@ input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calcul
 input int             InpAtrPeriod  = 14;             // ATR period
 input double          InpAtrTpMult  = 1.0;            // TP distance = ATR * mult
 
+//--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
+double           g_cfg_LotPerTarget;
+double           g_cfg_MaxLotsPerPosition;
+double           g_cfg_MaxTotalLotsPerDir;
+int              g_cfg_MaxPositions;
+double           g_cfg_MaxSlippagePts;
+double           g_cfg_SlBufferPts;
+ulong            g_cfg_Magic;
+int              g_cfg_HistoryLookbackDays;
+bool             g_cfg_EnableTrailing;
+double           g_cfg_BeTriggerPts;
+double           g_cfg_BeOffsetPts;
+double           g_cfg_TrailStartPts;
+double           g_cfg_TrailDistPts;
+double           g_cfg_TrailStepPts;
+double           g_cfg_PendingExpiryHours;
+double           g_cfg_MaxPendingDistPts;
+long             g_cfg_MaxSpreadPts;
+bool             g_cfg_UseAtrTp;
+ENUM_TIMEFRAMES  g_cfg_AtrTf;
+int              g_cfg_AtrPeriod;
+double           g_cfg_AtrTpMult;
+bool             g_cfg_Enabled = true;
+
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
 //+------------------------------------------------------------------+
@@ -61,8 +85,11 @@ int         g_atrHandle     = INVALID_HANDLE;  // ATR indicator handle (reused p
 
 //+------------------------------------------------------------------+
 int OnInit() {
-   g_trade.SetExpertMagicNumber(InpMagic);
-   g_trade.SetDeviationInPoints((ulong)InpMaxSlippagePts);
+   InitShadowsFromInputs();
+   LoadAccountConfig();
+
+   g_trade.SetExpertMagicNumber(g_cfg_Magic);
+   g_trade.SetDeviationInPoints((ulong)g_cfg_MaxSlippagePts);
    ZeroMemory(g_sig);
 
    g_signalFile = "CondeAutoEntryEA\\"
@@ -74,18 +101,20 @@ int OnInit() {
    EnsureOutcomesDir();
 
    //--- Khởi tạo ATR handle một lần, tái sử dụng cho mọi lần mở lệnh
-   if (InpUseAtrTp) {
-      g_atrHandle = iATR(_Symbol, InpAtrTf, InpAtrPeriod);
+   if (g_cfg_UseAtrTp) {
+      g_atrHandle = iATR(_Symbol, g_cfg_AtrTf, g_cfg_AtrPeriod);
       if (g_atrHandle == INVALID_HANDLE)
          Print("[WARN] iATR handle creation failed — ATR TP may fall back to signal TP");
       else
          PrintFormat("[CondeAutoEntryEA] ATR handle ready (tf=%s period=%d mult=%.2f)",
-                     EnumToString(InpAtrTf), InpAtrPeriod, InpAtrTpMult);
+                     EnumToString(g_cfg_AtrTf), g_cfg_AtrPeriod, g_cfg_AtrTpMult);
    }
 
-   if (InpEnableTrailing && InpTrailDistPts >= InpTrailStartPts)
-      PrintFormat("[WARN] InpTrailDistPts (%.0f) >= InpTrailStartPts (%.0f) — trail would lock a loss on activation",
-                  InpTrailDistPts, InpTrailStartPts);
+   if (g_cfg_EnableTrailing && g_cfg_TrailDistPts >= g_cfg_TrailStartPts)
+      PrintFormat("[WARN] g_cfg_TrailDistPts (%.0f) >= g_cfg_TrailStartPts (%.0f) — trail would lock a loss on activation",
+                  g_cfg_TrailDistPts, g_cfg_TrailStartPts);
+
+   if (!g_cfg_Enabled) Print("[Config] DISABLED — managing existing positions only, no new entries");
 
    PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
                g_signalFile, IntegerToString(g_lastSigTs));
@@ -160,7 +189,7 @@ void OnTradeTransaction(
          break;
       }
    }
-   if (in_magic != (long)InpMagic) return;   // not our position
+   if (in_magic != (long)g_cfg_Magic) return;   // not our position
    if (signal_ts == 0)             return;   // not our signal lineage
 
    double exit_price = HistoryDealGetDouble(deal_ticket, DEAL_PRICE);
@@ -189,7 +218,7 @@ void OnTradeTransaction(
    json += "\"account\":"         + IntegerToString(account)            + ",";
    json += "\"symbol\":\""        + _Symbol                             + "\",";
    json += "\"direction\":\""     + direction                           + "\",";
-   json += "\"magic\":"           + IntegerToString((long)InpMagic)     + ",";
+   json += "\"magic\":"           + IntegerToString((long)g_cfg_Magic)     + ",";
    json += "\"volume\":"          + DoubleToString(volume, 2)           + ",";
    json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
    json += "\"exit_price\":"      + DoubleToString(exit_price, digits)  + ",";
@@ -227,6 +256,7 @@ void OnTick() {
    g_lastTickCheck = now;
 
    ManageTrailingStops();
+   if (!g_cfg_Enabled) return;          // disabled: trail-only, no new entries
 
    CondeSignal sig;
    if (!LoadSignal(g_signalFile, sig)) return;
@@ -237,22 +267,22 @@ void OnTick() {
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
    //--- Distance-based mode selection
-   //    <= InpMaxSlippagePts           → market order
-   //    <= InpMaxPendingDistPts        → pending LIMIT/STOP at entry_price
-   //    >  InpMaxPendingDistPts        → skip (price too far)
+   //    <= g_cfg_MaxSlippagePts           → market order
+   //    <= g_cfg_MaxPendingDistPts        → pending LIMIT/STOP at entry_price
+   //    >  g_cfg_MaxPendingDistPts        → skip (price too far)
    double market = (sig.direction == "BUY")
                    ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
                    : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double distPts = MathAbs(market - sig.entry_price) / _Point;
-   if (distPts > InpMaxPendingDistPts) {
+   if (distPts > g_cfg_MaxPendingDistPts) {
       if (sig.timestamp != g_lastWaitTs) {
          PrintFormat("[Skip] %s %.5f is %.0f pts from entry %.5f (> max pending %.0f) — signal too far",
-                     sig.direction, market, distPts, sig.entry_price, InpMaxPendingDistPts);
+                     sig.direction, market, distPts, sig.entry_price, g_cfg_MaxPendingDistPts);
          g_lastWaitTs = sig.timestamp;
       }
       return;
    }
-   bool usePending = (distPts > InpMaxSlippagePts);
+   bool usePending = (distPts > g_cfg_MaxSlippagePts);
 
    g_sig = sig;
    if (OpenTrades(sig, usePending, market))
@@ -261,25 +291,25 @@ void OnTick() {
 
 //+------------------------------------------------------------------+
 //| Spread gate — refuse entries when broker spread blows out.       |
-//| Returns true if check disabled (InpMaxSpreadPts <= 0).           |
+//| Returns true if check disabled (g_cfg_MaxSpreadPts <= 0).           |
 //+------------------------------------------------------------------+
 bool IsSpreadOK(const string tag) {
-   if (InpMaxSpreadPts <= 0) return true;
+   if (g_cfg_MaxSpreadPts <= 0) return true;
    long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   if (spread > InpMaxSpreadPts) {
-      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)InpMaxSpreadPts);
+   if (spread > g_cfg_MaxSpreadPts) {
+      PrintFormat("[%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)g_cfg_MaxSpreadPts);
       return false;
    }
    return true;
 }
 
 //+------------------------------------------------------------------+
-//| Tính TP cho một lệnh: ATR-based nếu InpUseAtrTp bật, ngược lại  |
-//| dùng sig.tps[0] (signal TP1). ATR lấy trên InpAtrTf, shift=1    |
+//| Tính TP cho một lệnh: ATR-based nếu g_cfg_UseAtrTp bật, ngược lại  |
+//| dùng sig.tps[0] (signal TP1). ATR lấy trên g_cfg_AtrTf, shift=1    |
 //| (bar đóng gần nhất). Fallback về signal TP1 nếu ATR không hợp lệ.|
 //+------------------------------------------------------------------+
 double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice) {
-   if (!InpUseAtrTp) {
+   if (!g_cfg_UseAtrTp) {
       // Dùng TP từ signal — hành vi gốc không thay đổi
       return sig.tps[0];
    }
@@ -303,14 +333,14 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       return sig.tps[0];
    }
 
-   double dist = atrVal * InpAtrTpMult;
+   double dist = atrVal * g_cfg_AtrTpMult;
    double tp   = (dir == POSITION_TYPE_BUY)
                  ? NormalizeDouble(entryPrice + dist, _Digits)
                  : NormalizeDouble(entryPrice - dist, _Digits);
 
    PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f dist=%.5f entry=%.5f → tp=%.5f",
                dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
-               atrVal, InpAtrTpMult, dist, entryPrice, tp);
+               atrVal, g_cfg_AtrTpMult, dist, entryPrice, tp);
    return tp;
 }
 
@@ -332,8 +362,8 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
    datetime        expiry   = 0;
    if (usePending) {
       pendType = PickPendingType(dir, sig.entry_price, market);
-      if (InpPendingExpiryHours > 0)
-         expiry = TimeCurrent() + (datetime)(InpPendingExpiryHours * 3600);  // broker-local OK — ORDER_TIME_EXPIRATION dùng server TZ
+      if (g_cfg_PendingExpiryHours > 0)
+         expiry = TimeCurrent() + (datetime)(g_cfg_PendingExpiryHours * 3600);  // broker-local OK — ORDER_TIME_EXPIRATION dùng server TZ
    }
 
    PrintFormat("[Signal] Applied — %s entry=%.5f sl=%.5f tps=%d ts=%s  mode=%s",
@@ -351,14 +381,14 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
 
       //--- Cap: max slots per direction (positions + pendings) on this symbol
       int dirOpen = CountOpenPositions(dir);
-      if (dirOpen >= InpMaxPositions) {
+      if (dirOpen >= g_cfg_MaxPositions) {
          PrintFormat("[SKIP] TP #%d — max %s slots (%d) reached",
-                     i + 1, sig.direction, InpMaxPositions);
+                     i + 1, sig.direction, g_cfg_MaxPositions);
          break;
       }
 
       //--- Cap: per-position lot size (invariant across iterations — break on zero)
-      double lot = NormalizeLot(MathMin(InpLotPerTarget, InpMaxLotsPerPosition));
+      double lot = NormalizeLot(MathMin(g_cfg_LotPerTarget, g_cfg_MaxLotsPerPosition));
       if (lot <= 0) {
          PrintFormat("[SKIP] TP #%d — lot size normalized to 0", i + 1);
          break;
@@ -366,18 +396,18 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
 
       //--- Cap: total lots in this direction (positions + pendings)
       double openedLots = SumOpenLots(dir);
-      if (openedLots + lot > InpMaxTotalLotsPerDir + 1e-8) {
+      if (openedLots + lot > g_cfg_MaxTotalLotsPerDir + 1e-8) {
          PrintFormat("[SKIP] TP #%d — would exceed total lots cap (%.2f + %.2f > %.2f)",
-                     i + 1, openedLots, lot, InpMaxTotalLotsPerDir);
+                     i + 1, openedLots, lot, g_cfg_MaxTotalLotsPerDir);
          break;
       }
 
-      double buffer = InpSlBufferPts * _Point;
+      double buffer = g_cfg_SlBufferPts * _Point;
       double slRaw  = (dir == POSITION_TYPE_BUY) ? sig.sl - buffer : sig.sl + buffer;
       double sl     = ClampStop(dir, slRaw,       true);
       // All positions target TP1 — exit together when the first TP prints.
       // Position count still tracks tps[] length for sizing/dedup purposes.
-      // Khi InpUseAtrTp bật: mọi vị thế trong cùng signal dùng chung 1 ATR TP
+      // Khi g_cfg_UseAtrTp bật: mọi vị thế trong cùng signal dùng chung 1 ATR TP
       // (computed once per OpenTrades call — see GetAtrTp call below).
       double tp     = ClampStop(dir, ComputeTp(dir, sig, sig.entry_price), false);
 
@@ -442,13 +472,13 @@ string PendingTypeName(const ENUM_ORDER_TYPE t) {
 
 //+------------------------------------------------------------------+
 //| Per-position break-even + trailing stop manager.                 |
-//|  Stage 1: profit >= InpBeTriggerPts → SL to entry +/- BeOffset.  |
-//|  Stage 2: profit >= InpTrailStartPts → SL trails TrailDist       |
+//|  Stage 1: profit >= g_cfg_BeTriggerPts → SL to entry +/- BeOffset.  |
+//|  Stage 2: profit >= g_cfg_TrailStartPts → SL trails TrailDist       |
 //|           behind current price, gated by TrailStep.              |
 //| SL only moves in the direction of profit — never backward.       |
 //+------------------------------------------------------------------+
 void ManageTrailingStops() {
-   if (!InpEnableTrailing) return;
+   if (!g_cfg_EnableTrailing) return;
 
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -457,7 +487,7 @@ void ManageTrailingStops() {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket))                         continue;
       if (PositionGetString(POSITION_SYMBOL)  != _Symbol)          continue;
-      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic)   continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)g_cfg_Magic)   continue;
 
       ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
@@ -467,17 +497,17 @@ void ManageTrailingStops() {
       double profitPts = (type == POSITION_TYPE_BUY)
                          ? (bid - openPrice) / _Point
                          : (openPrice - ask) / _Point;
-      if (profitPts < InpBeTriggerPts) continue;
+      if (profitPts < g_cfg_BeTriggerPts) continue;
 
       double desiredSL;
       string stage;
-      if (profitPts >= InpTrailStartPts) {
+      if (profitPts >= g_cfg_TrailStartPts) {
          desiredSL = (type == POSITION_TYPE_BUY)
-                     ? NormalizeDouble(bid - InpTrailDistPts * _Point, _Digits)
-                     : NormalizeDouble(ask + InpTrailDistPts * _Point, _Digits);
+                     ? NormalizeDouble(bid - g_cfg_TrailDistPts * _Point, _Digits)
+                     : NormalizeDouble(ask + g_cfg_TrailDistPts * _Point, _Digits);
          stage = "Trail";
       } else {
-         double offset = InpBeOffsetPts * _Point;
+         double offset = g_cfg_BeOffsetPts * _Point;
          desiredSL = (type == POSITION_TYPE_BUY)
                      ? NormalizeDouble(openPrice + offset, _Digits)
                      : NormalizeDouble(openPrice - offset, _Digits);
@@ -486,9 +516,9 @@ void ManageTrailingStops() {
 
       //--- Strictly improving + step threshold
       if (type == POSITION_TYPE_BUY) {
-         if (desiredSL < currentSL + InpTrailStepPts * _Point) continue;
+         if (desiredSL < currentSL + g_cfg_TrailStepPts * _Point) continue;
       } else {
-         if (currentSL != 0 && desiredSL > currentSL - InpTrailStepPts * _Point) continue;
+         if (currentSL != 0 && desiredSL > currentSL - g_cfg_TrailStepPts * _Point) continue;
       }
 
       //--- Never cross TP
@@ -529,7 +559,7 @@ void CancelPendingsIfTP1Reached(const CondeSignal &sig) {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                        continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)           continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)    continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)    continue;
 
       long otype = OrderGetInteger(ORDER_TYPE);
       if (otype != ORDER_TYPE_BUY_LIMIT  && otype != ORDER_TYPE_BUY_STOP &&
@@ -606,7 +636,7 @@ int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
       ulong ticket = PositionGetTicket(i);
       if (PositionSelectByTicket(ticket)) {
          if (PositionGetString(POSITION_SYMBOL) == _Symbol          &&
-             PositionGetInteger(POSITION_MAGIC) == (long)InpMagic   &&
+             PositionGetInteger(POSITION_MAGIC) == (long)g_cfg_Magic   &&
              PositionGetInteger(POSITION_TYPE)  == (long)dir)
             count++;
       }
@@ -615,7 +645,7 @@ int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                         continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)     continue;
       if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir))
          count++;
    }
@@ -631,7 +661,7 @@ double SumOpenLots(const ENUM_POSITION_TYPE dir) {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket)) continue;
       if (PositionGetString(POSITION_SYMBOL) != _Symbol)        continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic) continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
       if (PositionGetInteger(POSITION_TYPE)  != (long)dir)      continue;
       total += PositionGetDouble(POSITION_VOLUME);
    }
@@ -639,7 +669,7 @@ double SumOpenLots(const ENUM_POSITION_TYPE dir) {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                         continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)     continue;
       if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir))
          total += OrderGetDouble(ORDER_VOLUME_CURRENT);
    }
@@ -655,18 +685,18 @@ bool TradeExistsByComment(const string comment) {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket))                         continue;
       if (PositionGetString(POSITION_SYMBOL)  != _Symbol)          continue;
-      if (PositionGetInteger(POSITION_MAGIC)  != (long)InpMagic)   continue;
+      if (PositionGetInteger(POSITION_MAGIC)  != (long)g_cfg_Magic)   continue;
       if (PositionGetString(POSITION_COMMENT) == comment) return true;
    }
    for (int i = OrdersTotal() - 1; i >= 0; i--) {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                             continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)         continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)         continue;
       if (OrderGetString(ORDER_COMMENT) == comment) return true;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   datetime from = TimeCurrent() - (datetime)(g_cfg_HistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
    if (!HistorySelect(from, TimeCurrent() + 60)) return false;  // broker-local OK — upper bound chỉ cần > now
 
    int deals = HistoryDealsTotal();
@@ -674,7 +704,7 @@ bool TradeExistsByComment(const string comment) {
       ulong deal = HistoryDealGetTicket(i);
       if (deal == 0) continue;
       if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
-      if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
+      if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)g_cfg_Magic) continue;
       if (HistoryDealGetInteger(deal, DEAL_ENTRY)  != DEAL_ENTRY_IN)  continue;
       if (HistoryDealGetString(deal, DEAL_COMMENT) == comment) return true;
    }
@@ -683,7 +713,7 @@ bool TradeExistsByComment(const string comment) {
       ulong ord = HistoryOrderGetTicket(i);
       if (ord == 0) continue;
       if (HistoryOrderGetString(ord, ORDER_SYMBOL)  != _Symbol)        continue;
-      if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)InpMagic) continue;
+      if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)g_cfg_Magic) continue;
       if (HistoryOrderGetString(ord, ORDER_COMMENT) == comment) return true;
    }
    return false;
@@ -700,7 +730,7 @@ ulong ScanMaxSeenTimestamp() {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket))                      continue;
       if (PositionGetString(POSITION_SYMBOL) != _Symbol)        continue;
-      if (PositionGetInteger(POSITION_MAGIC) != (long)InpMagic) continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
       ulong ts = ParseTsFromComment(PositionGetString(POSITION_COMMENT));
       if (ts > maxTs) maxTs = ts;
    }
@@ -709,19 +739,19 @@ ulong ScanMaxSeenTimestamp() {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                         continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)            continue;
-      if (OrderGetInteger(ORDER_MAGIC)  != (long)InpMagic)     continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)     continue;
       ulong ts = ParseTsFromComment(OrderGetString(ORDER_COMMENT));
       if (ts > maxTs) maxTs = ts;
    }
 
-   datetime from = TimeCurrent() - (datetime)(InpHistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
+   datetime from = TimeCurrent() - (datetime)(g_cfg_HistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
    if (HistorySelect(from, TimeCurrent() + 60)) {  // broker-local OK — upper bound chỉ cần > now
       int deals = HistoryDealsTotal();
       for (int i = deals - 1; i >= 0; i--) {
          ulong deal = HistoryDealGetTicket(i);
          if (deal == 0) continue;
          if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
-         if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)InpMagic) continue;
+         if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)g_cfg_Magic) continue;
          ulong ts = ParseTsFromComment(HistoryDealGetString(deal, DEAL_COMMENT));
          if (ts > maxTs) maxTs = ts;
       }
@@ -730,7 +760,7 @@ ulong ScanMaxSeenTimestamp() {
          ulong ord = HistoryOrderGetTicket(i);
          if (ord == 0) continue;
          if (HistoryOrderGetString(ord, ORDER_SYMBOL)  != _Symbol)        continue;
-         if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)InpMagic) continue;
+         if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)g_cfg_Magic) continue;
          ulong ts = ParseTsFromComment(HistoryOrderGetString(ord, ORDER_COMMENT));
          if (ts > maxTs) maxTs = ts;
       }
@@ -942,6 +972,91 @@ string JsonGetString(const string json, const string key) {
    StringTrimLeft(val);
    StringTrimRight(val);
    return val;
+}
+
+bool JsonGetBool(const string json, const string key, bool defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   if (v == "true" || v == "1") return true;
+   if (v == "false" || v == "0") return false;
+   return defval;
+}
+
+double JsonGetDouble(const string json, const string key, double defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToDouble(v);
+}
+
+long JsonGetLong(const string json, const string key, long defval) {
+   string v = JsonGetString(json, key);
+   if (v == "") return defval;
+   return StringToInteger(v);
+}
+
+//+------------------------------------------------------------------+
+void InitShadowsFromInputs() {
+   g_cfg_LotPerTarget        = InpLotPerTarget;
+   g_cfg_MaxLotsPerPosition  = InpMaxLotsPerPosition;
+   g_cfg_MaxTotalLotsPerDir  = InpMaxTotalLotsPerDir;
+   g_cfg_MaxPositions        = InpMaxPositions;
+   g_cfg_MaxSlippagePts      = InpMaxSlippagePts;
+   g_cfg_SlBufferPts         = InpSlBufferPts;
+   g_cfg_Magic               = InpMagic;
+   g_cfg_HistoryLookbackDays = InpHistoryLookbackDays;
+   g_cfg_EnableTrailing      = InpEnableTrailing;
+   g_cfg_BeTriggerPts        = InpBeTriggerPts;
+   g_cfg_BeOffsetPts         = InpBeOffsetPts;
+   g_cfg_TrailStartPts       = InpTrailStartPts;
+   g_cfg_TrailDistPts        = InpTrailDistPts;
+   g_cfg_TrailStepPts        = InpTrailStepPts;
+   g_cfg_PendingExpiryHours  = InpPendingExpiryHours;
+   g_cfg_MaxPendingDistPts   = InpMaxPendingDistPts;
+   g_cfg_MaxSpreadPts        = InpMaxSpreadPts;
+   g_cfg_UseAtrTp            = InpUseAtrTp;
+   g_cfg_AtrTf               = InpAtrTf;
+   g_cfg_AtrPeriod           = InpAtrPeriod;
+   g_cfg_AtrTpMult           = InpAtrTpMult;
+   g_cfg_Enabled             = true;
+}
+
+//+------------------------------------------------------------------+
+void LoadAccountConfig() {
+   string path = "CondeAutoEntryEA\\config\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
+   string json = ReadFileToString(path);
+   if (json == "") {
+      Print("[Config] no per-account config at ", path, " — using EA inputs");
+      return;
+   }
+
+   g_cfg_Enabled             = JsonGetBool(json,   "enabled",                g_cfg_Enabled);
+   string label              = JsonGetString(json, "label");
+   string owner              = JsonGetString(json, "owner");
+
+   g_cfg_LotPerTarget        = JsonGetDouble(json, "InpLotPerTarget",        g_cfg_LotPerTarget);
+   g_cfg_MaxLotsPerPosition  = JsonGetDouble(json, "InpMaxLotsPerPosition",  g_cfg_MaxLotsPerPosition);
+   g_cfg_MaxTotalLotsPerDir  = JsonGetDouble(json, "InpMaxTotalLotsPerDir",  g_cfg_MaxTotalLotsPerDir);
+   g_cfg_MaxPositions        = (int)JsonGetLong(json, "InpMaxPositions",     (long)g_cfg_MaxPositions);
+   g_cfg_MaxSlippagePts      = JsonGetDouble(json, "InpMaxSlippagePts",      g_cfg_MaxSlippagePts);
+   g_cfg_SlBufferPts         = JsonGetDouble(json, "InpSlBufferPts",         g_cfg_SlBufferPts);
+   g_cfg_Magic               = (ulong)JsonGetLong(json, "InpMagic",          (long)g_cfg_Magic);
+   g_cfg_HistoryLookbackDays = (int)JsonGetLong(json, "InpHistoryLookbackDays", (long)g_cfg_HistoryLookbackDays);
+   g_cfg_EnableTrailing      = JsonGetBool(json,   "InpEnableTrailing",      g_cfg_EnableTrailing);
+   g_cfg_BeTriggerPts        = JsonGetDouble(json, "InpBeTriggerPts",        g_cfg_BeTriggerPts);
+   g_cfg_BeOffsetPts         = JsonGetDouble(json, "InpBeOffsetPts",         g_cfg_BeOffsetPts);
+   g_cfg_TrailStartPts       = JsonGetDouble(json, "InpTrailStartPts",       g_cfg_TrailStartPts);
+   g_cfg_TrailDistPts        = JsonGetDouble(json, "InpTrailDistPts",        g_cfg_TrailDistPts);
+   g_cfg_TrailStepPts        = JsonGetDouble(json, "InpTrailStepPts",        g_cfg_TrailStepPts);
+   g_cfg_PendingExpiryHours  = JsonGetDouble(json, "InpPendingExpiryHours",  g_cfg_PendingExpiryHours);
+   g_cfg_MaxPendingDistPts   = JsonGetDouble(json, "InpMaxPendingDistPts",   g_cfg_MaxPendingDistPts);
+   g_cfg_MaxSpreadPts        = JsonGetLong(json,   "InpMaxSpreadPts",        g_cfg_MaxSpreadPts);
+   g_cfg_UseAtrTp            = JsonGetBool(json,   "InpUseAtrTp",            g_cfg_UseAtrTp);
+   g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
+   g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
+   // Note: InpAtrTf (ENUM_TIMEFRAMES) intentionally not overridable from JSON — keep EA input
+
+   PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
+               path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);
 }
 
 //+------------------------------------------------------------------+
