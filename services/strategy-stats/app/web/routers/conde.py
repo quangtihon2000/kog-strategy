@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_session
 from app.models import Channel, CondeOutcome, CondeSignal
-from app.stats.conde import aggregate_by_account
+from app.stats.conde import aggregate_by_account, aggregate_since
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
@@ -126,6 +126,32 @@ async def overview(
             "signal_ts_filter": signal_ts,
             "executed_only": executed_only,
             "top_accounts": top_accounts,
+        },
+    )
+
+
+@router.get("/channel-stats", response_class=HTMLResponse)
+async def channel_stats(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    since: str | None = None,
+) -> HTMLResponse:
+    since_code = normalize_since(since)
+    by_channel = await aggregate_since(session, since_to_epoch(since_code))
+    rows = sorted(
+        by_channel.values(),
+        key=lambda s: (s.n_classified, s.confidence_lo95),
+        reverse=True,
+    )
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request,
+        "conde_channel_stats.html",
+        {
+            "now_str": request.state.now_str,
+            "since_choices": SINCE_CHOICES,
+            "since": since_code,
+            "rows": rows,
         },
     )
 

@@ -6,8 +6,12 @@
 # Rule 2: for every strategies/<strat>/config/accounts/<acc>.json file,
 #         <acc> must exist in the union of terminal accounts for the
 #         terminals listed in deploy.strategies[strat].deploy_to.
+# Rule 3: (warning, non-fatal) for each terminal whose strategy supports
+#         per-account config overlay (zone_signal, conde_auto_entry, gvfx_signal),
+#         every account in accounts[] should have a config file. Missing files are
+#         reported as GitHub Actions warnings and counted in $warnCount.
 #
-# Exit 0 on success, exit 1 on any violation.
+# Exit 0 on success (including warnings-only), exit 1 on any Rule 1/2 violation.
 
 $ErrorActionPreference = 'Stop'
 
@@ -16,6 +20,7 @@ $deployPath = Join-Path $repoRoot "deploy.json"
 $deploy = Get-Content $deployPath -Raw | ConvertFrom-Json
 
 $failed = $false
+$warnCount = 0
 
 # ---------------------------------------------------------------
 # Rule 1: uniqueness - account must appear in at most one terminal
@@ -101,10 +106,44 @@ if ($null -eq $configFiles -or ($configFiles | Measure-Object).Count -eq 0) {
     }
 }
 
+# ---------------------------------------------------------------
+# Rule 3: warn if per-account config file is missing (non-fatal)
+# ---------------------------------------------------------------
+$overlayStrategies = @("zone_signal", "conde_auto_entry", "gvfx_signal")
+
+foreach ($stratName in $overlayStrategies) {
+    $strat = $deploy.strategies.$stratName
+    if (-not $strat) { continue }
+
+    foreach ($termName in @($strat.deploy_to)) {
+        if ([string]::IsNullOrEmpty($termName)) { continue }
+
+        $term = $deploy.terminals.$termName
+        if (-not $term -or -not $term.accounts) { continue }
+
+        foreach ($acc in @($term.accounts)) {
+            if ($null -eq $acc) { continue }
+            $accStr = "$acc"
+
+            $configFile = Join-Path $repoRoot "strategies/$stratName/config/accounts/$accStr.json"
+            if (-not (Test-Path $configFile)) {
+                $relPath = "strategies/$stratName/config/accounts/$accStr.json"
+                Write-Host "WARN: missing per-account config: $relPath (terminal=$termName account=$accStr)"
+                Write-Host "::warning file=$relPath::Missing per-account config for terminal $termName account $accStr. Run scripts/gen-account-config.ps1 -Strategy $stratName -Account $accStr to seed."
+                $warnCount++
+            }
+        }
+    }
+}
+
 if ($failed) {
     Write-Error "validate-account-configs: one or more validation failures"
     exit 1
 }
 
-Write-Host "OK validate-account-configs"
+$warnSuffix = ""
+if ($warnCount -gt 0) {
+    $warnSuffix = " ($warnCount warning(s) -- see WARN lines above)"
+}
+Write-Host "OK validate-account-configs$warnSuffix"
 exit 0

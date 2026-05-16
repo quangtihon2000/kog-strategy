@@ -1,0 +1,28 @@
+{
+  "enabled": true,
+  "label": "zone_signal — <ACCOUNT>",
+  "owner": "<OWNER>",
+
+  "InpLotPerTarget": 0.01,
+  "InpMaxLots": 0.10,
+  "InpMaxPositions": 10,
+  "InpMinTpPts": 300,
+  "InpSlBufferPts": 200,
+  "InpMagic": 20240416,
+
+  "InpScalpTpPts": 400,
+  "InpScalpBufPts": 500,
+  "InpMaxScalpPerDir": 10,
+  "InpScalpSpacingPts": 500,
+  "InpRetracePts": 200,
+
+  "InpEnableMidEntry": true,
+  "InpBeProfitPts": 200,
+
+  "InpEnableTrailing": true,
+  "InpTrailStartPts": 500,
+  "InpTrailDistPts": 300,
+  "InpTrailStepPts": 50,
+
+  "InpMaxSpreadPts": 30
+}
