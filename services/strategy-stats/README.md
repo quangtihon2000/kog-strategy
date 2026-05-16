@@ -261,4 +261,4 @@ Producer-side bugs the receivers handle defensively (skip+ack). Fix upstream whe
 
 ## Verification
 
-Cross-check against existing static `conde-stats` GitHub Pages: same source streams + same algorithm → win-rate per channel must match. Once stable, retire the `ConderStatsPublish` scheduled task on the MT5 VPS.
+Validate aggregations against raw Redis streams (`conde_signals`, `conde_outcomes`) — win-rate per channel should match a manual `XRANGE` + tally pass on the same window.
