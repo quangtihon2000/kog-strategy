@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "label": "CondeAutoEntry — mt5_conde_2 (25323746, fixed 100pts TP)",
+  "owner": "quang",
+
+  "InpLotPerTarget": 0.01,
+  "InpMaxLotsPerPosition": 0.05,
+  "InpMaxTotalLotsPerDir": 0.30,
+  "InpMaxPositions": 20,
+  "InpMaxSlippagePts": 100,
+  "InpSlBufferPts": 20,
+  "InpMagic": 20260422,
+  "InpHistoryLookbackDays": 30,
+
+  "InpEnableTrailing": true,
+  "InpBeTriggerPts": 1000,
+  "InpBeOffsetPts": 50,
+  "InpTrailStartPts": 1000,
+  "InpTrailDistPts": 200,
+  "InpTrailStepPts": 100,
+
+  "InpPendingExpiryHours": 4,
+  "InpMaxPendingDistPts": 5000,
+
+  "InpMaxSpreadPts": 30,
+
+  "InpUseAtrTp": false,
+  "InpAtrPeriod": 14,
+  "InpAtrTpMult": 1.0,
+
+  "InpFixedTpPts": 100
+}

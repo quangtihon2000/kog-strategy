@@ -36,6 +36,7 @@ input bool            InpUseAtrTp   = true;          // Override signal TPs with
 input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calculation
 input int             InpAtrPeriod  = 14;             // ATR period
 input double          InpAtrTpMult  = 1.0;            // TP distance = ATR * mult
+input double          InpFixedTpPts = 0;              // Fixed TP distance in points (overrides ATR + signal; 0 = disabled)
 
 //--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
 double           g_cfg_LotPerTarget;
@@ -59,6 +60,7 @@ bool             g_cfg_UseAtrTp;
 ENUM_TIMEFRAMES  g_cfg_AtrTf;
 int              g_cfg_AtrPeriod;
 double           g_cfg_AtrTpMult;
+double           g_cfg_FixedTpPts;
 bool             g_cfg_Enabled = true;
 
 //+------------------------------------------------------------------+
@@ -309,6 +311,18 @@ bool IsSpreadOK(const string tag) {
 //| (bar đóng gần nhất). Fallback về signal TP1 nếu ATR không hợp lệ.|
 //+------------------------------------------------------------------+
 double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice) {
+   // Ưu tiên cao nhất: TP cố định bằng points (ghi đè ATR + signal)
+   if (g_cfg_FixedTpPts > 0.0) {
+      double distFixed = g_cfg_FixedTpPts * _Point;
+      double tpFixed   = (dir == POSITION_TYPE_BUY)
+                         ? NormalizeDouble(entryPrice + distFixed, _Digits)
+                         : NormalizeDouble(entryPrice - distFixed, _Digits);
+      PrintFormat("[FIXED-TP] %s pts=%.1f entry=%.5f → tp=%.5f",
+                  dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                  g_cfg_FixedTpPts, entryPrice, tpFixed);
+      return tpFixed;
+   }
+
    if (!g_cfg_UseAtrTp) {
       // Dùng TP từ signal — hành vi gốc không thay đổi
       return sig.tps[0];
@@ -1017,6 +1031,7 @@ void InitShadowsFromInputs() {
    g_cfg_AtrTf               = InpAtrTf;
    g_cfg_AtrPeriod           = InpAtrPeriod;
    g_cfg_AtrTpMult           = InpAtrTpMult;
+   g_cfg_FixedTpPts          = InpFixedTpPts;
    g_cfg_Enabled             = true;
 }
 
@@ -1053,6 +1068,7 @@ void LoadAccountConfig() {
    g_cfg_UseAtrTp            = JsonGetBool(json,   "InpUseAtrTp",            g_cfg_UseAtrTp);
    g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
+   g_cfg_FixedTpPts          = JsonGetDouble(json, "InpFixedTpPts",          g_cfg_FixedTpPts);
    // Note: InpAtrTf (ENUM_TIMEFRAMES) intentionally not overridable from JSON — keep EA input
 
    PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
