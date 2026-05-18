@@ -310,7 +310,7 @@ bool IsSpreadOK(const string tag) {
 //| dùng sig.tps[0] (signal TP1). ATR lấy trên g_cfg_AtrTf, shift=1    |
 //| (bar đóng gần nhất). Fallback về signal TP1 nếu ATR không hợp lệ.|
 //+------------------------------------------------------------------+
-double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice) {
+double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice, string &modeOut) {
    // Ưu tiên cao nhất: TP cố định bằng points (ghi đè ATR + signal)
    if (g_cfg_FixedTpPts > 0.0) {
       double distFixed = g_cfg_FixedTpPts * _Point;
@@ -320,11 +320,13 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       PrintFormat("[FIXED-TP] %s pts=%.1f entry=%.5f → tp=%.5f",
                   dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
                   g_cfg_FixedTpPts, entryPrice, tpFixed);
+      modeOut = "FIX";
       return tpFixed;
    }
 
    if (!g_cfg_UseAtrTp) {
       // Dùng TP từ signal — hành vi gốc không thay đổi
+      modeOut = "ORG";
       return sig.tps[0];
    }
 
@@ -344,6 +346,7 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       // ATR không tính được → dùng tps[0] làm fallback
       PrintFormat("[ATR-TP] ATR unavailable (handle=%d val=%.5f) — falling back to signal TP1 %.5f",
                   g_atrHandle, atrVal, sig.tps[0]);
+      modeOut = "ORG";
       return sig.tps[0];
    }
 
@@ -355,6 +358,7 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
    PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f dist=%.5f entry=%.5f → tp=%.5f",
                dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
                atrVal, g_cfg_AtrTpMult, dist, entryPrice, tp);
+   modeOut = "ATR";
    return tp;
 }
 
@@ -385,11 +389,12 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
                usePending ? PendingTypeName(pendType) : "MARKET");
 
    for (int i = 0; i < nTps; i++) {
-      string comment = StringFormat("CAE_T%d_%s", i + 1, tsStr);
+      // Dedup match theo prefix (mode tag được append sau): "CAE_T{i}_{ts}_"
+      string commentPrefix = StringFormat("CAE_T%d_%s_", i + 1, tsStr);
 
       //--- Skip TPs already accounted for (position, pending, or history)
-      if (TradeExistsByComment(comment)) {
-         PrintFormat("[SKIP] TP #%d — %s already recorded", i + 1, comment);
+      if (TradeExistsByCommentPrefix(commentPrefix)) {
+         PrintFormat("[SKIP] TP #%d — %s* already recorded", i + 1, commentPrefix);
          continue;
       }
 
@@ -423,7 +428,9 @@ bool OpenTrades(const CondeSignal &sig, const bool usePending, const double mark
       // Position count still tracks tps[] length for sizing/dedup purposes.
       // Khi g_cfg_UseAtrTp bật: mọi vị thế trong cùng signal dùng chung 1 ATR TP
       // (computed once per OpenTrades call — see GetAtrTp call below).
-      double tp     = ClampStop(dir, ComputeTp(dir, sig, sig.entry_price), false);
+      string tpMode = "ORG";
+      double tp     = ClampStop(dir, ComputeTp(dir, sig, sig.entry_price, tpMode), false);
+      string comment = commentPrefix + tpMode;
 
       bool ok;
       if (usePending) {
@@ -691,23 +698,24 @@ double SumOpenLots(const ENUM_POSITION_TYPE dir) {
 }
 
 //+------------------------------------------------------------------+
-//| Unified dedup: comment present on any open position, live        |
-//| pending order, historical entry deal, or historical order?       |
+//| Unified dedup: any open position, live pending, historical entry |
+//| deal, or historical order whose comment starts with `prefix`?    |
+//| Prefix-match (not exact) so mode tag suffix doesn't break dedup. |
 //+------------------------------------------------------------------+
-bool TradeExistsByComment(const string comment) {
+bool TradeExistsByCommentPrefix(const string prefix) {
    for (int i = PositionsTotal() - 1; i >= 0; i--) {
       ulong ticket = PositionGetTicket(i);
       if (!PositionSelectByTicket(ticket))                         continue;
       if (PositionGetString(POSITION_SYMBOL)  != _Symbol)          continue;
       if (PositionGetInteger(POSITION_MAGIC)  != (long)g_cfg_Magic)   continue;
-      if (PositionGetString(POSITION_COMMENT) == comment) return true;
+      if (StringFind(PositionGetString(POSITION_COMMENT), prefix) == 0) return true;
    }
    for (int i = OrdersTotal() - 1; i >= 0; i--) {
       ulong ticket = OrderGetTicket(i);
       if (ticket == 0)                                             continue;
       if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                continue;
       if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)         continue;
-      if (OrderGetString(ORDER_COMMENT) == comment) return true;
+      if (StringFind(OrderGetString(ORDER_COMMENT), prefix) == 0) return true;
    }
 
    datetime from = TimeCurrent() - (datetime)(g_cfg_HistoryLookbackDays * 86400);  // broker-local OK — window bounds chỉ dùng cho HistorySelect
@@ -720,7 +728,7 @@ bool TradeExistsByComment(const string comment) {
       if (HistoryDealGetString(deal, DEAL_SYMBOL)  != _Symbol)        continue;
       if (HistoryDealGetInteger(deal, DEAL_MAGIC)  != (long)g_cfg_Magic) continue;
       if (HistoryDealGetInteger(deal, DEAL_ENTRY)  != DEAL_ENTRY_IN)  continue;
-      if (HistoryDealGetString(deal, DEAL_COMMENT) == comment) return true;
+      if (StringFind(HistoryDealGetString(deal, DEAL_COMMENT), prefix) == 0) return true;
    }
    int orders = HistoryOrdersTotal();
    for (int i = orders - 1; i >= 0; i--) {
@@ -728,7 +736,7 @@ bool TradeExistsByComment(const string comment) {
       if (ord == 0) continue;
       if (HistoryOrderGetString(ord, ORDER_SYMBOL)  != _Symbol)        continue;
       if (HistoryOrderGetInteger(ord, ORDER_MAGIC)  != (long)g_cfg_Magic) continue;
-      if (HistoryOrderGetString(ord, ORDER_COMMENT) == comment) return true;
+      if (StringFind(HistoryOrderGetString(ord, ORDER_COMMENT), prefix) == 0) return true;
    }
    return false;
 }

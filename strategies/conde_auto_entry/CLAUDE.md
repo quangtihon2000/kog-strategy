@@ -33,7 +33,10 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
 | SELL | entry < market | SELL_STOP (sell on breakdown) |
 
 ### Dedup (restart-safe)
-- Each position gets comment `CAE_T{n}_{timestamp}` (e.g., `CAE_T1_1713259200`)
+- Each position gets comment `CAE_T{n}_{timestamp}_{mode}` (e.g., `CAE_T1_1713259200_ATR`)
+- `mode` ∈ `ORG` (signal TP1 or ATR fallback) / `ATR` (ATR-based) / `FIX` (fixed pts) — lets you distinguish TP source from broker history
+- Dedup uses **prefix match** (`CAE_T{n}_{ts}_`) so mode swap between runs doesn't re-fire
+- `ParseTsFromComment()` ignores the trailing `_{mode}` (`StringToInteger` stops at `_`)
 - On restart, `ScanMaxSeenTimestamp()` scans open positions + history to find last executed signal
 - Never re-fires a signal that was already executed
 
