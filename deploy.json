@@ -16,6 +16,14 @@
       "user_profile": "QuangXAU",
       "accounts": [25314214]
     },
+    "mt5_conde_2": {
+      "vps": "vps-sg",
+      "hash": "C33C0631939EE5F9489C51B0005B37BF",
+      "label": "MetaTrader 5 — CondeAutoEntry (25323746, fixed 100pts TP)",
+      "mt5_install_dir": "C:\\Program Files\\MetaTrader5_3",
+      "user_profile": "QuangXAU",
+      "accounts": [25323746]
+    },
     "mt5_2": {
       "vps": "vps-sg",
       "hash": "0696FF550C099AD93E51F997F5A09924",
@@ -43,7 +51,7 @@
     },
     "conde_auto_entry": {
       "ea_source": "strategies/conde_auto_entry/ea/CondeAutoEntryEA.mq5",
-      "deploy_to": ["mt5_main"],
+      "deploy_to": ["mt5_main", "mt5_conde_2"],
       "agent": {
         "enabled": true,
         "agent_dir": "strategies/conde_auto_entry/agent",
