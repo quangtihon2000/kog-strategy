@@ -26,5 +26,5 @@
 
   "InpUseAtrTp": true,
   "InpAtrPeriod": 14,
-  "InpAtrTpMult": 3.0
+  "InpAtrTpMult": 1.0
 }
