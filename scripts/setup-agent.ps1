@@ -64,7 +64,14 @@ foreach ($name in $strategyList) {
     if (-not $basePython) { $basePython = "C:\Program Files\Python310\python.exe" }
     $venvSitePackages = Join-Path $venvDir "Lib\site-packages"
     $mainPy = Join-Path $agentDir "main.py"
-    $envExtra = "PYTHONUNBUFFERED=1 PYTHONPATH=$venvSitePackages VIRTUAL_ENV=$venvDir"
+    # NSSM `AppEnvironmentExtra` requires each KEY=VAL as a SEPARATE argument
+    # — passing a single space-joined string makes NSSM store the whole blob
+    # under the first key, so PYTHONPATH/VIRTUAL_ENV silently never apply.
+    $envExtraArgs = @(
+        "PYTHONUNBUFFERED=1",
+        "PYTHONPATH=$venvSitePackages",
+        "VIRTUAL_ENV=$venvDir"
+    )
 
     Write-Host "[$name] Setting up agent in: $agentDir"
 
@@ -194,7 +201,7 @@ foreach ($name in $strategyList) {
             Write-Host "  nssm set $serviceName AppDirectory `"$agentDir`""
             Write-Host "  nssm set $serviceName AppStdout `"$(Join-Path $agentDir 'logs\stdout.log')`""
             Write-Host "  nssm set $serviceName AppStderr `"$(Join-Path $agentDir 'logs\stderr.log')`""
-            Write-Host "  nssm set $serviceName AppEnvironmentExtra $envExtra"
+            Write-Host "  nssm set $serviceName AppEnvironmentExtra $($envExtraArgs -join ' ')"
             Write-Host "  nssm set $serviceName AppThrottle 0"
             Write-Host "  nssm set $serviceName AppExit Default Exit"
             Write-Host "  nssm start $serviceName"
@@ -213,7 +220,7 @@ foreach ($name in $strategyList) {
             & nssm set $serviceName AppDirectory $agentDir 2>&1 | Out-Null
             & nssm set $serviceName AppStdout $stdoutLog 2>&1 | Out-Null
             & nssm set $serviceName AppStderr $stderrLog 2>&1 | Out-Null
-            & nssm set $serviceName AppEnvironmentExtra $envExtra 2>&1 | Out-Null
+            & nssm set $serviceName AppEnvironmentExtra @envExtraArgs 2>&1 | Out-Null
             # AppThrottle default (1500ms) was racing slow Python cold-start
             # (redis connect + apscheduler init) on gvfx + telegram_monitor,
             # leaving services in SERVICE_PAUSED after every deploy even
