@@ -184,6 +184,17 @@ foreach ($name in $strategyList) {
             Write-Host "  nssm set $serviceName AppStderr `"$(Join-Path $agentDir 'logs\stderr.log')`""
             Write-Host "  nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1"
             Write-Host "  nssm start $serviceName"
+        } else {
+            # Idempotent log-capture config: services installed before this block
+            # was added are missing AppStdout/AppStderr/PYTHONUNBUFFERED, so
+            # crashes leave zero trace and SERVICE_PAUSED is undebuggable.
+            # Re-applying these is safe (nssm overwrites with same value).
+            $stdoutLog = Join-Path $agentDir "logs\stdout.log"
+            $stderrLog = Join-Path $agentDir "logs\stderr.log"
+            & nssm set $serviceName AppStdout $stdoutLog 2>&1 | Out-Null
+            & nssm set $serviceName AppStderr $stderrLog 2>&1 | Out-Null
+            & nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1 2>&1 | Out-Null
+            Write-Host "[$name] OK NSSM log capture ensured (stdout/stderr + PYTHONUNBUFFERED=1)"
         }
     } else {
         Write-Host "[$name] INFO NSSM not found. To run agent manually:"
