@@ -183,6 +183,8 @@ foreach ($name in $strategyList) {
             Write-Host "  nssm set $serviceName AppStdout `"$(Join-Path $agentDir 'logs\stdout.log')`""
             Write-Host "  nssm set $serviceName AppStderr `"$(Join-Path $agentDir 'logs\stderr.log')`""
             Write-Host "  nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1"
+            Write-Host "  nssm set $serviceName AppThrottle 0"
+            Write-Host "  nssm set $serviceName AppExit Default Exit"
             Write-Host "  nssm start $serviceName"
         } else {
             # Idempotent log-capture config: services installed before this block
@@ -194,7 +196,37 @@ foreach ($name in $strategyList) {
             & nssm set $serviceName AppStdout $stdoutLog 2>&1 | Out-Null
             & nssm set $serviceName AppStderr $stderrLog 2>&1 | Out-Null
             & nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1 2>&1 | Out-Null
-            Write-Host "[$name] OK NSSM log capture ensured (stdout/stderr + PYTHONUNBUFFERED=1)"
+            # AppThrottle default (1500ms) was racing slow Python cold-start
+            # (redis connect + apscheduler init) on gvfx + telegram_monitor,
+            # leaving services in SERVICE_PAUSED after every deploy even
+            # though the process was healthy. Disable throttle entirely.
+            & nssm set $serviceName AppThrottle 0 2>&1 | Out-Null
+            # If the agent really crashes, stop the service instead of
+            # NSSM auto-restarting in a loop -- deploy fails fast and
+            # stderr.log has a single clean traceback to read.
+            & nssm set $serviceName AppExit Default Exit 2>&1 | Out-Null
+            Write-Host "[$name] OK NSSM config ensured (logs + PYTHONUNBUFFERED + throttle=0 + exit=stop)"
+
+            # Reap orphan python.exe from prior incarnation BEFORE the workflow's
+            # Start step fires. NSSM's Stop step alone isn't sufficient: the venv
+            # shim execs the base interpreter (PID changes) and NSSM occasionally
+            # loses the process handle, leaving the real worker alive after Stop.
+            # The orphan then holds singleton resources (Redis consumer name /
+            # Telegram getUpdates slot) -> the next instance crashes with exit
+            # 255 in <100ms, before NSSM attaches stderr -> undebuggable empty
+            # log. Filter by ExecutablePath (reliable on shimmed venvs) AND
+            # CommandLine as fallback.
+            $venvPython = Join-Path $agentDir ".venv\Scripts\python.exe"
+            $orphans = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.ExecutablePath -eq $venvPython -or
+                    $_.CommandLine -like "*$agentDir*"
+                }
+            foreach ($p in $orphans) {
+                Write-Host "[$name] Reaping orphan python.exe PID=$($p.ProcessId)"
+                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+            if ($orphans) { Start-Sleep -Seconds 2 }
         }
     } else {
         Write-Host "[$name] INFO NSSM not found. To run agent manually:"
