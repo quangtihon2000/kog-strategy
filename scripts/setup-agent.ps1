@@ -54,6 +54,18 @@ foreach ($name in $strategyList) {
     $requirementsFile = Join-Path $agentDir "requirements.txt"
     $pythonExe = Join-Path $venvDir "Scripts\python.exe"
 
+    # Base interpreter for NSSM Application — bypass venv shim PID-handle race.
+    # Venv shim `.venv\Scripts\python.exe` execs base interpreter on launch → PID
+    # changes → NSSM "Failed to open process handle" → fabricates exit 255 →
+    # AppExit Default Exit → SERVICE_STOPPED. Validated 2026-05-18: gvfx +
+    # telegram fail deterministically under shim, succeed under base+PYTHONPATH.
+    # Venv packages still load via PYTHONPATH=<venv>\Lib\site-packages.
+    $basePython = (Get-Command python -ErrorAction SilentlyContinue).Source
+    if (-not $basePython) { $basePython = "C:\Program Files\Python310\python.exe" }
+    $venvSitePackages = Join-Path $venvDir "Lib\site-packages"
+    $mainPy = Join-Path $agentDir "main.py"
+    $envExtra = "PYTHONUNBUFFERED=1 PYTHONPATH=$venvSitePackages VIRTUAL_ENV=$venvDir"
+
     Write-Host "[$name] Setting up agent in: $agentDir"
 
     # 0. Generate .env from GitHub secrets/variables
@@ -178,11 +190,11 @@ foreach ($name in $strategyList) {
         if (-not $serviceExists) {
             Write-Host "[$name] WARN Service '$serviceName' not installed."
             Write-Host "[$name] To install, run:"
-            Write-Host "  nssm install $serviceName `"$pythonExe`" `"$(Join-Path $agentDir 'main.py')`""
+            Write-Host "  nssm install $serviceName `"$basePython`" `"-u`" `"$mainPy`""
             Write-Host "  nssm set $serviceName AppDirectory `"$agentDir`""
             Write-Host "  nssm set $serviceName AppStdout `"$(Join-Path $agentDir 'logs\stdout.log')`""
             Write-Host "  nssm set $serviceName AppStderr `"$(Join-Path $agentDir 'logs\stderr.log')`""
-            Write-Host "  nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1"
+            Write-Host "  nssm set $serviceName AppEnvironmentExtra $envExtra"
             Write-Host "  nssm set $serviceName AppThrottle 0"
             Write-Host "  nssm set $serviceName AppExit Default Exit"
             Write-Host "  nssm start $serviceName"
@@ -193,9 +205,15 @@ foreach ($name in $strategyList) {
             # Re-applying these is safe (nssm overwrites with same value).
             $stdoutLog = Join-Path $agentDir "logs\stdout.log"
             $stderrLog = Join-Path $agentDir "logs\stderr.log"
+            # Repoint Application from venv shim → base interpreter (see comment
+            # near $basePython above for the PID-handle race). Venv deps still
+            # load via PYTHONPATH in AppEnvironmentExtra below.
+            & nssm set $serviceName Application $basePython 2>&1 | Out-Null
+            & nssm set $serviceName AppParameters "-u `"$mainPy`"" 2>&1 | Out-Null
+            & nssm set $serviceName AppDirectory $agentDir 2>&1 | Out-Null
             & nssm set $serviceName AppStdout $stdoutLog 2>&1 | Out-Null
             & nssm set $serviceName AppStderr $stderrLog 2>&1 | Out-Null
-            & nssm set $serviceName AppEnvironmentExtra PYTHONUNBUFFERED=1 2>&1 | Out-Null
+            & nssm set $serviceName AppEnvironmentExtra $envExtra 2>&1 | Out-Null
             # AppThrottle default (1500ms) was racing slow Python cold-start
             # (redis connect + apscheduler init) on gvfx + telegram_monitor,
             # leaving services in SERVICE_PAUSED after every deploy even
@@ -205,7 +223,7 @@ foreach ($name in $strategyList) {
             # NSSM auto-restarting in a loop -- deploy fails fast and
             # stderr.log has a single clean traceback to read.
             & nssm set $serviceName AppExit Default Exit 2>&1 | Out-Null
-            Write-Host "[$name] OK NSSM config ensured (logs + PYTHONUNBUFFERED + throttle=0 + exit=stop)"
+            Write-Host "[$name] OK NSSM config ensured (base-python + venv PYTHONPATH + logs + throttle=0 + exit=stop)"
 
             # Reap orphan python.exe from prior incarnation BEFORE the workflow's
             # Start step fires. NSSM's Stop step alone isn't sufficient: the venv
