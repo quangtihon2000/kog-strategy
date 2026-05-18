@@ -318,6 +318,31 @@ jobs:
             }
             if (-not $up) {
               Write-Host "[$svc] FAILED to start after 3 attempts"
+              # Diagnostic dump: read back NSSM-captured stderr + the nssm
+              # event log entries for this service. Without this the workflow
+              # only reports "SERVICE_STOPPED" and we have to RDP into the VPS
+              # to see why python actually exited.
+              $appDir = (& nssm get $svc AppDirectory 2>&1) | Out-String
+              $appDir = $appDir.Trim()
+              $stderrPath = Join-Path $appDir 'logs\stderr.log'
+              $stdoutPath = Join-Path $appDir 'logs\stdout.log'
+              Write-Host "--- [$svc] NSSM Application ---"
+              & nssm get $svc Application 2>&1 | Write-Host
+              & nssm get $svc AppParameters 2>&1 | Write-Host
+              & nssm get $svc AppEnvironmentExtra 2>&1 | Write-Host
+              Write-Host "--- [$svc] stderr.log (last 40 lines) ---"
+              if (Test-Path $stderrPath) {
+                Get-Content $stderrPath -Tail 40 -ErrorAction SilentlyContinue | Write-Host
+              } else { Write-Host "(stderr.log missing)" }
+              Write-Host "--- [$svc] stdout.log (last 20 lines) ---"
+              if (Test-Path $stdoutPath) {
+                Get-Content $stdoutPath -Tail 20 -ErrorAction SilentlyContinue | Write-Host
+              } else { Write-Host "(stdout.log missing)" }
+              Write-Host "--- [$svc] NSSM event log (last 5) ---"
+              Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProviderName -eq 'nssm' -and $_.Message -like "*$svc*" } |
+                Select-Object -First 5 TimeCreated, LevelDisplayName, Message |
+                Format-List | Out-String | Write-Host
               $failed += $svc
             }
           }
