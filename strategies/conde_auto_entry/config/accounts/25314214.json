@@ -24,7 +24,7 @@
 
   "InpMaxSpreadPts": 30,
 
-  "InpUseAtrTp": false,
+  "InpUseAtrTp": true,
   "InpAtrPeriod": 14,
   "InpAtrTpMult": 1.0
 }
