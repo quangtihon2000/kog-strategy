@@ -30,16 +30,16 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - Hard SL = entry ∓ `InpMaxLossPtsPerOrder * _Point` (default 10000 pts, clamped).
 
 ### ATR-derived step/tp (`use_atr`)
-- Khi `signal.use_atr = true` (default): EA derive `effStep` / `effTp` từ 2 handle ATR riêng (khác timeframe):
+- Khi `signal.use_atr = true` (default): EA derive `effStep` / `effTp` từ 2 handle ATR riêng (`InpAtrStepTf` / `InpAtrTpTf`, default cả hai `PERIOD_M15`):
   - `effStep = round(ATR_StepTf_pts * InpAtrStepMult)` — ATR trên `InpAtrStepTf` (default `PERIOD_M15`).
-  - `effTp   = round(ATR_TpTf_pts   * InpAtrTpMult)`   — ATR trên `InpAtrTpTf`   (default `PERIOD_M5`).
+  - `effTp   = round(ATR_TpTf_pts   * InpAtrTpMult)`   — ATR trên `InpAtrTpTf`   (default `PERIOD_M15`).
   - Step clamp `[InpAtrMinPts, InpAtrMaxPts]` (default 500..5000 pts).
   - TP   clamp `[InpAtrMinPts, InpAtrTpMaxPts]` (default 500..1000 pts) — TP ceiling thấp hơn step để giữ TP gần entry.
   - Cả 2 handle dùng shift=1 (bar đóng gần nhất) để tránh flap mỗi tick trong bar đang chạy.
 - Fallback về `signal.step` / `signal.tp` khi: handle invalid (init failed), `CopyBuffer()` chưa có data, hoặc giá trị NaN/≤0. Mode tag = `F`. Fallback áp dụng atomic: cả step và tp cùng fallback nếu một trong hai handle fail.
 - Khi `signal.use_atr = false`: EA dùng thẳng `signal.step` / `signal.tp` — không cần ATR. Mode tag = `S`.
 - 2 handle `iATR` được tạo 1 lần trong `OnInit`, release trong `OnDeinit` qua `IndicatorRelease`.
-- ATR-related inputs: `InpAtrStepTf` (default `PERIOD_M15`), `InpAtrTpTf` (default `PERIOD_M5`), `InpAtrPeriod` (14), `InpAtrStepMult` (0.9), `InpAtrTpMult` (0.9), `InpAtrMinPts` (500), `InpAtrMaxPts` (5000, step ceiling), `InpAtrTpMaxPts` (1000, tp ceiling).
+- ATR-related inputs: `InpAtrStepTf` (default `PERIOD_M15`), `InpAtrTpTf` (default `PERIOD_M15`), `InpAtrPeriod` (14), `InpAtrStepMult` (0.9), `InpAtrTpMult` (0.9), `InpAtrMinPts` (500), `InpAtrMaxPts` (5000, step ceiling), `InpAtrTpMaxPts` (1000, tp ceiling).
 
 ### Signal lifecycle
 - New `timestamp` → `g_signalActive = true`, cache `g_currentSig`.
