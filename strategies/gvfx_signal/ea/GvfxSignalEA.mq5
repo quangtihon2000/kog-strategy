@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.01"
+#property version     "1.02"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -279,9 +279,11 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mo
       return;
    }
    double buf[];
+   // shift=1: lấy bar đóng gần nhất (bar 0 đang chạy → giá trị flap mỗi tick)
    if (g_atrHandle == INVALID_HANDLE
-       || CopyBuffer(g_atrHandle, 0, 0, 1, buf) <= 0
-       || buf[0] <= 0) {
+       || CopyBuffer(g_atrHandle, 0, 1, 1, buf) <= 0
+       || buf[0] <= 0
+       || !MathIsValidNumber(buf[0])) {
       stepPts = sig.step;
       tpPts   = sig.tp;
       mode    = "F";
