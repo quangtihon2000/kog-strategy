@@ -13,8 +13,9 @@
   "InpHistoryLookbackDays": 7,
 
   "InpAtrPeriod": 14,
-  "InpAtrStepMult": 1.0,
-  "InpAtrTpMult": 0.95,
+  "InpAtrStepMult": 0.9,
+  "InpAtrTpMult": 0.9,
   "InpAtrMinPts": 500,
-  "InpAtrMaxPts": 5000
+  "InpAtrMaxPts": 5000,
+  "InpAtrTpMaxPts": 1000
 }

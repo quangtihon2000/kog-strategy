@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.02"
+#property version     "1.03"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -18,12 +18,14 @@ input int    InpMaxLossPtsPerOrder  = 10000;         // Hard SL distance per ord
 input int    InpEodCutLeadMins      = 5;             // Cut N minutes before broker's last session close (-1 disables)
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
-input ENUM_TIMEFRAMES InpAtrTimeframe = PERIOD_M15;  // ATR timeframe (used when signal.use_atr=true)
-input int    InpAtrPeriod           = 14;            // ATR period
-input double InpAtrStepMult         = 1.0;           // step = ATR * mult (when use_atr)
-input double InpAtrTpMult           = 0.95;          // tp   = ATR * mult (when use_atr)
+input ENUM_TIMEFRAMES InpAtrStepTf   = PERIOD_M15;   // ATR timeframe for STEP (when use_atr)
+input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M5;    // ATR timeframe for TP   (when use_atr)
+input int    InpAtrPeriod           = 14;            // ATR period (shared by step + tp handles)
+input double InpAtrStepMult         = 0.9;           // step = ATR_StepTf * mult (when use_atr)
+input double InpAtrTpMult           = 0.9;           // tp   = ATR_TpTf   * mult (when use_atr)
 input int    InpAtrMinPts           = 500;           // ATR-derived step/tp floor (points)
-input int    InpAtrMaxPts           = 5000;          // ATR-derived step/tp ceiling (points)
+input int    InpAtrMaxPts           = 5000;          // ATR-derived STEP ceiling (points)
+input int    InpAtrTpMaxPts         = 1000;          // ATR-derived TP   ceiling (points)
 
 //+------------------------------------------------------------------+
 //| Signal data structure                                            |
@@ -53,7 +55,8 @@ datetime g_dailyAnchor   = 0;
 double   g_dailyRealized = 0;
 datetime g_eodCutDoneAnchor = 0;  // == g_dailyAnchor while today's EOD cut is in effect
 GvfxSig  g_currentSig;
-int      g_atrHandle    = INVALID_HANDLE;
+int      g_atrStepHandle = INVALID_HANDLE;  // ATR for effStep (TF = g_cfg_AtrStepTf)
+int      g_atrTpHandle   = INVALID_HANDLE;  // ATR for effTp   (TF = g_cfg_AtrTpTf)
 
 // === Shadow globals: init from inputs in OnInit, overlaid by per-account JSON config ===
 ulong             g_cfg_Magic;
@@ -64,12 +67,14 @@ int               g_cfg_MaxLossPtsPerOrder;
 int               g_cfg_EodCutLeadMins;
 int               g_cfg_MaxSpreadPts;
 int               g_cfg_HistoryLookbackDays;
-ENUM_TIMEFRAMES   g_cfg_AtrTimeframe;
+ENUM_TIMEFRAMES   g_cfg_AtrStepTf;
+ENUM_TIMEFRAMES   g_cfg_AtrTpTf;
 int               g_cfg_AtrPeriod;
 double            g_cfg_AtrStepMult;
 double            g_cfg_AtrTpMult;
 int               g_cfg_AtrMinPts;
-int               g_cfg_AtrMaxPts;
+int               g_cfg_AtrMaxPts;       // ceiling for step
+int               g_cfg_AtrTpMaxPts;     // ceiling for tp
 bool              g_cfg_Enabled = true;
 
 //+------------------------------------------------------------------+
@@ -80,10 +85,14 @@ int OnInit() {
    g_trade.SetExpertMagicNumber(g_cfg_Magic);
    ZeroMemory(g_currentSig);
 
-   g_atrHandle = iATR(_Symbol, g_cfg_AtrTimeframe, g_cfg_AtrPeriod);
-   if (g_atrHandle == INVALID_HANDLE)
-      PrintFormat("[GVFX] iATR(%s, tf=%d, period=%d) failed — fallback to signal step/tp",
-                  _Symbol, (int)g_cfg_AtrTimeframe, g_cfg_AtrPeriod);
+   g_atrStepHandle = iATR(_Symbol, g_cfg_AtrStepTf, g_cfg_AtrPeriod);
+   g_atrTpHandle   = iATR(_Symbol, g_cfg_AtrTpTf,   g_cfg_AtrPeriod);
+   if (g_atrStepHandle == INVALID_HANDLE)
+      PrintFormat("[GVFX] iATR step (%s, tf=%d, period=%d) failed — fallback to signal step",
+                  _Symbol, (int)g_cfg_AtrStepTf, g_cfg_AtrPeriod);
+   if (g_atrTpHandle == INVALID_HANDLE)
+      PrintFormat("[GVFX] iATR tp (%s, tf=%d, period=%d) failed — fallback to signal tp",
+                  _Symbol, (int)g_cfg_AtrTpTf, g_cfg_AtrPeriod);
 
    g_signalFile = g_cfg_SignalSubdir + "\\"
                 + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN))
@@ -122,9 +131,13 @@ int OnInit() {
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-   if (g_atrHandle != INVALID_HANDLE) {
-      IndicatorRelease(g_atrHandle);
-      g_atrHandle = INVALID_HANDLE;
+   if (g_atrStepHandle != INVALID_HANDLE) {
+      IndicatorRelease(g_atrStepHandle);
+      g_atrStepHandle = INVALID_HANDLE;
+   }
+   if (g_atrTpHandle != INVALID_HANDLE) {
+      IndicatorRelease(g_atrTpHandle);
+      g_atrTpHandle = INVALID_HANDLE;
    }
    PrintFormat("[GVFX] Removed. Reason: %d", reason);
 }
@@ -278,25 +291,31 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mo
       mode    = "S";
       return;
    }
-   double buf[];
-   // shift=1: lấy bar đóng gần nhất (bar 0 đang chạy → giá trị flap mỗi tick)
-   if (g_atrHandle == INVALID_HANDLE
-       || CopyBuffer(g_atrHandle, 0, 1, 1, buf) <= 0
-       || buf[0] <= 0
-       || !MathIsValidNumber(buf[0])) {
+   // shift=1 = bar đóng gần nhất; step và tp xài 2 handle khác TF
+   double stepBuf[], tpBuf[];
+   bool stepOk = (g_atrStepHandle != INVALID_HANDLE
+                  && CopyBuffer(g_atrStepHandle, 0, 1, 1, stepBuf) == 1
+                  && stepBuf[0] > 0
+                  && MathIsValidNumber(stepBuf[0]));
+   bool tpOk   = (g_atrTpHandle != INVALID_HANDLE
+                  && CopyBuffer(g_atrTpHandle, 0, 1, 1, tpBuf) == 1
+                  && tpBuf[0] > 0
+                  && MathIsValidNumber(tpBuf[0]));
+   if (!stepOk || !tpOk) {
       stepPts = sig.step;
       tpPts   = sig.tp;
       mode    = "F";
       return;
    }
-   double atrPrice = buf[0];
-   int    pt       = (_Point > 0) ? (int)MathRound(atrPrice / _Point) : 0;
-   int    stepRaw  = (int)MathRound(pt * g_cfg_AtrStepMult);
-   int    tpRaw    = (int)MathRound(pt * g_cfg_AtrTpMult);
-   int    lo       = MathMax(1, g_cfg_AtrMinPts);
-   int    hi       = MathMax(lo, g_cfg_AtrMaxPts);
-   stepPts = MathMax(lo, MathMin(hi, stepRaw));
-   tpPts   = MathMax(lo, MathMin(hi, tpRaw));
+   int lo     = MathMax(1, g_cfg_AtrMinPts);
+   int stepHi = MathMax(lo, g_cfg_AtrMaxPts);
+   int tpHi   = MathMax(lo, g_cfg_AtrTpMaxPts);
+   int stepPt = (int)MathRound(stepBuf[0] / _Point);
+   int tpPt   = (int)MathRound(tpBuf[0]   / _Point);
+   int stepRaw = (int)MathRound(stepPt * g_cfg_AtrStepMult);
+   int tpRaw   = (int)MathRound(tpPt   * g_cfg_AtrTpMult);
+   stepPts = MathMax(lo, MathMin(stepHi, stepRaw));
+   tpPts   = MathMax(lo, MathMin(tpHi,   tpRaw));
    mode    = "A";
 }
 
@@ -916,12 +935,14 @@ void InitShadowsFromInputs() {
    g_cfg_EodCutLeadMins      = InpEodCutLeadMins;
    g_cfg_MaxSpreadPts        = InpMaxSpreadPts;
    g_cfg_HistoryLookbackDays = InpHistoryLookbackDays;
-   g_cfg_AtrTimeframe        = InpAtrTimeframe;
+   g_cfg_AtrStepTf           = InpAtrStepTf;
+   g_cfg_AtrTpTf             = InpAtrTpTf;
    g_cfg_AtrPeriod           = InpAtrPeriod;
    g_cfg_AtrStepMult         = InpAtrStepMult;
    g_cfg_AtrTpMult           = InpAtrTpMult;
    g_cfg_AtrMinPts           = InpAtrMinPts;
    g_cfg_AtrMaxPts           = InpAtrMaxPts;
+   g_cfg_AtrTpMaxPts         = InpAtrTpMaxPts;
    g_cfg_Enabled             = true;
 }
 
@@ -948,12 +969,13 @@ void LoadAccountConfig() {
    g_cfg_EodCutLeadMins      = (int)JsonGetLong  (json, "InpEodCutLeadMins",      (long)g_cfg_EodCutLeadMins);
    g_cfg_MaxSpreadPts        = (int)JsonGetLong  (json, "InpMaxSpreadPts",        (long)g_cfg_MaxSpreadPts);
    g_cfg_HistoryLookbackDays = (int)JsonGetLong  (json, "InpHistoryLookbackDays", (long)g_cfg_HistoryLookbackDays);
-   // InpAtrTimeframe intentionally skipped — enum cast from arbitrary int is unsafe
+   // InpAtrStepTf / InpAtrTpTf intentionally skipped — enum cast from arbitrary int is unsafe
    g_cfg_AtrPeriod           = (int)JsonGetLong  (json, "InpAtrPeriod",           (long)g_cfg_AtrPeriod);
    g_cfg_AtrStepMult         = JsonGetDouble(json, "InpAtrStepMult",         g_cfg_AtrStepMult);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
    g_cfg_AtrMinPts           = (int)JsonGetLong  (json, "InpAtrMinPts",           (long)g_cfg_AtrMinPts);
    g_cfg_AtrMaxPts           = (int)JsonGetLong  (json, "InpAtrMaxPts",           (long)g_cfg_AtrMaxPts);
+   g_cfg_AtrTpMaxPts         = (int)JsonGetLong  (json, "InpAtrTpMaxPts",         (long)g_cfg_AtrTpMaxPts);
 
    PrintFormat("[Config] Loaded acc=%I64d enabled=%s magic=%I64u lot=%.2f maxpos=%d",
                account, g_cfg_Enabled ? "true" : "false",
