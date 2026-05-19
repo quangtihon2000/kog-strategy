@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.09"
+#property version     "1.10"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -31,8 +31,8 @@ input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to plac
 
 input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
 
-// --- ATR-based TP override (ghi đè TP từ signal bằng ATR * hệ số)
-input bool            InpUseAtrTp   = true;          // Override signal TPs with ATR-based TP (default ON)
+// --- ATR-based TP (so với signal TP1, lấy TP gần entry hơn)
+input bool            InpUseAtrTp   = true;          // Enable ATR TP candidate; final TP = min-distance(ATR_TP, signal TP1)
 input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calculation
 input int             InpAtrPeriod  = 14;             // ATR period
 input double          InpAtrTpMult  = 1.0;            // TP distance = ATR * mult
@@ -306,9 +306,14 @@ bool IsSpreadOK(const string tag) {
 }
 
 //+------------------------------------------------------------------+
-//| Tính TP cho một lệnh: ATR-based nếu g_cfg_UseAtrTp bật, ngược lại  |
-//| dùng sig.tps[0] (signal TP1). ATR lấy trên g_cfg_AtrTf, shift=1    |
-//| (bar đóng gần nhất). Fallback về signal TP1 nếu ATR không hợp lệ.|
+//| Tính TP cho một lệnh:                                              |
+//|  - FixedTpPts > 0      → TP cố định (override tất cả)             |
+//|  - UseAtrTp = false    → dùng signal TP1                          |
+//|  - UseAtrTp = true     → tính ATR TP rồi so với signal TP1,       |
+//|                          chọn TP nào GẦN entryPrice hơn (an toàn  |
+//|                          hơn, exit sớm hơn). ATR lấy shift=1 trên |
+//|                          g_cfg_AtrTf. Fallback signal TP1 nếu ATR |
+//|                          không hợp lệ.                            |
 //+------------------------------------------------------------------+
 double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const double entryPrice, string &modeOut) {
    // Ưu tiên cao nhất: TP cố định bằng points (ghi đè ATR + signal)
@@ -324,10 +329,12 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       return tpFixed;
    }
 
+   double sigTp = sig.tps[0];
+
    if (!g_cfg_UseAtrTp) {
       // Dùng TP từ signal — hành vi gốc không thay đổi
       modeOut = "ORG";
-      return sig.tps[0];
+      return sigTp;
    }
 
    double atrVal = 0.0;
@@ -345,20 +352,26 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
    if (!atrOk || atrVal <= 0.0) {
       // ATR không tính được → dùng tps[0] làm fallback
       PrintFormat("[ATR-TP] ATR unavailable (handle=%d val=%.5f) — falling back to signal TP1 %.5f",
-                  g_atrHandle, atrVal, sig.tps[0]);
+                  g_atrHandle, atrVal, sigTp);
       modeOut = "ORG";
-      return sig.tps[0];
+      return sigTp;
    }
 
-   double dist = atrVal * g_cfg_AtrTpMult;
-   double tp   = (dir == POSITION_TYPE_BUY)
-                 ? NormalizeDouble(entryPrice + dist, _Digits)
-                 : NormalizeDouble(entryPrice - dist, _Digits);
+   double atrDist = atrVal * g_cfg_AtrTpMult;
+   double atrTp   = (dir == POSITION_TYPE_BUY)
+                    ? NormalizeDouble(entryPrice + atrDist, _Digits)
+                    : NormalizeDouble(entryPrice - atrDist, _Digits);
 
-   PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f dist=%.5f entry=%.5f → tp=%.5f",
+   // So sánh distance từ entryPrice → chọn TP gần hơn (exit sớm hơn = an toàn hơn)
+   double distAtr = MathAbs(atrTp - entryPrice);
+   double distSig = MathAbs(sigTp - entryPrice);
+   bool   pickAtr = (distAtr <= distSig);
+   double tp      = pickAtr ? atrTp : sigTp;
+   modeOut        = pickAtr ? "ATR" : "ORG";
+
+   PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f atrTp=%.5f (dist=%.5f) sigTp=%.5f (dist=%.5f) → pick=%s tp=%.5f",
                dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
-               atrVal, g_cfg_AtrTpMult, dist, entryPrice, tp);
-   modeOut = "ATR";
+               atrVal, g_cfg_AtrTpMult, atrTp, distAtr, sigTp, distSig, modeOut, tp);
    return tp;
 }
 

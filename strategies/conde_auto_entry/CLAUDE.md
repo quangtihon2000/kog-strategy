@@ -34,7 +34,8 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
 
 ### Dedup (restart-safe)
 - Each position gets comment `CAE_T{n}_{timestamp}_{mode}` (e.g., `CAE_T1_1713259200_ATR`)
-- `mode` ∈ `ORG` (signal TP1 or ATR fallback) / `ATR` (ATR-based) / `FIX` (fixed pts) — lets you distinguish TP source from broker history
+- `mode` ∈ `ORG` (signal TP1 won the min-distance compare, or ATR fallback) / `ATR` (ATR TP won the compare) / `FIX` (fixed pts override) — lets you distinguish TP source from broker history
+- When `InpUseAtrTp=true`: TP = min-distance(ATR_TP, signal TP1) from entry — picks whichever exits sooner
 - Dedup uses **prefix match** (`CAE_T{n}_{ts}_`) so mode swap between runs doesn't re-fire
 - `ParseTsFromComment()` ignores the trailing `_{mode}` (`StringToInteger` stops at `_`)
 - On restart, `ScanMaxSeenTimestamp()` scans open positions + history to find last executed signal
