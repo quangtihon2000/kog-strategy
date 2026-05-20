@@ -51,6 +51,8 @@ class GvfxSignal:
     low: float = 0.0          # BUY entry floor (price). 0 = disabled
     high: float = 0.0         # SELL entry ceiling (price). 0 = disabled
     use_atr: bool = True      # EA derives step/tp from ATR; signal step/tp become fallback
+    active: bool = True       # False → operator deactivated; EA blocks new entries
+    close_all: bool = False   # when deactivated: True → EA also closes open positions
 
     # ------------------------------------------------------------------
     def validate(self) -> None:
@@ -99,6 +101,8 @@ class GvfxSignal:
             low=float(d.get("low", 0) or 0),
             high=float(d.get("high", 0) or 0),
             use_atr=_parse_bool(d.get("use_atr"), default=True),
+            active=_parse_bool(d.get("active"), default=True),
+            close_all=_parse_bool(d.get("close_all"), default=False),
         )
 
     # ------------------------------------------------------------------

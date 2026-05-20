@@ -20,12 +20,48 @@ from signal_writer import SignalWriter
 log = logging.getLogger(__name__)
 
 
+_TRUE_TOKENS = frozenset({"1", "true", "yes", "on", "y", "t"})
+
+
+def handle_deactivate(consumer: RedisConsumer, writers: list, msg_id, data: dict) -> None:
+    """Rewrite every account's signal file with active=false for /cancel_zone.
+
+    `close_all` (optional, default false) is forwarded to the signal file so
+    the EA knows whether to also close open positions. Always ACKs — a
+    deactivate that finds nothing to cancel is not an error.
+    """
+    close_all = str(data.get("close_all", "")).strip().lower() in _TRUE_TOKENS
+    total = 0
+    for writer in writers:
+        try:
+            if writer.deactivate(close_all=close_all):
+                total += 1
+                log.info("[%s] Signal DEACTIVATED by operator (msg %s, close_all=%s)",
+                         writer.account_id, msg_id, close_all)
+            else:
+                log.info("[%s] Deactivate no-op — no active signal on disk",
+                         writer.account_id)
+        except Exception as exc:
+            log.error("[%s] Deactivate failed: %s", writer.account_id, exc)
+
+    log.info("Deactivate msg %s done — %d signal file(s) cancelled (close_all=%s)",
+             msg_id, total, close_all)
+    consumer.ack(msg_id)
+
+
 def run_once(consumer: RedisConsumer, writers: list) -> None:
     result = consumer.consume_one(block_ms=5000)
     if result is None:
         return   # timeout — nothing in the stream
 
     msg_id, data = result
+
+    # Control message: deactivate the current signal (operator /cancel_zone).
+    # Rewrites every account's signal file with active=false so the EA stops
+    # opening new positions; open positions keep their TP/SL and trailing.
+    if str(data.get("action", "")).lower() == "deactivate":
+        handle_deactivate(consumer, writers, msg_id, data)
+        return
 
     # Parse message
     try:
