@@ -858,6 +858,15 @@ bool LoadSignal(const string filename, CondeSignal &sig) {
    if (entry <= 0) { Print("[Validation] entry_price <= 0");       return false; }
    if (sl    <= 0) { Print("[Validation] sl <= 0");                return false; }
 
+   //--- Hard cap: khoảng cách entry→SL không được quá 2000 pts (200 pips XAUUSD)
+   const double SL_MAX_PTS = 2000.0;
+   double slDistPts = MathAbs(entry - sl) / _Point;
+   if (slDistPts > SL_MAX_PTS) {
+      PrintFormat("[Validation] SL too wide — dist=%.0f pts > %.0f pts (entry=%.5f sl=%.5f)",
+                  slDistPts, SL_MAX_PTS, entry, sl);
+      return false;
+   }
+
    for (int i = 0; i < ArraySize(tps); i++) {
       if (tps[i] <= 0) {
          PrintFormat("[Validation] tps[%d] <= 0 (%.5f)", i, tps[i]);
