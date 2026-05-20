@@ -46,6 +46,10 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - Target reached → `g_signalActive = false`. Positions đang mở vẫn chạy theo TP/SL, không vào thêm.
   - BUY: `bid ≥ target` → inactive
   - SELL: `ask ≤ target` → inactive
+- **Operator cancel**: signal JSON có 2 field `active` (default `true`) và `close_all` (default `false`). Operator gõ `/cancel_gvfx` → Telegram hiện 2 nút chọn scope → agent ghi đè file signal với `active=false` + `close_all` tương ứng (**giữ nguyên timestamp**). EA poll thấy `active=false` trên cùng ts, trên cạnh active→inactive:
+  - `close_all=false` (default): chỉ set `g_signalActive=false` → ngừng vào lệnh mới; positions đang mở giữ TP/SL.
+  - `close_all=true`: thêm `CloseAllAndCancel()` **đóng hết positions + cancel pendings** của magic+symbol.
+  Cả 2 mode đều gọi `MarkSignalReached()` (kill survive qua redeploy). Không có resume — muốn trade lại thì publish signal mới (ts mới). Nếu `close_all=true` và EA bị restart giữa lúc cancel chưa kịp đóng, `OnInit` set cờ `g_pendingCancelSweep` → tick đầu sweep nốt lệnh sót.
 - **Restart-safe deactivation**: khi target reached, EA persist ts vào GlobalVariable `GVFX_Reached_{magic}_{symbol}`. Cả `OnInit` (recover signal state) lẫn `OnTick` (new-signal detection) đều consult biến này — nếu `sig.timestamp == GVFX_Reached_*` thì giữ `g_signalActive = false` bất kể giá hiện tại đã rút khỏi target hay chưa. Tránh các kịch bản: (a) BUY target chạm rồi bid hồi lại dưới target, redeploy EA → tưởng signal còn active và mở lệnh mới trên signal đã chết; (b) deploy lên chart mới / fresh terminal khi positions/history rotate ra ngoài `InpHistoryLookbackDays` → `ScanMaxSeenTimestamp` trả 0, OnInit không match `probe.timestamp == g_lastSigTs`, OnTick treat file ts như signal mới và resurrect. Biến này tự overwrite khi signal mới reached, không cần cleanup.
 
 ### EOD cut
@@ -76,7 +80,9 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   "tp": 500,
   "low": 0.0,
   "high": 0.0,
-  "use_atr": true
+  "use_atr": true,
+  "active": true,
+  "close_all": false
 }
 ```
 
@@ -86,6 +92,8 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
   - SELL: chỉ vào lệnh khi `entryPrice < high`.
   - Nếu cả hai > 0 thì phải `low < high`.
 - `use_atr`: bool, default `true`. Khi true → EA derive step/tp từ iATR; signal `step`/`tp` thành fallback. Xem section _ATR-derived step/tp_.
+- `active`: bool, default `true`. `false` → operator đã hủy signal qua `/cancel_gvfx`; EA chặn entry mới. Agent set field này bằng cách rewrite file (giữ ts) khi nhận control message `action=deactivate` trên stream `gvfx_signals`.
+- `close_all`: bool, default `false`. Chỉ có ý nghĩa khi `active=false`. `true` → EA còn đóng hết positions + cancel pendings; `false` → chỉ chặn entry, positions giữ nguyên.
 - `timestamp` **NOT re-stamped** — producer-supplied, preserved end-to-end. Đây là dedup identity nhúng vào position comment.
 - File path: `data/{account}_{symbol}.json` (e.g., `data/5100000_XAUUSD.json`).
 - EA reads from `MQL5/Files/GvfxSignalEA/{account}_{symbol}.json`.

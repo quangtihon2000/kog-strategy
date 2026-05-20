@@ -30,6 +30,7 @@ New timestamp → breakout detected (M15 close) → scalp/normal/mid entries
 - **R4/R6**: SL does NOT end the direction. If all positions drain without T1 TP, re-entry flags re-arm
 - **R12**: Scalp positions excluded from trailing stop management
 - **R13**: Signal deactivated only when BOTH directions are done
+- **R14 (operator cancel)**: Signal JSON has two optional fields — `active` (default `true`) and `close_all` (default `false`). Operator runs `/cancel_zone` on Telegram → two inline buttons pick the scope → agent rewrites the current signal file with `active=false` + the chosen `close_all` (**timestamp preserved**). EA polls the same-ts file → sets `g_sig.valid=false` (no new scalp/normal/mid entries). When `close_all=true` it also runs `CloseAllAndCancel()` to **close all open positions + cancel pendings** of this magic+symbol; `close_all=false` leaves them running their TP/SL + trailing. No resume — publish a fresh signal to trade again. `g_buyDone`/`g_sellDone` global persistence is untouched.
 
 ## Agent Signal Format
 
@@ -40,11 +41,15 @@ New timestamp → breakout detected (M15 close) → scalp/normal/mid entries
   "redbox_upper": 2350.0,
   "redbox_lower": 2340.0,
   "targets_above": [2360.0, 2370.0],
-  "targets_below": [2330.0, 2320.0]
+  "targets_below": [2330.0, 2320.0],
+  "active": true,
+  "close_all": false
 }
 ```
 
 - `timestamp` is **NOT re-stamped** — producer-supplied (unix epoch seconds), preserved end-to-end
+- `active` is optional (default `true`). `false` → operator cancelled the signal via `/cancel_zone`; the EA blocks new entries. The agent sets it by rewriting the file (timestamp kept) on a `action=deactivate` control message on the `zone_signals` stream.
+- `close_all` is optional (default `false`). Only meaningful when `active=false`. `true` → the EA also closes all open positions + cancels pendings; `false` → only blocks new entries.
 - This is critical because `timestamp` is embedded in each position's comment
   (`ZB_T{n}_{ts}`, `ZS_T{n}_{ts}`, scalp/mid variants) and strategy-stats joins
   `ZoneOutcome.signal_ts ↔ ZoneSignal.signal_ts` on that same value

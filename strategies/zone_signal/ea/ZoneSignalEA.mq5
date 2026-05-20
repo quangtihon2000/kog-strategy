@@ -61,6 +61,8 @@ struct ZoneSignal {
    double   redbox_lower;
    double   targets_above[];
    double   targets_below[];
+   bool     active;      // false → operator deactivated the signal; block new entries
+   bool     close_all;   // when deactivated: true → also close open positions + pendings
    bool     valid;
 };
 
@@ -533,12 +535,56 @@ void GcStaleGlobals(const ulong currentTs) {
 }
 
 //+------------------------------------------------------------------+
+//| Close all positions + cancel pendings of this magic+symbol.       |
+//| Used by the operator cancel kill switch. Idempotent — a re-run    |
+//| with nothing open is a harmless no-op.                            |
+//+------------------------------------------------------------------+
+void CloseAllAndCancel() {
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong t = PositionGetTicket(i);
+      if (!PositionSelectByTicket(t))                               continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic)  continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)            continue;
+      bool ok = g_trade.PositionClose(t);
+      PrintFormat("[Zone cancel] Close #%d  %s", t,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong t = OrderGetTicket(i);
+      if (t == 0)                                                   continue;
+      if (OrderGetInteger(ORDER_MAGIC)  != (long)g_cfg_Magic)       continue;
+      if (OrderGetString(ORDER_SYMBOL)  != _Symbol)                 continue;
+      bool ok = g_trade.OrderDelete(t);
+      PrintFormat("[Zone cancel] Cancel pending #%d  %s", t,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Poll JSON file and apply if a new timestamp is detected          |
 //+------------------------------------------------------------------+
 void CheckSignalFile() {
    ZoneSignal sig;
    if (!LoadSignal(g_signalFile, sig)) return;
-   if (sig.timestamp == g_lastSigTs) return;   // same signal — skip
+
+   if (sig.timestamp == g_lastSigTs) {
+      //--- Same signal — normally skip. But the operator may have rewritten
+      //    the file with active=false (same ts) via /cancel_zone. Honour it:
+      //    deactivate so no new entry fires; if close_all is set, also close
+      //    all open positions + cancel pendings of this magic+symbol.
+      //    Done-flag persistence (g_buyDone/g_sellDone globals) is untouched.
+      if (!sig.active && g_sig.valid) {
+         g_sig.valid = false;
+         if (sig.close_all) {
+            Print("[Signal] Cancelled by operator (close_all) — closing all positions + pendings");
+            CloseAllAndCancel();
+         } else {
+            Print("[Signal] Deactivated by operator — new entries blocked; open positions continue");
+         }
+      }
+      return;
+   }
+
    ApplySignal(sig);                            // new timestamp → load it
 }
 
@@ -571,7 +617,15 @@ void ApplySignal(const ZoneSignal &sig) {
    //    file on disk still carries a ts whose T1 already fired.
    GcStaleGlobals(sig.timestamp);
    HydrateDirectionDone(sig.timestamp);
-   if (g_buyDone && g_sellDone) {
+   if (!sig.active) {
+      g_sig.valid = false;
+      Print("[Signal] Applied as deactivated — operator cancelled this signal");
+      //--- Restart during a close_all cancel: sweep any positions/pendings
+      //    the kill switch couldn't reach. CheckSignalFile only runs from
+      //    OnTick, so the trade context is ready. Idempotent — no-op if
+      //    nothing open. Skipped when close_all was not requested.
+      if (sig.close_all) CloseAllAndCancel();
+   } else if (g_buyDone && g_sellDone) {
       g_sig.valid = false;
       Print("[Signal] Rehydrated as fully done — both directions had reached T1");
    } else if (g_buyDone || g_sellDone) {
@@ -987,6 +1041,12 @@ bool LoadSignal(const string filename, ZoneSignal &sig) {
    sig.redbox_lower = StringToDouble(rbl_str);
    ArrayCopy(sig.targets_above, ta);
    ArrayCopy(sig.targets_below, tb);
+   //--- active is optional (missing/null → true). Operator sets active=false
+   //    via Telegram /cancel_zone to deactivate the signal. close_all
+   //    (optional, default false) decides whether the EA also closes open
+   //    positions; default keeps them running.
+   sig.active       = JsonGetBool(json, "active", true);
+   sig.close_all    = JsonGetBool(json, "close_all", false);
    sig.valid        = true;
    return true;
 }

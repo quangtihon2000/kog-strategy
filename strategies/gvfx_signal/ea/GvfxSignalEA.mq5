@@ -40,6 +40,8 @@ struct GvfxSig {
    double   low;         // BUY entry floor (price). 0 = disabled
    double   high;        // SELL entry ceiling (price). 0 = disabled
    bool     use_atr;     // true → EA derives step/tp from ATR (signal step/tp = fallback)
+   bool     active;      // false → operator deactivated the signal; block new entries
+   bool     close_all;   // when deactivated: true → also close open positions + pendings
    bool     valid;
 };
 
@@ -54,6 +56,7 @@ double   g_floating      = 0;
 datetime g_dailyAnchor   = 0;
 double   g_dailyRealized = 0;
 datetime g_eodCutDoneAnchor = 0;  // == g_dailyAnchor while today's EOD cut is in effect
+bool     g_pendingCancelSweep = false;  // OnInit found signal cancelled → sweep leftovers on first tick
 GvfxSig  g_currentSig;
 int      g_atrStepHandle = INVALID_HANDLE;  // ATR for effStep (TF = g_cfg_AtrStepTf)
 int      g_atrTpHandle   = INVALID_HANDLE;  // ATR for effTp   (TF = g_cfg_AtrTpTf)
@@ -107,7 +110,14 @@ int OnInit() {
    GvfxSig probe;
    if (LoadSignal(g_signalFile, probe) && probe.timestamp == g_lastSigTs && g_lastSigTs > 0) {
       g_currentSig    = probe;
-      g_signalActive  = !TargetReached(probe) && !SignalAlreadyReached(probe.timestamp);
+      g_signalActive  = probe.active
+                        && !TargetReached(probe)
+                        && !SignalAlreadyReached(probe.timestamp);
+      //--- Redeploy/re-attach during an operator close_all cancel: the
+      //    kill switch's close may not have run before the EA was killed.
+      //    Defer the sweep to the first tick (trade context is reliably
+      //    ready there). Only when close_all was requested.
+      if (!probe.active && probe.close_all) g_pendingCancelSweep = true;
    }
 
    RefreshDailyAnchor();
@@ -329,6 +339,16 @@ void OnTick() {
 
    RefreshOpenStats(g_openCount, g_floating);
 
+   //--- Deferred cancel sweep: OnInit recovered a cancelled signal (active=false).
+   //    Close any positions/pendings the kill switch couldn't reach before the
+   //    EA was restarted. Runs once — clears the flag whether or not anything
+   //    was open.
+   if (g_pendingCancelSweep) {
+      g_pendingCancelSweep = false;
+      Print("[GVFX] Cancelled signal recovered on restart — sweeping leftover positions + pendings");
+      CloseAllAndCancel();
+   }
+
    //--- EOD cut window (only fires within InpEodCutLeadMins of session close):
    //      total > 0 → close everything; suppress re-entry until next day.
    //      total < 0 → trim losers (most-negative first) while projected daily
@@ -367,7 +387,7 @@ void OnTick() {
    if (sig.timestamp != g_lastSigTs) {
       g_currentSig   = sig;
       g_lastSigTs    = sig.timestamp;
-      g_signalActive = !SignalAlreadyReached(sig.timestamp);
+      g_signalActive = sig.active && !SignalAlreadyReached(sig.timestamp);
       int    effStep, effTp;
       string effMode;
       EffectiveStepTpPts(g_currentSig, effStep, effTp, effMode);
@@ -376,6 +396,22 @@ void OnTick() {
                   sig.target, sig.step, sig.tp, sig.low, sig.high,
                   sig.use_atr ? "true" : "false", effStep, effTp, effMode,
                   g_signalActive ? "true" : "false");
+   }
+
+   //--- Operator deactivation: signal file rewritten with active=false (same
+   //    timestamp). Block new entries; if close_all is set, also close all
+   //    open positions + cancel pendings of this magic+symbol. The close runs
+   //    once, on the active→inactive edge; MarkSignalReached persists the kill
+   //    so a redeploy/re-attach can't resurrect it.
+   if (g_signalActive && !sig.active) {
+      g_signalActive = false;
+      MarkSignalReached(g_currentSig.timestamp);
+      if (sig.close_all) {
+         Print("[GVFX] Signal cancelled by operator (close_all) — closing all positions + pendings");
+         CloseAllAndCancel();
+      } else {
+         Print("[GVFX] Signal deactivated by operator — new entries blocked; open positions continue");
+      }
    }
 
    //--- Target reached → deactivate signal (don't enter more). Persist the
@@ -839,6 +875,8 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
    string low_str  = JsonGetString(json, "low");
    string high_str = JsonGetString(json, "high");
    string atr_str  = JsonGetString(json, "use_atr");
+   string act_str  = JsonGetString(json, "active");
+   string ca_str   = JsonGetString(json, "close_all");
 
    if (ts_str   == "") { Print("[Validation] Missing: timestamp"); return false; }
    if (sym_str  == "") { Print("[Validation] Missing: symbol");    return false; }
@@ -896,6 +934,27 @@ bool LoadSignal(const string filename, GvfxSig &sig) {
       useAtr = !(a == "false" || a == "0" || a == "no");
    }
    sig.use_atr   = useAtr;
+
+   //--- active is optional. Missing field or "null" → true (default).
+   //--- Operator sets active=false via Telegram /cancel_gvfx to deactivate
+   //    the signal. close_all (optional, default false) decides whether the
+   //    EA also closes open positions; default keeps them running.
+   bool active = true;
+   if (act_str != "" && act_str != "null") {
+      string ac = act_str;
+      StringToLower(ac);
+      active = !(ac == "false" || ac == "0" || ac == "no");
+   }
+   sig.active    = active;
+
+   bool closeAll = false;
+   if (ca_str != "" && ca_str != "null") {
+      string cs = ca_str;
+      StringToLower(cs);
+      closeAll = (cs == "true" || cs == "1" || cs == "yes");
+   }
+   sig.close_all = closeAll;
+
    sig.valid     = true;
    return true;
 }

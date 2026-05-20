@@ -15,6 +15,8 @@ class ZoneSignal:
     targets_above: List[float]
     targets_below: List[float]
     timestamp: int = field(default_factory=lambda: int(time.time()))
+    active: bool = True       # False → operator deactivated; EA blocks new entries
+    close_all: bool = False   # when deactivated: True → EA also closes open positions
 
     # ------------------------------------------------------------------
     def validate(self) -> None:
@@ -73,11 +75,27 @@ class ZoneSignal:
             redbox_lower=float(d["redbox_lower"]),
             targets_above=[float(x) for x in str(d["targets_above"]).split(",")],
             targets_below=[float(x) for x in str(d["targets_below"]).split(",")],
+            active=cls._parse_bool(d.get("active"), default=True),
+            close_all=cls._parse_bool(d.get("close_all"), default=False),
         )
         ts = cls._parse_ts(d.get("timestamp") or d.get("timestamp_raw"))
         if ts is not None:
             kwargs["timestamp"] = ts
         return cls(**kwargs)
+
+    @staticmethod
+    def _parse_bool(raw, *, default: bool) -> bool:
+        """Coerce a stringly-typed Redis/JSON field into bool.
+
+        Empty/None/null → default. Accepts true/false/1/0/yes/no
+        (case-insensitive).
+        """
+        if raw is None or isinstance(raw, bool):
+            return default if raw is None else raw
+        s = str(raw).strip().lower()
+        if s in ("", "null"):
+            return default
+        return s not in ("false", "0", "no", "off", "n", "f")
 
     @staticmethod
     def _parse_ts(raw) -> int | None:

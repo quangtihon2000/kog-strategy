@@ -20,12 +20,65 @@ from signal_writer import SignalWriter
 log = logging.getLogger(__name__)
 
 
+_TRUE_TOKENS = frozenset({"1", "true", "yes", "on", "y", "t"})
+
+
+def handle_deactivate(
+    consumer: RedisConsumer, writers_by_symbol: dict, msg_id, data: dict,
+) -> None:
+    """Rewrite signal files with active=false for the operator's cancel command.
+
+    `symbol` in the message is optional — if present, only that symbol's files
+    are deactivated; otherwise every configured symbol is cancelled.
+    `close_all` (optional, default false) is forwarded to the signal file so
+    the EA knows whether to also close open positions. Always ACKs: a
+    deactivate that finds nothing to cancel is not an error.
+    """
+    sym = str(data.get("symbol", "")).strip()
+    close_all = str(data.get("close_all", "")).strip().lower() in _TRUE_TOKENS
+    if sym:
+        targets = {sym: writers_by_symbol.get(sym, [])}
+    else:
+        targets = writers_by_symbol
+
+    total = 0
+    for symbol, writers in targets.items():
+        for writer in writers:
+            try:
+                if writer.deactivate(close_all=close_all):
+                    total += 1
+                    log.info(
+                        "[%s/%s] Signal DEACTIVATED by operator (msg %s, close_all=%s)",
+                        writer.account_id, symbol, msg_id, close_all,
+                    )
+                else:
+                    log.info(
+                        "[%s/%s] Deactivate no-op — no active signal on disk",
+                        writer.account_id, symbol,
+                    )
+            except Exception as exc:
+                log.error("[%s/%s] Deactivate failed: %s", writer.account_id, symbol, exc)
+
+    log.info(
+        "Deactivate msg %s done — %d signal file(s) cancelled (close_all=%s)",
+        msg_id, total, close_all,
+    )
+    consumer.ack(msg_id)
+
+
 def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
     result = consumer.consume_one(block_ms=5000)
     if result is None:
         return   # timeout — nothing in the stream
 
     msg_id, data = result
+
+    #--- Control message: deactivate the current signal (operator /cancel_gvfx).
+    #    Rewrites every (account, symbol) signal file with active=false so the
+    #    EA stops opening new positions; open positions keep their TP/SL.
+    if str(data.get("action", "")).lower() == "deactivate":
+        handle_deactivate(consumer, writers_by_symbol, msg_id, data)
+        return
 
     try:
         sig = GvfxSignal.from_dict(data)
