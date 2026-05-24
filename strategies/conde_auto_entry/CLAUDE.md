@@ -46,6 +46,13 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
 2. **Trailing**: Profit >= `InpTrailStartPts` → SL trails `InpTrailDistPts` behind price
 3. **TP1 invalidation**: If market reaches TP1 before pendings fill → cancel all pending orders for that signal
 
+### Rest time windows
+- Two windows (HH:MM, **Vietnam time / GMT+7**) gate NEW entries: defaults `13:00-14:15` and `15:00-15:15`
+- Computed as `TimeGMT() + 7h` so the window is independent of broker server TZ
+- Inside a window: `OpenTrades` is skipped and `g_lastSigTs` is **not** advanced, so the same signal can still fire after the window closes (subject to the 24h freshness cap)
+- Trailing/BE management, pending invalidation, and outcome capture still run during rest windows — only entries are blocked
+- Inputs: `InpEnableRestTime`, `InpRestTime{1,2}Start`, `InpRestTime{1,2}End`. End is exclusive; empty string disables that window; wrap over midnight is supported.
+
 ## Agent Signal Format
 
 ```json

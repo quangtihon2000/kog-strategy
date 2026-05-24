@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.10"
+#property version     "1.11"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -31,6 +31,13 @@ input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to plac
 
 input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
 
+// --- Rest time windows (Vietnam time, GMT+7) — skip NEW entries while inside any window
+input bool   InpEnableRestTime      = true;        // Enable rest windows
+input string InpRestTime1Start      = "13:00";     // Rest window 1 start (HH:MM, GMT+7; empty = disabled)
+input string InpRestTime1End        = "14:15";     // Rest window 1 end   (HH:MM, GMT+7; exclusive)
+input string InpRestTime2Start      = "15:00";     // Rest window 2 start (HH:MM, GMT+7; empty = disabled)
+input string InpRestTime2End        = "15:15";     // Rest window 2 end   (HH:MM, GMT+7; exclusive)
+
 // --- ATR-based TP (so với signal TP1, lấy TP gần entry hơn)
 input bool            InpUseAtrTp   = true;          // Enable ATR TP candidate; final TP = min-distance(ATR_TP, signal TP1)
 input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calculation
@@ -56,6 +63,11 @@ double           g_cfg_TrailStepPts;
 double           g_cfg_PendingExpiryHours;
 double           g_cfg_MaxPendingDistPts;
 long             g_cfg_MaxSpreadPts;
+bool             g_cfg_EnableRestTime;
+int              g_cfg_RestTime1StartMin;  // -1 = window disabled
+int              g_cfg_RestTime1EndMin;
+int              g_cfg_RestTime2StartMin;
+int              g_cfg_RestTime2EndMin;
 bool             g_cfg_UseAtrTp;
 ENUM_TIMEFRAMES  g_cfg_AtrTf;
 int              g_cfg_AtrPeriod;
@@ -117,6 +129,11 @@ int OnInit() {
                   g_cfg_TrailDistPts, g_cfg_TrailStartPts);
 
    if (!g_cfg_Enabled) Print("[Config] DISABLED — managing existing positions only, no new entries");
+
+   PrintFormat("[Config] RestTime enabled=%s  w1=[%s..%s) w2=[%s..%s) (GMT+7)",
+               (g_cfg_EnableRestTime ? "true" : "false"),
+               FmtMinutes(g_cfg_RestTime1StartMin), FmtMinutes(g_cfg_RestTime1EndMin),
+               FmtMinutes(g_cfg_RestTime2StartMin), FmtMinutes(g_cfg_RestTime2EndMin));
 
    PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
                g_signalFile, IntegerToString(g_lastSigTs));
@@ -268,6 +285,18 @@ void OnTick() {
 
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
+   //--- Rest windows: skip new entries; do NOT update g_lastSigTs so the signal can fire after the window closes
+   datetime nowVN = (datetime)(TimeGMT() + 7 * 3600);  // GMT+7 — Vietnam local
+   if (IsInRestTime(nowVN)) {
+      if (sig.timestamp != g_lastWaitTs) {
+         PrintFormat("[Rest] Skip signal ts=%s — VN time %s is inside rest window",
+                     IntegerToString(sig.timestamp),
+                     TimeToString(nowVN, TIME_MINUTES));
+         g_lastWaitTs = sig.timestamp;
+      }
+      return;
+   }
+
    //--- Distance-based mode selection
    //    <= g_cfg_MaxSlippagePts           → market order
    //    <= g_cfg_MaxPendingDistPts        → pending LIMIT/STOP at entry_price
@@ -289,6 +318,85 @@ void OnTick() {
    g_sig = sig;
    if (OpenTrades(sig, usePending, market))
       g_lastSigTs = sig.timestamp;
+}
+
+//+------------------------------------------------------------------+
+//| Parse a JSON-supplied timeframe label ("M1".."MN1") to ENUM_TF.   |
+//| Returns defval for empty/unknown so per-account override is safe. |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES ParseTimeframe(const string s, const ENUM_TIMEFRAMES defval) {
+   string u = s;
+   StringToUpper(u);
+   if (u == "M1")  return PERIOD_M1;
+   if (u == "M2")  return PERIOD_M2;
+   if (u == "M3")  return PERIOD_M3;
+   if (u == "M4")  return PERIOD_M4;
+   if (u == "M5")  return PERIOD_M5;
+   if (u == "M6")  return PERIOD_M6;
+   if (u == "M10") return PERIOD_M10;
+   if (u == "M12") return PERIOD_M12;
+   if (u == "M15") return PERIOD_M15;
+   if (u == "M20") return PERIOD_M20;
+   if (u == "M30") return PERIOD_M30;
+   if (u == "H1")  return PERIOD_H1;
+   if (u == "H2")  return PERIOD_H2;
+   if (u == "H3")  return PERIOD_H3;
+   if (u == "H4")  return PERIOD_H4;
+   if (u == "H6")  return PERIOD_H6;
+   if (u == "H8")  return PERIOD_H8;
+   if (u == "H12") return PERIOD_H12;
+   if (u == "D1")  return PERIOD_D1;
+   if (u == "W1")  return PERIOD_W1;
+   if (u == "MN1") return PERIOD_MN1;
+   PrintFormat("[Config] WARN: unknown InpAtrTf '%s' — keeping %s", s, EnumToString(defval));
+   return defval;
+}
+
+//+------------------------------------------------------------------+
+//| Format minutes-since-midnight as "HH:MM" (or "--:--" if invalid)  |
+//+------------------------------------------------------------------+
+string FmtMinutes(const int m) {
+   if (m < 0) return "--:--";
+   int hh = m / 60;
+   int mm = m % 60;
+   return StringFormat("%02d:%02d", hh, mm);
+}
+
+//+------------------------------------------------------------------+
+//| Parse "HH:MM" → minutes since midnight; -1 on empty/invalid       |
+//+------------------------------------------------------------------+
+int ParseHHMMToMinutes(const string s) {
+   if (s == "") return -1;
+   int colon = StringFind(s, ":");
+   if (colon <= 0) return -1;
+   int h = (int)StringToInteger(StringSubstr(s, 0, colon));
+   int m = (int)StringToInteger(StringSubstr(s, colon + 1));
+   if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+   return h * 60 + m;
+}
+
+//+------------------------------------------------------------------+
+//| True iff nowMin is inside [startMin, endMin). Wraps over midnight |
+//| when startMin > endMin. Returns false if either bound is invalid. |
+//+------------------------------------------------------------------+
+bool IsWithinWindow(const int nowMin, const int startMin, const int endMin) {
+   if (startMin < 0 || endMin < 0 || startMin == endMin) return false;
+   if (startMin < endMin) return (nowMin >= startMin && nowMin < endMin);
+   return (nowMin >= startMin || nowMin < endMin);
+}
+
+//+------------------------------------------------------------------+
+//| True iff the passed datetime (already in VN tz) is inside any     |
+//| configured rest window.                                            |
+//+------------------------------------------------------------------+
+bool IsInRestTime(const datetime nowVN) {
+   if (!g_cfg_EnableRestTime) return false;
+   MqlDateTime dt;
+   TimeToStruct(nowVN, dt);
+   int nowMin = dt.hour * 60 + dt.min;
+   if (IsWithinWindow(nowMin, g_cfg_RestTime1StartMin, g_cfg_RestTime1EndMin)) return true;
+   if (IsWithinWindow(nowMin, g_cfg_RestTime2StartMin, g_cfg_RestTime2EndMin)) return true;
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1057,6 +1165,11 @@ void InitShadowsFromInputs() {
    g_cfg_PendingExpiryHours  = InpPendingExpiryHours;
    g_cfg_MaxPendingDistPts   = InpMaxPendingDistPts;
    g_cfg_MaxSpreadPts        = InpMaxSpreadPts;
+   g_cfg_EnableRestTime      = InpEnableRestTime;
+   g_cfg_RestTime1StartMin   = ParseHHMMToMinutes(InpRestTime1Start);
+   g_cfg_RestTime1EndMin     = ParseHHMMToMinutes(InpRestTime1End);
+   g_cfg_RestTime2StartMin   = ParseHHMMToMinutes(InpRestTime2Start);
+   g_cfg_RestTime2EndMin     = ParseHHMMToMinutes(InpRestTime2End);
    g_cfg_UseAtrTp            = InpUseAtrTp;
    g_cfg_AtrTf               = InpAtrTf;
    g_cfg_AtrPeriod           = InpAtrPeriod;
@@ -1095,11 +1208,21 @@ void LoadAccountConfig() {
    g_cfg_PendingExpiryHours  = JsonGetDouble(json, "InpPendingExpiryHours",  g_cfg_PendingExpiryHours);
    g_cfg_MaxPendingDistPts   = JsonGetDouble(json, "InpMaxPendingDistPts",   g_cfg_MaxPendingDistPts);
    g_cfg_MaxSpreadPts        = JsonGetLong(json,   "InpMaxSpreadPts",        g_cfg_MaxSpreadPts);
+   g_cfg_EnableRestTime      = JsonGetBool(json,   "InpEnableRestTime",      g_cfg_EnableRestTime);
+   string rt1s               = JsonGetString(json, "InpRestTime1Start");
+   string rt1e               = JsonGetString(json, "InpRestTime1End");
+   string rt2s               = JsonGetString(json, "InpRestTime2Start");
+   string rt2e               = JsonGetString(json, "InpRestTime2End");
+   if (rt1s != "") g_cfg_RestTime1StartMin = ParseHHMMToMinutes(rt1s);
+   if (rt1e != "") g_cfg_RestTime1EndMin   = ParseHHMMToMinutes(rt1e);
+   if (rt2s != "") g_cfg_RestTime2StartMin = ParseHHMMToMinutes(rt2s);
+   if (rt2e != "") g_cfg_RestTime2EndMin   = ParseHHMMToMinutes(rt2e);
    g_cfg_UseAtrTp            = JsonGetBool(json,   "InpUseAtrTp",            g_cfg_UseAtrTp);
    g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
    g_cfg_FixedTpPts          = JsonGetDouble(json, "InpFixedTpPts",          g_cfg_FixedTpPts);
-   // Note: InpAtrTf (ENUM_TIMEFRAMES) intentionally not overridable from JSON — keep EA input
+   string atrTfStr           = JsonGetString(json, "InpAtrTf");
+   if (atrTfStr != "")       g_cfg_AtrTf = ParseTimeframe(atrTfStr, g_cfg_AtrTf);
 
    PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
                path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);
