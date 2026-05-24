@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.10"
+#property version     "1.11"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -31,6 +31,13 @@ input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to plac
 
 input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
 
+// --- Rest time windows (broker server time) — skip NEW entries while inside any window
+input bool   InpEnableRestTime      = true;        // Enable rest windows
+input string InpRestTime1Start      = "13:00";     // Rest window 1 start (HH:MM, broker time; empty = disabled)
+input string InpRestTime1End        = "14:15";     // Rest window 1 end   (HH:MM, broker time; exclusive)
+input string InpRestTime2Start      = "15:00";     // Rest window 2 start (HH:MM, broker time; empty = disabled)
+input string InpRestTime2End        = "15:15";     // Rest window 2 end   (HH:MM, broker time; exclusive)
+
 // --- ATR-based TP (so với signal TP1, lấy TP gần entry hơn)
 input bool            InpUseAtrTp   = true;          // Enable ATR TP candidate; final TP = min-distance(ATR_TP, signal TP1)
 input ENUM_TIMEFRAMES InpAtrTf      = PERIOD_M3;     // Timeframe for ATR calculation
@@ -56,6 +63,11 @@ double           g_cfg_TrailStepPts;
 double           g_cfg_PendingExpiryHours;
 double           g_cfg_MaxPendingDistPts;
 long             g_cfg_MaxSpreadPts;
+bool             g_cfg_EnableRestTime;
+int              g_cfg_RestTime1StartMin;  // -1 = window disabled
+int              g_cfg_RestTime1EndMin;
+int              g_cfg_RestTime2StartMin;
+int              g_cfg_RestTime2EndMin;
 bool             g_cfg_UseAtrTp;
 ENUM_TIMEFRAMES  g_cfg_AtrTf;
 int              g_cfg_AtrPeriod;
@@ -117,6 +129,11 @@ int OnInit() {
                   g_cfg_TrailDistPts, g_cfg_TrailStartPts);
 
    if (!g_cfg_Enabled) Print("[Config] DISABLED — managing existing positions only, no new entries");
+
+   PrintFormat("[Config] RestTime enabled=%s  w1=[%s..%s) w2=[%s..%s) (broker time)",
+               (g_cfg_EnableRestTime ? "true" : "false"),
+               FmtMinutes(g_cfg_RestTime1StartMin), FmtMinutes(g_cfg_RestTime1EndMin),
+               FmtMinutes(g_cfg_RestTime2StartMin), FmtMinutes(g_cfg_RestTime2EndMin));
 
    PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
                g_signalFile, IntegerToString(g_lastSigTs));
@@ -268,6 +285,17 @@ void OnTick() {
 
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
+   //--- Rest windows: skip new entries; do NOT update g_lastSigTs so the signal can fire after the window closes
+   if (IsInRestTime(now)) {
+      if (sig.timestamp != g_lastWaitTs) {
+         PrintFormat("[Rest] Skip signal ts=%s — broker time %s is inside rest window",
+                     IntegerToString(sig.timestamp),
+                     TimeToString(now, TIME_MINUTES));
+         g_lastWaitTs = sig.timestamp;
+      }
+      return;
+   }
+
    //--- Distance-based mode selection
    //    <= g_cfg_MaxSlippagePts           → market order
    //    <= g_cfg_MaxPendingDistPts        → pending LIMIT/STOP at entry_price
@@ -289,6 +317,52 @@ void OnTick() {
    g_sig = sig;
    if (OpenTrades(sig, usePending, market))
       g_lastSigTs = sig.timestamp;
+}
+
+//+------------------------------------------------------------------+
+//| Format minutes-since-midnight as "HH:MM" (or "--:--" if invalid)  |
+//+------------------------------------------------------------------+
+string FmtMinutes(const int m) {
+   if (m < 0) return "--:--";
+   int hh = m / 60;
+   int mm = m % 60;
+   return StringFormat("%02d:%02d", hh, mm);
+}
+
+//+------------------------------------------------------------------+
+//| Parse "HH:MM" → minutes since midnight; -1 on empty/invalid       |
+//+------------------------------------------------------------------+
+int ParseHHMMToMinutes(const string s) {
+   if (s == "") return -1;
+   int colon = StringFind(s, ":");
+   if (colon <= 0) return -1;
+   int h = (int)StringToInteger(StringSubstr(s, 0, colon));
+   int m = (int)StringToInteger(StringSubstr(s, colon + 1));
+   if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+   return h * 60 + m;
+}
+
+//+------------------------------------------------------------------+
+//| True iff nowMin is inside [startMin, endMin). Wraps over midnight |
+//| when startMin > endMin. Returns false if either bound is invalid. |
+//+------------------------------------------------------------------+
+bool IsWithinWindow(const int nowMin, const int startMin, const int endMin) {
+   if (startMin < 0 || endMin < 0 || startMin == endMin) return false;
+   if (startMin < endMin) return (nowMin >= startMin && nowMin < endMin);
+   return (nowMin >= startMin || nowMin < endMin);
+}
+
+//+------------------------------------------------------------------+
+//| True iff broker-local `now` is inside any configured rest window  |
+//+------------------------------------------------------------------+
+bool IsInRestTime(const datetime now) {
+   if (!g_cfg_EnableRestTime) return false;
+   MqlDateTime dt;
+   TimeToStruct(now, dt);
+   int nowMin = dt.hour * 60 + dt.min;
+   if (IsWithinWindow(nowMin, g_cfg_RestTime1StartMin, g_cfg_RestTime1EndMin)) return true;
+   if (IsWithinWindow(nowMin, g_cfg_RestTime2StartMin, g_cfg_RestTime2EndMin)) return true;
+   return false;
 }
 
 //+------------------------------------------------------------------+
@@ -1057,6 +1131,11 @@ void InitShadowsFromInputs() {
    g_cfg_PendingExpiryHours  = InpPendingExpiryHours;
    g_cfg_MaxPendingDistPts   = InpMaxPendingDistPts;
    g_cfg_MaxSpreadPts        = InpMaxSpreadPts;
+   g_cfg_EnableRestTime      = InpEnableRestTime;
+   g_cfg_RestTime1StartMin   = ParseHHMMToMinutes(InpRestTime1Start);
+   g_cfg_RestTime1EndMin     = ParseHHMMToMinutes(InpRestTime1End);
+   g_cfg_RestTime2StartMin   = ParseHHMMToMinutes(InpRestTime2Start);
+   g_cfg_RestTime2EndMin     = ParseHHMMToMinutes(InpRestTime2End);
    g_cfg_UseAtrTp            = InpUseAtrTp;
    g_cfg_AtrTf               = InpAtrTf;
    g_cfg_AtrPeriod           = InpAtrPeriod;
@@ -1095,6 +1174,15 @@ void LoadAccountConfig() {
    g_cfg_PendingExpiryHours  = JsonGetDouble(json, "InpPendingExpiryHours",  g_cfg_PendingExpiryHours);
    g_cfg_MaxPendingDistPts   = JsonGetDouble(json, "InpMaxPendingDistPts",   g_cfg_MaxPendingDistPts);
    g_cfg_MaxSpreadPts        = JsonGetLong(json,   "InpMaxSpreadPts",        g_cfg_MaxSpreadPts);
+   g_cfg_EnableRestTime      = JsonGetBool(json,   "InpEnableRestTime",      g_cfg_EnableRestTime);
+   string rt1s               = JsonGetString(json, "InpRestTime1Start");
+   string rt1e               = JsonGetString(json, "InpRestTime1End");
+   string rt2s               = JsonGetString(json, "InpRestTime2Start");
+   string rt2e               = JsonGetString(json, "InpRestTime2End");
+   if (rt1s != "") g_cfg_RestTime1StartMin = ParseHHMMToMinutes(rt1s);
+   if (rt1e != "") g_cfg_RestTime1EndMin   = ParseHHMMToMinutes(rt1e);
+   if (rt2s != "") g_cfg_RestTime2StartMin = ParseHHMMToMinutes(rt2s);
+   if (rt2e != "") g_cfg_RestTime2EndMin   = ParseHHMMToMinutes(rt2e);
    g_cfg_UseAtrTp            = JsonGetBool(json,   "InpUseAtrTp",            g_cfg_UseAtrTp);
    g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
