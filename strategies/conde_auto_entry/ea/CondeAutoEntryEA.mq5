@@ -31,12 +31,12 @@ input double InpMaxPendingDistPts   = 5000;        // Max distance (pts) to plac
 
 input long   InpMaxSpreadPts        = 30;          // Max spread (points) to allow entries; 0 disables check
 
-// --- Rest time windows (broker server time) — skip NEW entries while inside any window
+// --- Rest time windows (Vietnam time, GMT+7) — skip NEW entries while inside any window
 input bool   InpEnableRestTime      = true;        // Enable rest windows
-input string InpRestTime1Start      = "13:00";     // Rest window 1 start (HH:MM, broker time; empty = disabled)
-input string InpRestTime1End        = "14:15";     // Rest window 1 end   (HH:MM, broker time; exclusive)
-input string InpRestTime2Start      = "15:00";     // Rest window 2 start (HH:MM, broker time; empty = disabled)
-input string InpRestTime2End        = "15:15";     // Rest window 2 end   (HH:MM, broker time; exclusive)
+input string InpRestTime1Start      = "13:00";     // Rest window 1 start (HH:MM, GMT+7; empty = disabled)
+input string InpRestTime1End        = "14:15";     // Rest window 1 end   (HH:MM, GMT+7; exclusive)
+input string InpRestTime2Start      = "15:00";     // Rest window 2 start (HH:MM, GMT+7; empty = disabled)
+input string InpRestTime2End        = "15:15";     // Rest window 2 end   (HH:MM, GMT+7; exclusive)
 
 // --- ATR-based TP (so với signal TP1, lấy TP gần entry hơn)
 input bool            InpUseAtrTp   = true;          // Enable ATR TP candidate; final TP = min-distance(ATR_TP, signal TP1)
@@ -130,7 +130,7 @@ int OnInit() {
 
    if (!g_cfg_Enabled) Print("[Config] DISABLED — managing existing positions only, no new entries");
 
-   PrintFormat("[Config] RestTime enabled=%s  w1=[%s..%s) w2=[%s..%s) (broker time)",
+   PrintFormat("[Config] RestTime enabled=%s  w1=[%s..%s) w2=[%s..%s) (GMT+7)",
                (g_cfg_EnableRestTime ? "true" : "false"),
                FmtMinutes(g_cfg_RestTime1StartMin), FmtMinutes(g_cfg_RestTime1EndMin),
                FmtMinutes(g_cfg_RestTime2StartMin), FmtMinutes(g_cfg_RestTime2EndMin));
@@ -286,11 +286,12 @@ void OnTick() {
    if (sig.timestamp == g_lastSigTs)   return;   // already executed
 
    //--- Rest windows: skip new entries; do NOT update g_lastSigTs so the signal can fire after the window closes
-   if (IsInRestTime(now)) {
+   datetime nowVN = (datetime)(TimeGMT() + 7 * 3600);  // GMT+7 — Vietnam local
+   if (IsInRestTime(nowVN)) {
       if (sig.timestamp != g_lastWaitTs) {
-         PrintFormat("[Rest] Skip signal ts=%s — broker time %s is inside rest window",
+         PrintFormat("[Rest] Skip signal ts=%s — VN time %s is inside rest window",
                      IntegerToString(sig.timestamp),
-                     TimeToString(now, TIME_MINUTES));
+                     TimeToString(nowVN, TIME_MINUTES));
          g_lastWaitTs = sig.timestamp;
       }
       return;
@@ -353,12 +354,13 @@ bool IsWithinWindow(const int nowMin, const int startMin, const int endMin) {
 }
 
 //+------------------------------------------------------------------+
-//| True iff broker-local `now` is inside any configured rest window  |
+//| True iff the passed datetime (already in VN tz) is inside any     |
+//| configured rest window.                                            |
 //+------------------------------------------------------------------+
-bool IsInRestTime(const datetime now) {
+bool IsInRestTime(const datetime nowVN) {
    if (!g_cfg_EnableRestTime) return false;
    MqlDateTime dt;
-   TimeToStruct(now, dt);
+   TimeToStruct(nowVN, dt);
    int nowMin = dt.hour * 60 + dt.min;
    if (IsWithinWindow(nowMin, g_cfg_RestTime1StartMin, g_cfg_RestTime1EndMin)) return true;
    if (IsWithinWindow(nowMin, g_cfg_RestTime2StartMin, g_cfg_RestTime2EndMin)) return true;
