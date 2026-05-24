@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "label": "CondeAutoEntry — mt5_conde_2 (25323746, fixed 100pts TP)",
+  "label": "CondeAutoEntry — mt5_conde_2 (25323746, ATR M1 x0.5 TP)",
   "owner": "quang",
 
   "InpLotPerTarget": 0.01,
@@ -24,9 +24,10 @@
 
   "InpMaxSpreadPts": 30,
 
-  "InpUseAtrTp": false,
+  "InpUseAtrTp": true,
+  "InpAtrTf": "M1",
   "InpAtrPeriod": 14,
-  "InpAtrTpMult": 1.0,
+  "InpAtrTpMult": 0.5,
 
   "InpFixedTpPts": 100
 }
