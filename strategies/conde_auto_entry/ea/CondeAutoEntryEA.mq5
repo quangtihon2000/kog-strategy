@@ -321,6 +321,38 @@ void OnTick() {
 }
 
 //+------------------------------------------------------------------+
+//| Parse a JSON-supplied timeframe label ("M1".."MN1") to ENUM_TF.   |
+//| Returns defval for empty/unknown so per-account override is safe. |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES ParseTimeframe(const string s, const ENUM_TIMEFRAMES defval) {
+   string u = s;
+   StringToUpper(u);
+   if (u == "M1")  return PERIOD_M1;
+   if (u == "M2")  return PERIOD_M2;
+   if (u == "M3")  return PERIOD_M3;
+   if (u == "M4")  return PERIOD_M4;
+   if (u == "M5")  return PERIOD_M5;
+   if (u == "M6")  return PERIOD_M6;
+   if (u == "M10") return PERIOD_M10;
+   if (u == "M12") return PERIOD_M12;
+   if (u == "M15") return PERIOD_M15;
+   if (u == "M20") return PERIOD_M20;
+   if (u == "M30") return PERIOD_M30;
+   if (u == "H1")  return PERIOD_H1;
+   if (u == "H2")  return PERIOD_H2;
+   if (u == "H3")  return PERIOD_H3;
+   if (u == "H4")  return PERIOD_H4;
+   if (u == "H6")  return PERIOD_H6;
+   if (u == "H8")  return PERIOD_H8;
+   if (u == "H12") return PERIOD_H12;
+   if (u == "D1")  return PERIOD_D1;
+   if (u == "W1")  return PERIOD_W1;
+   if (u == "MN1") return PERIOD_MN1;
+   PrintFormat("[Config] WARN: unknown InpAtrTf '%s' — keeping %s", s, EnumToString(defval));
+   return defval;
+}
+
+//+------------------------------------------------------------------+
 //| Format minutes-since-midnight as "HH:MM" (or "--:--" if invalid)  |
 //+------------------------------------------------------------------+
 string FmtMinutes(const int m) {
@@ -1189,7 +1221,8 @@ void LoadAccountConfig() {
    g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
    g_cfg_FixedTpPts          = JsonGetDouble(json, "InpFixedTpPts",          g_cfg_FixedTpPts);
-   // Note: InpAtrTf (ENUM_TIMEFRAMES) intentionally not overridable from JSON — keep EA input
+   string atrTfStr           = JsonGetString(json, "InpAtrTf");
+   if (atrTfStr != "")       g_cfg_AtrTf = ParseTimeframe(atrTfStr, g_cfg_AtrTf);
 
    PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
                path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);

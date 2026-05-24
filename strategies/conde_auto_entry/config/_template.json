@@ -31,6 +31,7 @@
   "InpRestTime2End":   "15:15",
 
   "InpUseAtrTp": true,
+  "InpAtrTf": "M3",
   "InpAtrPeriod": 14,
   "InpAtrTpMult": 1.0
 }
