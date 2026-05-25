@@ -29,5 +29,5 @@
   "InpAtrPeriod": 14,
   "InpAtrTpMult": 0.5,
 
-  "InpFixedTpPts": 100
+  "InpFixedTpPts": 0
 }
