@@ -53,6 +53,12 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
 - Trailing/BE management, pending invalidation, and outcome capture still run during rest windows — only entries are blocked
 - Inputs: `InpEnableRestTime`, `InpRestTime{1,2}Start`, `InpRestTime{1,2}End`. End is exclusive; empty string disables that window; wrap over midnight is supported.
 
+### Account-config hot reload
+- `OnTimer` polls the mtime of `MQL5/Files/CondeAutoEntryEA/config/<login>.json` every `InpConfigReloadSec` seconds (default 5; set 0 to disable)
+- On change: re-runs `LoadAccountConfig()`, reapplies `magic`/slippage to `CTrade`, and rebuilds the ATR handle if `InpUseAtrTp`/`InpAtrTf`/`InpAtrPeriod` changed
+- Removes the need to F7-recompile or remove+readd the EA after a config-only push; CI's `deploy-account-configs.ps1` drops the new JSON and the EA picks it up within `InpConfigReloadSec`
+- Magic-number changes still orphan existing positions tagged with the old magic — the watcher logs a WARN but does not adopt orphans
+
 ## Agent Signal Format
 
 ```json

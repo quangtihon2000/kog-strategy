@@ -24,6 +24,12 @@
 
   "InpMaxSpreadPts": 30,
 
+  "InpEnableRestTime": false,
+  "InpRestTime1Start": "13:00",
+  "InpRestTime1End":   "14:15",
+  "InpRestTime2Start": "15:00",
+  "InpRestTime2End":   "15:15",
+
   "InpUseAtrTp": true,
   "InpAtrPeriod": 14,
   "InpAtrTpMult": 1.0

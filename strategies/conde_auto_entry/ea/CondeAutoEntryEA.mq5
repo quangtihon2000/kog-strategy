@@ -45,6 +45,9 @@ input int             InpAtrPeriod  = 14;             // ATR period
 input double          InpAtrTpMult  = 1.0;            // TP distance = ATR * mult
 input double          InpFixedTpPts = 0;              // Fixed TP distance in points (overrides ATR + signal; 0 = disabled)
 
+// --- Hot-reload: poll the per-account JSON config file mtime and apply on change
+input int             InpConfigReloadSec = 5;          // Poll period (seconds) for account config hot-reload; 0 = disable
+
 //--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
 double           g_cfg_LotPerTarget;
 double           g_cfg_MaxLotsPerPosition;
@@ -96,6 +99,8 @@ ulong       g_lastSigTs     = 0;   // timestamp of last successfully executed si
 ulong       g_lastWaitTs    = 0;   // timestamp we've already logged "waiting" for
 CondeSignal g_sig;
 int         g_atrHandle     = INVALID_HANDLE;  // ATR indicator handle (reused per tick)
+string      g_cfg_Path      = "";               // cached config file path (set by LoadAccountConfig)
+datetime    g_cfg_FileMtime = 0;                // last seen mtime of g_cfg_Path (0 = file missing)
 
 //+------------------------------------------------------------------+
 int OnInit() {
@@ -137,16 +142,92 @@ int OnInit() {
 
    PrintFormat("[CondeAutoEntryEA] Initialized. Signal=%s  lastSigTs=%s",
                g_signalFile, IntegerToString(g_lastSigTs));
+
+   //--- Hot-reload watcher: poll account-config mtime, re-apply on change
+   g_cfg_FileMtime = GetConfigFileMtime(g_cfg_Path);
+   if (InpConfigReloadSec > 0) {
+      EventSetTimer(InpConfigReloadSec);
+      PrintFormat("[Config] Hot-reload watcher armed (poll=%ds, mtime=%s)",
+                  InpConfigReloadSec, TimeToString(g_cfg_FileMtime));
+   }
    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
+   EventKillTimer();
    if (g_atrHandle != INVALID_HANDLE) {
       IndicatorRelease(g_atrHandle);
       g_atrHandle = INVALID_HANDLE;
    }
    Print("[CondeAutoEntryEA] Removed. Reason: ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Timer: detect per-account config file changes and hot-reload.    |
+//| Recreates ATR handle and re-applies trade settings when the      |
+//| relevant inputs flip; other shadow globals take effect on the    |
+//| next OnTick read.                                                 |
+//+------------------------------------------------------------------+
+void OnTimer() {
+   if (g_cfg_Path == "") return;
+   datetime now = GetConfigFileMtime(g_cfg_Path);
+   if (now == 0 || now == g_cfg_FileMtime) return;
+
+   ENUM_TIMEFRAMES prevAtrTf     = g_cfg_AtrTf;
+   int             prevAtrPeriod = g_cfg_AtrPeriod;
+   bool            prevUseAtrTp  = g_cfg_UseAtrTp;
+   ulong           prevMagic     = g_cfg_Magic;
+   double          prevSlippage  = g_cfg_MaxSlippagePts;
+
+   PrintFormat("[Config] %s mtime %s → %s — hot-reloading",
+               g_cfg_Path, TimeToString(g_cfg_FileMtime), TimeToString(now));
+   LoadAccountConfig();
+   g_cfg_FileMtime = now;
+
+   if (g_cfg_Magic != prevMagic) {
+      PrintFormat("[Config] WARN: magic changed %I64u → %I64u — existing positions remain on the OLD magic and will be orphaned by this EA",
+                  prevMagic, g_cfg_Magic);
+      g_trade.SetExpertMagicNumber(g_cfg_Magic);
+   }
+   if (g_cfg_MaxSlippagePts != prevSlippage)
+      g_trade.SetDeviationInPoints((ulong)g_cfg_MaxSlippagePts);
+
+   bool atrChanged = (g_cfg_UseAtrTp != prevUseAtrTp)
+                  || (g_cfg_AtrTf    != prevAtrTf)
+                  || (g_cfg_AtrPeriod != prevAtrPeriod);
+   if (atrChanged) {
+      if (g_atrHandle != INVALID_HANDLE) {
+         IndicatorRelease(g_atrHandle);
+         g_atrHandle = INVALID_HANDLE;
+      }
+      if (g_cfg_UseAtrTp) {
+         g_atrHandle = iATR(_Symbol, g_cfg_AtrTf, g_cfg_AtrPeriod);
+         if (g_atrHandle == INVALID_HANDLE)
+            Print("[Config] WARN: iATR re-create failed after hot-reload");
+         else
+            PrintFormat("[Config] ATR handle rebuilt (tf=%s period=%d)",
+                        EnumToString(g_cfg_AtrTf), g_cfg_AtrPeriod);
+      }
+   }
+
+   PrintFormat("[Config] RestTime enabled=%s  w1=[%s..%s) w2=[%s..%s) (GMT+7)",
+               (g_cfg_EnableRestTime ? "true" : "false"),
+               FmtMinutes(g_cfg_RestTime1StartMin), FmtMinutes(g_cfg_RestTime1EndMin),
+               FmtMinutes(g_cfg_RestTime2StartMin), FmtMinutes(g_cfg_RestTime2EndMin));
+}
+
+//+------------------------------------------------------------------+
+//| Return mtime of the per-account config file (0 if not present).  |
+//| Tries the configured location first, then the opposite           |
+//| (Common vs local Files), matching ReadFileToString's fallback.   |
+//+------------------------------------------------------------------+
+datetime GetConfigFileMtime(const string filename) {
+   if (filename == "") return 0;
+   datetime m = (datetime)FileGetInteger(filename, FILE_MODIFY_DATE, InpUseCommonDir);
+   if (m == 0)
+      m = (datetime)FileGetInteger(filename, FILE_MODIFY_DATE, !InpUseCommonDir);
+   return m;
 }
 
 //+------------------------------------------------------------------+
@@ -1180,10 +1261,10 @@ void InitShadowsFromInputs() {
 
 //+------------------------------------------------------------------+
 void LoadAccountConfig() {
-   string path = "CondeAutoEntryEA\\config\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
-   string json = ReadFileToString(path);
+   g_cfg_Path = "CondeAutoEntryEA\\config\\" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + ".json";
+   string json = ReadFileToString(g_cfg_Path);
    if (json == "") {
-      Print("[Config] no per-account config at ", path, " — using EA inputs");
+      Print("[Config] no per-account config at ", g_cfg_Path, " — using EA inputs");
       return;
    }
 
@@ -1225,7 +1306,7 @@ void LoadAccountConfig() {
    if (atrTfStr != "")       g_cfg_AtrTf = ParseTimeframe(atrTfStr, g_cfg_AtrTf);
 
    PrintFormat("[Config] loaded %s — label='%s' owner='%s' enabled=%s magic=%I64u",
-               path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);
+               g_cfg_Path, label, owner, (g_cfg_Enabled ? "true" : "false"), g_cfg_Magic);
 }
 
 //+------------------------------------------------------------------+
