@@ -27,7 +27,7 @@
   "InpUseAtrTp": true,
   "InpAtrTf": "M1",
   "InpAtrPeriod": 14,
-  "InpAtrTpMult": 0.5,
+  "InpAtrTpMult": 1,
 
   "InpFixedTpPts": 0
 }
