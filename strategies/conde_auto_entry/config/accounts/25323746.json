@@ -35,5 +35,8 @@
   "InpAtrPeriod": 14,
   "InpAtrTpMult": 1,
 
-  "InpFixedTpPts": 0
+  "InpFixedTpPts": 0,
+
+  "InpAllowMissingTp": true,
+  "InpDefaultPositionsIfNoTp": 1
 }
