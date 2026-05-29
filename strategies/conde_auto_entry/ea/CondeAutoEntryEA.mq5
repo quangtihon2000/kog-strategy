@@ -48,6 +48,10 @@ input double          InpFixedTpPts = 0;              // Fixed TP distance in po
 // --- Hot-reload: poll the per-account JSON config file mtime and apply on change
 input int             InpConfigReloadSec = 5;          // Poll period (seconds) for account config hot-reload; 0 = disable
 
+// --- Signal without TP (missing/empty tps[])
+input bool            InpAllowMissingTp        = true;  // Accept signal có tps rỗng — TP từ ATR hoặc FixedTpPts
+input int             InpDefaultPositionsIfNoTp = 1;    // Số lệnh mở khi signal không có tps[] (>=1)
+
 //--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
 double           g_cfg_LotPerTarget;
 double           g_cfg_MaxLotsPerPosition;
@@ -76,6 +80,8 @@ ENUM_TIMEFRAMES  g_cfg_AtrTf;
 int              g_cfg_AtrPeriod;
 double           g_cfg_AtrTpMult;
 double           g_cfg_FixedTpPts;
+bool             g_cfg_AllowMissingTp;
+int              g_cfg_DefaultPositionsIfNoTp;
 bool             g_cfg_Enabled = true;
 
 //+------------------------------------------------------------------+
@@ -518,10 +524,11 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       return tpFixed;
    }
 
-   double sigTp = sig.tps[0];
+   bool   hasSigTp = (ArraySize(sig.tps) > 0);
+   double sigTp    = hasSigTp ? sig.tps[0] : 0.0;
 
    if (!g_cfg_UseAtrTp) {
-      // Dùng TP từ signal — hành vi gốc không thay đổi
+      // Không bật ATR: bắt buộc phải có signal TP (ValidateSignal đã chặn case ngược lại)
       modeOut = "ORG";
       return sigTp;
    }
@@ -539,7 +546,7 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
    }
 
    if (!atrOk || atrVal <= 0.0) {
-      // ATR không tính được → dùng tps[0] làm fallback
+      // ATR không tính được → fallback signal TP1; nếu cũng không có thì return 0 (caller skip)
       PrintFormat("[ATR-TP] ATR unavailable (handle=%d val=%.5f) — falling back to signal TP1 %.5f",
                   g_atrHandle, atrVal, sigTp);
       modeOut = "ORG";
@@ -550,6 +557,15 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
    double atrTp   = (dir == POSITION_TYPE_BUY)
                     ? NormalizeDouble(entryPrice + atrDist, _Digits)
                     : NormalizeDouble(entryPrice - atrDist, _Digits);
+
+   if (!hasSigTp) {
+      // Không có signal TP → bắt buộc dùng ATR TP, không so sánh
+      modeOut = "ATR";
+      PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f atrTp=%.5f (no signal TP — using ATR)",
+                  dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                  atrVal, g_cfg_AtrTpMult, atrTp);
+      return atrTp;
+   }
 
    // So sánh distance từ entryPrice → chọn TP gần hơn (exit sớm hơn = an toàn hơn)
    double distAtr = MathAbs(atrTp - entryPrice);
@@ -574,7 +590,9 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
 bool OpenTrades(const CondeSignal &sig, const bool usePending, const double market) {
    if (!IsSpreadOK("Trades")) return false;
    ENUM_POSITION_TYPE dir = (sig.direction == "BUY") ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-   int    nTps  = ArraySize(sig.tps);
+   int    sigTpCount = ArraySize(sig.tps);
+   // Khi signal không có TP, dùng InpDefaultPositionsIfNoTp để biết mở bao nhiêu slot
+   int    nTps  = (sigTpCount > 0) ? sigTpCount : MathMax(1, g_cfg_DefaultPositionsIfNoTp);
    string tsStr = IntegerToString(sig.timestamp);
    int    failed = 0;
 
@@ -1025,8 +1043,16 @@ bool LoadSignal(const string filename, CondeSignal &sig) {
    if (sl_str  == "") { Print("[Validation] Missing: sl");           return false; }
 
    double tps[];
-   if (!JsonGetDoubleArray(json, "tps", tps) || ArraySize(tps) == 0) {
-      Print("[Validation] Missing or empty: tps"); return false;
+   bool   hasTps = JsonGetDoubleArray(json, "tps", tps) && ArraySize(tps) > 0;
+   if (!hasTps) {
+      if (!g_cfg_AllowMissingTp) {
+         Print("[Validation] Missing or empty: tps"); return false;
+      }
+      // Fallback nguồn TP phải có sẵn: ATR hoặc Fixed-TP
+      if (!g_cfg_UseAtrTp && g_cfg_FixedTpPts <= 0.0) {
+         Print("[Validation] tps rỗng nhưng không có ATR/FixedTpPts để fallback"); return false;
+      }
+      ArrayResize(tps, 0);
    }
 
    //--- Symbol must match chart
@@ -1256,6 +1282,8 @@ void InitShadowsFromInputs() {
    g_cfg_AtrPeriod           = InpAtrPeriod;
    g_cfg_AtrTpMult           = InpAtrTpMult;
    g_cfg_FixedTpPts          = InpFixedTpPts;
+   g_cfg_AllowMissingTp      = InpAllowMissingTp;
+   g_cfg_DefaultPositionsIfNoTp = InpDefaultPositionsIfNoTp;
    g_cfg_Enabled             = true;
 }
 
@@ -1302,6 +1330,8 @@ void LoadAccountConfig() {
    g_cfg_AtrPeriod           = (int)JsonGetLong(json, "InpAtrPeriod",        (long)g_cfg_AtrPeriod);
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
    g_cfg_FixedTpPts          = JsonGetDouble(json, "InpFixedTpPts",          g_cfg_FixedTpPts);
+   g_cfg_AllowMissingTp      = JsonGetBool(json,   "InpAllowMissingTp",      g_cfg_AllowMissingTp);
+   g_cfg_DefaultPositionsIfNoTp = (int)JsonGetLong(json, "InpDefaultPositionsIfNoTp", (long)g_cfg_DefaultPositionsIfNoTp);
    string atrTfStr           = JsonGetString(json, "InpAtrTf");
    if (atrTfStr != "")       g_cfg_AtrTf = ParseTimeframe(atrTfStr, g_cfg_AtrTf);
 

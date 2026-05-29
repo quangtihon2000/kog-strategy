@@ -56,8 +56,7 @@ class CondeSignal:
             raise ValueError(f"entry_price must be > 0, got {self.entry_price}")
         if self.sl <= 0:
             raise ValueError(f"sl must be > 0, got {self.sl}")
-        if not self.tps:
-            raise ValueError("tps is empty")
+        # tps rỗng được chấp nhận — EA sẽ fallback ATR/Fixed-TP nếu InpAllowMissingTp=true
         for i, tp in enumerate(self.tps):
             if tp <= 0:
                 raise ValueError(f"tps[{i}] must be > 0, got {tp}")

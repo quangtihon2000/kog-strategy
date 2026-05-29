@@ -85,10 +85,8 @@ def push_conde_signal(data: dict) -> bool:
         entry_price = str(data["entry_price"])
         sl = str(data["sl"])
 
-        tps_list = data.get("tps", [])
-        if not tps_list:
-            logger.error("tps is empty")
-            return False
+        # tps có thể rỗng — consumer EA fallback ATR/Fixed-TP nếu được phép
+        tps_list = data.get("tps", []) or []
         tps = ",".join(str(x) for x in tps_list)
 
         timestamp = int(data.get("timestamp", int(time.time())))
