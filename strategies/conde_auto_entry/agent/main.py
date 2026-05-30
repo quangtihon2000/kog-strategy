@@ -39,6 +39,18 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         consumer.ack(msg_id)   # avoid infinite requeue of a malformed message
         return
 
+    # Auto-sanitize tps: drop sai hướng / trùng / <=0 thay vì reject cả signal.
+    # OCR producer thi thoảng nhặt nhầm entry/sl vào danh sách TP — vẫn cứu
+    # được các TP còn lại nếu chúng hợp lệ.
+    dropped_tps = sig.sanitize()
+    if dropped_tps:
+        log.warning(
+            "Sanitized msg %s (channel_name=%s): dropped tps=%s, kept=%s | raw=%r",
+            msg_id,
+            _clean_channel_name(str(data.get("channel_name") or "")),
+            dropped_tps, sig.tps, data,
+        )
+
     # Fan-out: write to every writer matching the signal's symbol
     writers = writers_by_symbol.get(sig.symbol, [])
     if not writers:

@@ -56,39 +56,47 @@ class CondeSignal:
             raise ValueError(f"entry_price must be > 0, got {self.entry_price}")
         if self.sl <= 0:
             raise ValueError(f"sl must be > 0, got {self.sl}")
-        # tps rỗng được chấp nhận — EA sẽ fallback ATR/Fixed-TP nếu InpAllowMissingTp=true
-        for i, tp in enumerate(self.tps):
-            if tp <= 0:
-                raise ValueError(f"tps[{i}] must be > 0, got {tp}")
         if self.timestamp <= 0:
             raise ValueError(f"timestamp must be > 0, got {self.timestamp}")
+        # Per-element và monotonic check chuyển sang sanitize() để cứu được signal
+        # bị OCR producer nhặt sai 1 con số (vd nhặt entry vào danh sách TP).
+        # tps rỗng cũng được chấp nhận — EA sẽ fallback ATR/Fixed-TP khi
+        # InpAllowMissingTp=true.
 
-        # Direction-aware monotonic ordering: TP1 has the smallest expected
-        # profit, TP2 larger, etc. The OCR producer occasionally swaps a digit
-        # (e.g. 4719→4419) which slips past the per-tp positivity check but
-        # violates monotonicity. Rejecting here makes it surface as a
-        # `Bad message` so the operator can fix-and-republish via the
-        # Telegram badmsg Edit UI.
-        if self.direction == "BUY":
-            prev = self.entry_price
-            for i, tp in enumerate(self.tps):
-                if tp <= prev:
-                    ref = "entry_price" if i == 0 else f"tps[{i - 1}]"
-                    raise ValueError(
-                        f"BUY tps must be strictly ascending and > entry_price; "
-                        f"tps[{i}]={tp} <= {ref}={prev}"
-                    )
-                prev = tp
-        else:  # SELL — direction was already validated above
-            prev = self.entry_price
-            for i, tp in enumerate(self.tps):
-                if tp >= prev:
-                    ref = "entry_price" if i == 0 else f"tps[{i - 1}]"
-                    raise ValueError(
-                        f"SELL tps must be strictly descending and < entry_price; "
-                        f"tps[{i}]={tp} >= {ref}={prev}"
-                    )
-                prev = tp
+    # ------------------------------------------------------------------
+    def sanitize(self) -> List[float]:
+        """
+        Loại bỏ các TP không hợp lệ và sắp xếp theo hướng giao dịch.
+
+        Drop: tp <= 0, tp sai hướng (BUY: tp <= entry; SELL: tp >= entry), trùng lặp.
+        Sau khi drop, sort ascending cho BUY / descending cho SELL.
+        Trả về list các TP đã bị drop (để caller log WARN audit).
+
+        Sau sanitize, self.tps có thể rỗng — caller hợp lệ hoá bằng nhánh
+        InpAllowMissingTp của EA (ATR/Fixed-TP fallback).
+        """
+        dropped: List[float] = []
+        kept: List[float] = []
+        seen: set = set()
+        for tp in self.tps:
+            if tp <= 0:
+                dropped.append(tp)
+                continue
+            if self.direction == "BUY" and tp <= self.entry_price:
+                dropped.append(tp)
+                continue
+            if self.direction == "SELL" and tp >= self.entry_price:
+                dropped.append(tp)
+                continue
+            key = round(tp, 5)
+            if key in seen:
+                dropped.append(tp)
+                continue
+            seen.add(key)
+            kept.append(tp)
+        kept.sort(reverse=(self.direction == "SELL"))
+        self.tps = kept
+        return dropped
 
     # ------------------------------------------------------------------
     @classmethod
