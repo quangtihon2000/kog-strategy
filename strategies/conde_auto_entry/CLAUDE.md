@@ -33,8 +33,9 @@ distance >  InpMaxPendingDistPts → SKIP (too far)
 | SELL | entry < market | SELL_STOP (sell on breakdown) |
 
 ### Dedup (restart-safe)
-- Each position gets comment `CAE_T{n}_{timestamp}_{mode}` (e.g., `CAE_T1_1713259200_ATR`)
-- `mode` ∈ `ORG` (signal TP1 won the min-distance compare, or ATR fallback) / `ATR` (ATR TP won the compare) / `FIX` (fixed pts override) — lets you distinguish TP source from broker history
+- Each position gets comment `CAE_T{n}_{timestamp}_{mode}` (e.g., `CAE_T1_1713259200_ATRm3x1.0`)
+- `mode` ∈ `ORG` (signal TP1 won the min-distance compare, or ATR fallback) / `ATR{tf}x{mult}` (ATR TP won the compare — e.g. `ATRm1x0.9`, `ATRm3x1.0`, encodes the ATR timeframe + multiplier so you can read the TP source straight from broker history) / `FIX{pips}` (fixed pts override — e.g. `FIX10pips`; pips = `InpFixedTpPts / 10`, since 1 pip = 10 points on XAUUSD)
+- ATR tag built by `AtrModeTag()`: `EnumToString(tf)` minus `PERIOD_` prefix, lowercased, + `x%.1f` mult — kept short to stay under MT5's ~31-char comment limit
 - When `InpUseAtrTp=true`: TP = min-distance(ATR_TP, signal TP1) from entry — picks whichever exits sooner
 - Dedup uses **prefix match** (`CAE_T{n}_{ts}_`) so mode swap between runs doesn't re-fire
 - `ParseTsFromComment()` ignores the trailing `_{mode}` (`StringToInteger` stops at `_`)

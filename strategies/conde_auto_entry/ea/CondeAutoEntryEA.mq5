@@ -3,7 +3,7 @@
 //|  Opens one position per TP from a pre-computed JSON signal       |
 //+------------------------------------------------------------------+
 #property copyright   "CondeAutoEntry EA"
-#property version     "1.13"
+#property version     "1.14"
 #property description "Reads {account}_{symbol}.json, market-fires at entry, one position per TP slot — all positions target TP1"
 
 #include <Trade\Trade.mqh>
@@ -501,6 +501,17 @@ bool IsSpreadOK(const string tag) {
 }
 
 //+------------------------------------------------------------------+
+//| Tag ATR mode gọn cho comment: "ATRm3x1.0" = ATR(M3) * 1.0.        |
+//| TF lấy từ EnumToString (PERIOD_M3 → "M3") rồi hạ thường thành m3, |
+//| mult format %.1f để giữ comment < 31 ký tự (giới hạn MT5).        |
+//+------------------------------------------------------------------+
+string AtrModeTag(const ENUM_TIMEFRAMES tf, const double mult) {
+   string tfShort = StringSubstr(EnumToString(tf), 7);  // bỏ tiền tố "PERIOD_"
+   StringToLower(tfShort);
+   return StringFormat("ATR%sx%.1f", tfShort, mult);
+}
+
+//+------------------------------------------------------------------+
 //| Tính TP cho một lệnh:                                              |
 //|  - FixedTpPts > 0      → TP cố định (override tất cả)             |
 //|  - UseAtrTp = false    → dùng signal TP1                          |
@@ -520,7 +531,8 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
       PrintFormat("[FIXED-TP] %s pts=%.1f entry=%.5f → tp=%.5f",
                   dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
                   g_cfg_FixedTpPts, entryPrice, tpFixed);
-      modeOut = "FIX";
+      // FIX{pips}: 1 pip = 10 points trên XAUUSD → pips = pts/10 (vd 100pts → FIX10pips)
+      modeOut = StringFormat("FIX%gpips", g_cfg_FixedTpPts / 10.0);
       return tpFixed;
    }
 
@@ -560,7 +572,7 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
 
    if (!hasSigTp) {
       // Không có signal TP → bắt buộc dùng ATR TP, không so sánh
-      modeOut = "ATR";
+      modeOut = AtrModeTag(g_cfg_AtrTf, g_cfg_AtrTpMult);
       PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f atrTp=%.5f (no signal TP — using ATR)",
                   dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
                   atrVal, g_cfg_AtrTpMult, atrTp);
@@ -572,7 +584,7 @@ double ComputeTp(const ENUM_POSITION_TYPE dir, const CondeSignal &sig, const dou
    double distSig = MathAbs(sigTp - entryPrice);
    bool   pickAtr = (distAtr <= distSig);
    double tp      = pickAtr ? atrTp : sigTp;
-   modeOut        = pickAtr ? "ATR" : "ORG";
+   modeOut        = pickAtr ? AtrModeTag(g_cfg_AtrTf, g_cfg_AtrTpMult) : "ORG";
 
    PrintFormat("[ATR-TP] %s ATR=%.5f mult=%.2f atrTp=%.5f (dist=%.5f) sigTp=%.5f (dist=%.5f) → pick=%s tp=%.5f",
                dir == POSITION_TYPE_BUY ? "BUY" : "SELL",
