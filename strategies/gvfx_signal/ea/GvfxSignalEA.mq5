@@ -19,10 +19,10 @@ input int    InpEodCutLeadMins      = 5;             // Cut N minutes before bro
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
 input ENUM_TIMEFRAMES InpAtrStepTf   = PERIOD_M15;   // ATR timeframe for STEP (when use_atr)
-input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M5;    // ATR timeframe for TP   (when use_atr)
+input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M5;    // ATR timeframe for TP   (when use_atr) — ATRm5x0.9
 input int    InpAtrPeriod           = 14;            // ATR period (shared by step + tp handles)
 input double InpAtrStepMult         = 0.9;           // step = ATR_StepTf * mult (when use_atr)
-input double InpAtrTpMult           = 0.9;           // tp   = ATR_TpTf   * mult (when use_atr)
+input double InpAtrTpMult           = 0.9;           // tp   = ATR_TpTf   * mult (when use_atr) — ATRm5x0.9
 input int    InpAtrMinPts           = 500;           // ATR-derived step/tp floor (points)
 input int    InpAtrMaxPts           = 5000;          // ATR-derived STEP ceiling (points)
 input int    InpAtrTpMaxPts         = 1000;          // ATR-derived TP   ceiling (points)
