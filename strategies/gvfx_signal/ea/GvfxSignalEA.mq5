@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.04"
+#property version     "1.05"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -19,7 +19,7 @@ input int    InpEodCutLeadMins      = 5;             // Cut N minutes before bro
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
 input ENUM_TIMEFRAMES InpAtrStepTf   = PERIOD_M15;   // ATR timeframe for STEP (when use_atr)
-input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M15;   // ATR timeframe for TP   (when use_atr)
+input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M5;    // ATR timeframe for TP   (when use_atr)
 input int    InpAtrPeriod           = 14;            // ATR period (shared by step + tp handles)
 input double InpAtrStepMult         = 0.9;           // step = ATR_StepTf * mult (when use_atr)
 input double InpAtrTpMult           = 0.9;           // tp   = ATR_TpTf   * mult (when use_atr)
