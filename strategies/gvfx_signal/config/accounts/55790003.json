@@ -15,7 +15,8 @@
   "InpAtrPeriod": 14,
   "InpAtrStepMult": 0.9,
   "InpAtrTpMult": 0.9,
-  "InpAtrMinPts": 500,
+  "InpAtrMinPts": 1000,
   "InpAtrMaxPts": 5000,
+  "InpAtrTpMinPts": 500,
   "InpAtrTpMaxPts": 1000
 }

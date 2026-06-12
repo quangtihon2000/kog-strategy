@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.05"
+#property version     "1.06"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -23,8 +23,9 @@ input ENUM_TIMEFRAMES InpAtrTpTf     = PERIOD_M5;    // ATR timeframe for TP   (
 input int    InpAtrPeriod           = 14;            // ATR period (shared by step + tp handles)
 input double InpAtrStepMult         = 0.9;           // step = ATR_StepTf * mult (when use_atr)
 input double InpAtrTpMult           = 0.9;           // tp   = ATR_TpTf   * mult (when use_atr) — ATRm5x0.9
-input int    InpAtrMinPts           = 500;           // ATR-derived step/tp floor (points)
+input int    InpAtrMinPts           = 1000;          // ATR-derived STEP floor (points) — 100 pips
 input int    InpAtrMaxPts           = 5000;          // ATR-derived STEP ceiling (points)
+input int    InpAtrTpMinPts         = 500;           // ATR-derived TP   floor (points) — 50 pips
 input int    InpAtrTpMaxPts         = 1000;          // ATR-derived TP   ceiling (points)
 
 //+------------------------------------------------------------------+
@@ -75,8 +76,9 @@ ENUM_TIMEFRAMES   g_cfg_AtrTpTf;
 int               g_cfg_AtrPeriod;
 double            g_cfg_AtrStepMult;
 double            g_cfg_AtrTpMult;
-int               g_cfg_AtrMinPts;
+int               g_cfg_AtrMinPts;       // floor for step
 int               g_cfg_AtrMaxPts;       // ceiling for step
+int               g_cfg_AtrTpMinPts;     // floor for tp
 int               g_cfg_AtrTpMaxPts;     // ceiling for tp
 bool              g_cfg_Enabled = true;
 
@@ -317,15 +319,16 @@ void EffectiveStepTpPts(const GvfxSig &sig, int &stepPts, int &tpPts, string &mo
       mode    = "F";
       return;
    }
-   int lo     = MathMax(1, g_cfg_AtrMinPts);
-   int stepHi = MathMax(lo, g_cfg_AtrMaxPts);
-   int tpHi   = MathMax(lo, g_cfg_AtrTpMaxPts);
+   int stepLo = MathMax(1, g_cfg_AtrMinPts);
+   int tpLo   = MathMax(1, g_cfg_AtrTpMinPts);
+   int stepHi = MathMax(stepLo, g_cfg_AtrMaxPts);
+   int tpHi   = MathMax(tpLo,   g_cfg_AtrTpMaxPts);
    int stepPt = (int)MathRound(stepBuf[0] / _Point);
    int tpPt   = (int)MathRound(tpBuf[0]   / _Point);
    int stepRaw = (int)MathRound(stepPt * g_cfg_AtrStepMult);
    int tpRaw   = (int)MathRound(tpPt   * g_cfg_AtrTpMult);
-   stepPts = MathMax(lo, MathMin(stepHi, stepRaw));
-   tpPts   = MathMax(lo, MathMin(tpHi,   tpRaw));
+   stepPts = MathMax(stepLo, MathMin(stepHi, stepRaw));
+   tpPts   = MathMax(tpLo,   MathMin(tpHi,   tpRaw));
    mode    = "A";
 }
 
@@ -1001,6 +1004,7 @@ void InitShadowsFromInputs() {
    g_cfg_AtrTpMult           = InpAtrTpMult;
    g_cfg_AtrMinPts           = InpAtrMinPts;
    g_cfg_AtrMaxPts           = InpAtrMaxPts;
+   g_cfg_AtrTpMinPts         = InpAtrTpMinPts;
    g_cfg_AtrTpMaxPts         = InpAtrTpMaxPts;
    g_cfg_Enabled             = true;
 }
@@ -1034,6 +1038,7 @@ void LoadAccountConfig() {
    g_cfg_AtrTpMult           = JsonGetDouble(json, "InpAtrTpMult",           g_cfg_AtrTpMult);
    g_cfg_AtrMinPts           = (int)JsonGetLong  (json, "InpAtrMinPts",           (long)g_cfg_AtrMinPts);
    g_cfg_AtrMaxPts           = (int)JsonGetLong  (json, "InpAtrMaxPts",           (long)g_cfg_AtrMaxPts);
+   g_cfg_AtrTpMinPts         = (int)JsonGetLong  (json, "InpAtrTpMinPts",         (long)g_cfg_AtrTpMinPts);
    g_cfg_AtrTpMaxPts         = (int)JsonGetLong  (json, "InpAtrTpMaxPts",         (long)g_cfg_AtrTpMaxPts);
 
    PrintFormat("[Config] Loaded acc=%I64d enabled=%s magic=%I64u lot=%.2f maxpos=%d",
