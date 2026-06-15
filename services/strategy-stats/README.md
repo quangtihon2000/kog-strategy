@@ -51,6 +51,7 @@ Copy `.env.example` → `.env` and fill in. All required:
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | Currently unused — kept for one-line re-enable of dashboard auth |
 | `WEB_PORT` | Loopback host port for the web container (default 8080); external `portfolio-caddy` fronts public traffic via the `strategy-stats-web` network alias |
 | `INGEST_BATCH_COUNT` / `INGEST_BLOCK_MS` / `INGEST_CONSUMER_NAME` | XREADGROUP tuning |
+| `QUALITY_WINDOW` / `QUALITY_MIN_CLASSIFIED` / `QUALITY_WIN_LO95_FLOOR` / `QUALITY_AVG_R_FLOOR` / `QUALITY_LOSS_RATE_CEIL` | Optional. `/conde/quality` auto-rank gates. Defaults: `30d` / `20` / `0.50` / `0.0` / `0.50` |
 
 ## Stream → consumer-group mapping
 
@@ -234,6 +235,9 @@ All dashboard routes are currently open (no auth). To re-enable Basic Auth, see 
 | `/` | Home — 3 KPI cards (conde / gvfx / zone) + recent conde signals table |
 | `/conde` | Per-channel table + win-rate |
 | `/conde/channel/{channel_id}` | Per-signal breakdown (optional `?signal_ts=` deeplink to single signal) |
+| `/conde/quality` | Quality channel list: auto-rank tier (QUALITY/WATCH/POOR/INSUFFICIENT) + operator verdict (APPROVED/REJECTED/PENDING) with Approve/Reject form |
+| `POST /conde/quality/{channel_id}` | Set operator verdict (`status` + optional `note`) |
+| `/conde/quality.json` | Machine-readable ranked list (auto-tier + verdict + metrics) |
 | `/gvfx` | Per-symbol cards + mode_tag (A/F/S) breakdown |
 | `/gvfx/symbol/{symbol}` | Per-signal grid |
 | `/zone` | Per-account + per-tier (SCALP/NORMAL/MID) |
@@ -244,7 +248,7 @@ HTMX powers `?since=7d|30d|all` selectors and column sorts (`hx-get` + `hx-targe
 
 ## Schema highlights
 
-- `channels(channel_id BIGINT PK, name TEXT, name_history JSONB)` — rename history appended on ingest when `name` diverges from stored row. Only conde signals carry channel_id; gvfx/zone NULL.
+- `channels(channel_id BIGINT PK, name TEXT, name_history JSONB, quality_status, quality_note, quality_updated_at, quality_updated_by)` — rename history appended on ingest when `name` diverges. `quality_status` (PENDING/APPROVED/REJECTED, default PENDING) is the operator's curated-quality verdict, set via `/conde/quality`. Only conde signals carry channel_id; gvfx/zone NULL.
 - Per-strategy `*_signals` / `*_outcomes` tables. `raw JSONB` column on all of them for forensics.
 - No FK between signals ↔ outcomes (outcome can arrive before signal during cold replay).
 - GVFX outcomes carry `mode_tag` (A/F/S/?) parsed from comment `GVFX_T{ts}_{mode}`; `close_reason` adds `EOD` value for cut-window closes.

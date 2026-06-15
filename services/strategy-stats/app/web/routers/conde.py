@@ -1,9 +1,10 @@
 """Conde per-channel dashboard."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,9 @@ from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 router = APIRouter()
 
 
+_VALID_VERDICTS = ("APPROVED", "REJECTED", "PENDING")
+
+
 def _quality_thresholds() -> QualityThresholds:
     s = get_settings()
     return QualityThresholds(
@@ -27,6 +31,17 @@ def _quality_thresholds() -> QualityThresholds:
         avg_r_floor=s.quality_avg_r_floor,
         loss_rate_ceil=s.quality_loss_rate_ceil,
     )
+
+
+async def _verdicts_by_id(
+    session: AsyncSession, channel_ids: list[int]
+) -> dict[int, Channel]:
+    if not channel_ids:
+        return {}
+    rows = (
+        await session.execute(select(Channel).where(Channel.channel_id.in_(channel_ids)))
+    ).scalars().all()
+    return {c.channel_id: c for c in rows}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -182,11 +197,22 @@ async def quality(
 
     by_channel = await aggregate_since(session, since_to_epoch(since_code))
     ranked = rank(by_channel, thresholds)
-    rows = [{"cs": cs, "v": verdict} for cs, verdict in ranked]
+
+    verdicts = await _verdicts_by_id(
+        session, [cs.channel_id for cs, _ in ranked if cs.channel_id is not None]
+    )
+    rows = [
+        {"cs": cs, "v": verdict, "ch": verdicts.get(cs.channel_id)}
+        for cs, verdict in ranked
+    ]
 
     tier_counts: dict[str, int] = {}
-    for _cs, verdict in ranked:
+    verdict_counts: dict[str, int] = {"APPROVED": 0, "REJECTED": 0, "PENDING": 0}
+    for cs, verdict in ranked:
         tier_counts[verdict.tier] = tier_counts.get(verdict.tier, 0) + 1
+        ch = verdicts.get(cs.channel_id)
+        st = ch.quality_status if ch else "PENDING"
+        verdict_counts[st] = verdict_counts.get(st, 0) + 1
 
     templates = request.app.state.templates
     return templates.TemplateResponse(
@@ -198,9 +224,39 @@ async def quality(
             "since": since_code,
             "rows": rows,
             "tier_counts": tier_counts,
+            "verdict_counts": verdict_counts,
             "thresholds": thresholds,
         },
     )
+
+
+@router.post("/quality/{channel_id}")
+async def set_quality_verdict(
+    channel_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    status: Annotated[str, Form()],
+    note: Annotated[str, Form()] = "",
+    since: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    """Operator sets the quality verdict for a channel (hybrid review, Phase 2)."""
+    verdict = status.strip().upper()
+    if verdict not in _VALID_VERDICTS:
+        raise HTTPException(status_code=400, detail=f"invalid status {status!r}")
+
+    channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail=f"channel {channel_id} not found")
+
+    channel.quality_status = verdict
+    channel.quality_note = note.strip() or None
+    channel.quality_updated_at = datetime.now(timezone.utc)
+    channel.quality_updated_by = "web"
+    await session.commit()
+
+    dest = "/conde/quality"
+    if since:
+        dest += f"?since={normalize_since(since)}"
+    return RedirectResponse(dest, status_code=303)
 
 
 @router.get("/quality.json")
@@ -219,6 +275,9 @@ async def quality_json(
 
     by_channel = await aggregate_since(session, since_to_epoch(since_code))
     ranked = rank(by_channel, thresholds)
+    verdicts = await _verdicts_by_id(
+        session, [cs.channel_id for cs, _ in ranked if cs.channel_id is not None]
+    )
 
     return JSONResponse(
         {
@@ -236,6 +295,11 @@ async def quality_json(
                     "channel_name": cs.channel,
                     "tier": verdict.tier,
                     "reasons": verdict.reasons,
+                    "verdict": (
+                        verdicts[cs.channel_id].quality_status
+                        if cs.channel_id in verdicts
+                        else "PENDING"
+                    ),
                     "n_signals": cs.n_signals,
                     "n_executed": cs.n_executed,
                     "n_classified": cs.n_classified,
