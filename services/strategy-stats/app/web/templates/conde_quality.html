@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Conde — Quality{% endblock %}
+{% macro tier_badge(tier) -%}
+{% set cls = {
+  "QUALITY": "bg-emerald-100 text-emerald-700",
+  "WATCH": "bg-amber-100 text-amber-700",
+  "POOR": "bg-rose-100 text-rose-700",
+  "INSUFFICIENT": "bg-slate-100 text-slate-500"
+} %}
+<span class="inline-block px-2 py-0.5 rounded text-xs font-semibold {{ cls.get(tier, 'bg-slate-100 text-slate-500') }}">{{ tier }}</span>
+{%- endmacro %}
+{% block content %}
+<section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-xl font-semibold">Conde · quality</h1>
+    <div class="text-xs text-slate-500">
+      auto-rank suggestion · gates: classified &ge;{{ thresholds.min_classified }},
+      Lo95 &ge;{{ "%.0f%%"|format(thresholds.win_lo95_floor * 100) }},
+      avg R &ge;{{ "%.2f"|format(thresholds.avg_r_floor) }},
+      loss &lt;{{ "%.0f%%"|format(thresholds.loss_rate_ceil * 100) }} ·
+      <a class="text-amber-700 hover:underline" href="/conde/quality.json?since={{ since }}">JSON</a>
+    </div>
+  </div>
+  {{ m.since_selector("/conde/quality", since) }}
+</section>
+
+<section class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+  {{ m.kpi("Quality", tier_counts.get("QUALITY", 0)) }}
+  {{ m.kpi("Watch", tier_counts.get("WATCH", 0)) }}
+  {{ m.kpi("Poor", tier_counts.get("POOR", 0)) }}
+  {{ m.kpi("Insufficient", tier_counts.get("INSUFFICIENT", 0)) }}
+</section>
+
+<div id="data" class="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+  <div class="overflow-x-auto">
+  <table class="min-w-full text-sm">
+    <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="px-3 py-2 text-left">Tier</th>
+        <th class="px-3 py-2 text-left">Channel</th>
+        <th class="px-3 py-2 text-right">Signals</th>
+        <th class="px-3 py-2 text-right">Classified</th>
+        <th class="px-3 py-2 text-right">Win rate</th>
+        <th class="px-3 py-2 text-right">Lo95</th>
+        <th class="px-3 py-2 text-right">Loss</th>
+        <th class="px-3 py-2 text-right">Avg R</th>
+        <th class="px-3 py-2 text-right">P&amp;L</th>
+        <th class="px-3 py-2 text-left">Why</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for row in rows %}
+      {% set cs = row.cs %}
+      {% set v = row.v %}
+      <tr class="hover:bg-slate-50">
+        <td class="px-3 py-2">{{ tier_badge(v.tier) }}</td>
+        <td class="px-3 py-2">
+          {% if cs.channel_id is not none %}
+          <a class="text-amber-700 hover:underline" href="/conde/channel/{{ cs.channel_id }}?since={{ since }}">{{ cs.channel }}</a>
+          {% else %}
+          {{ cs.channel }}
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 text-right">{{ cs.n_signals }}</td>
+        <td class="px-3 py-2 text-right">{{ cs.n_classified }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(cs.win_rate) }}</td>
+        <td class="px-3 py-2 text-right text-slate-500">{{ m.pct(cs.confidence_lo95) }}</td>
+        <td class="px-3 py-2 text-right">{{ m.pct(cs.loss_rate) }}</td>
+        <td class="px-3 py-2 text-right">{% if cs.avg_r is none %}—{% else %}{{ "%.2f"|format(cs.avg_r) }}{% endif %}</td>
+        <td class="px-3 py-2 text-right">{{ m.money(cs.total_pnl) }}</td>
+        <td class="px-3 py-2 text-xs text-slate-500">{{ v.reasons | join(" · ") }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="10" class="px-3 py-6 text-center text-slate-500">No data in this window.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

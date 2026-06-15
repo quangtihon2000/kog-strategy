@@ -4,16 +4,29 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_lib.timefmt import now_unix
 from app.deps import get_session
 from app.models import Channel, CondeOutcome, CondeSignal
+from app.settings import get_settings
 from app.stats.conde import aggregate_by_account, aggregate_since
+from app.stats.quality import QualityThresholds, rank
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
+
+
+def _quality_thresholds() -> QualityThresholds:
+    s = get_settings()
+    return QualityThresholds(
+        min_classified=s.quality_min_classified,
+        win_lo95_floor=s.quality_win_lo95_floor,
+        avg_r_floor=s.quality_avg_r_floor,
+        loss_rate_ceil=s.quality_loss_rate_ceil,
+    )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -153,6 +166,89 @@ async def channel_stats(
             "since": since_code,
             "rows": rows,
         },
+    )
+
+
+@router.get("/quality", response_class=HTMLResponse)
+async def quality(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    since: str | None = None,
+) -> HTMLResponse:
+    """Ranked quality list: auto-tier every channel over the window (Phase 1)."""
+    s = get_settings()
+    since_code = normalize_since(since or s.quality_window)
+    thresholds = _quality_thresholds()
+
+    by_channel = await aggregate_since(session, since_to_epoch(since_code))
+    ranked = rank(by_channel, thresholds)
+    rows = [{"cs": cs, "v": verdict} for cs, verdict in ranked]
+
+    tier_counts: dict[str, int] = {}
+    for _cs, verdict in ranked:
+        tier_counts[verdict.tier] = tier_counts.get(verdict.tier, 0) + 1
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        request,
+        "conde_quality.html",
+        {
+            "now_str": request.state.now_str,
+            "since_choices": SINCE_CHOICES,
+            "since": since_code,
+            "rows": rows,
+            "tier_counts": tier_counts,
+            "thresholds": thresholds,
+        },
+    )
+
+
+@router.get("/quality.json")
+async def quality_json(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    since: str | None = None,
+) -> JSONResponse:
+    """Machine-readable quality list — same ranking as the HTML page.
+
+    Stable shape for downstream consumers (a future execution gate, the
+    read-only telegram `/stats quality`, etc.).
+    """
+    s = get_settings()
+    since_code = normalize_since(since or s.quality_window)
+    thresholds = _quality_thresholds()
+
+    by_channel = await aggregate_since(session, since_to_epoch(since_code))
+    ranked = rank(by_channel, thresholds)
+
+    return JSONResponse(
+        {
+            "generated_at": now_unix(),
+            "since": since_code,
+            "thresholds": {
+                "min_classified": thresholds.min_classified,
+                "win_lo95_floor": thresholds.win_lo95_floor,
+                "avg_r_floor": thresholds.avg_r_floor,
+                "loss_rate_ceil": thresholds.loss_rate_ceil,
+            },
+            "channels": [
+                {
+                    "channel_id": cs.channel_id,
+                    "channel_name": cs.channel,
+                    "tier": verdict.tier,
+                    "reasons": verdict.reasons,
+                    "n_signals": cs.n_signals,
+                    "n_executed": cs.n_executed,
+                    "n_classified": cs.n_classified,
+                    "n_win": cs.n_win,
+                    "win_rate": cs.win_rate,
+                    "loss_rate": cs.loss_rate,
+                    "confidence_lo95": cs.confidence_lo95,
+                    "avg_r": cs.avg_r,
+                    "total_pnl": cs.total_pnl,
+                }
+                for cs, verdict in ranked
+            ],
+        }
     )
 
 

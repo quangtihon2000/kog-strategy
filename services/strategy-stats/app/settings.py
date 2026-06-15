@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     ingest_block_ms: int = Field(default=5000, ge=100, le=60_000)
     ingest_consumer_name: str = "stats-worker-1"
 
+    # Conde channel-quality auto-rank (Phase 1). Defaults are tuned for XAUUSD
+    # conde channels; override via env when calibrating.
+    quality_window: str = "30d"                # default lookback for the quality page
+    quality_min_classified: int = Field(default=20, ge=1)
+    quality_win_lo95_floor: float = Field(default=0.50, ge=0.0, le=1.0)
+    quality_avg_r_floor: float = 0.0
+    quality_loss_rate_ceil: float = Field(default=0.50, ge=0.0, le=1.0)
+
     @property
     def postgres_async_url(self) -> str:
         # quote() on user/password so '@', ':', '/' etc don't break URL parsing
