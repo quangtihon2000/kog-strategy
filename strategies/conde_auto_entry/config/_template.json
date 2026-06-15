@@ -33,5 +33,8 @@
   "InpUseAtrTp": true,
   "InpAtrTf": "M3",
   "InpAtrPeriod": 14,
-  "InpAtrTpMult": 1.0
+  "InpAtrTpMult": 1.0,
+
+  "conde_channel_filter": "off",
+  "conde_channel_allowlist": []
 }

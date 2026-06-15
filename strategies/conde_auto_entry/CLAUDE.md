@@ -92,6 +92,20 @@ REDIS_STREAM=conde_signals
 REDIS_GROUP=conde_writer
 ```
 
+## Per-account channel gate (Phase 3)
+
+Lọc theo channel **ở agent** (không phải EA — EA không đọc `channel_id`). Agent đã fan-out per-account nên gate đặt đúng chỗ; Python xử lý list, không đụng MQL5.
+
+- **Config trong per-account JSON** (`config/accounts/<account>.json`, cùng file EA dùng — EA bỏ qua key lạ):
+  - `conde_channel_filter`: `"off"` (default / thiếu key → trade tất, backward compatible) | `"approved"` | `"list"`.
+  - `conde_channel_allowlist`: `[channel_id, ...]` — chỉ dùng khi mode `"list"`.
+  - Agent **hot-reload** theo mtime (`AccountConfigStore`), không cần restart.
+- **Mode `approved`**: agent fetch `STATS_QUALITY_URL` (Phase 2 `/conde/quality.json`), lọc `verdict == APPROVED` → set `channel_id`. Background thread refresh mỗi `APPROVED_REFRESH_SEC` giây, giữ **last-known-good**. Chưa fetch được lần nào → **fail-open** (trade tất) + WARN, để stats down lúc khởi động không chặn toàn bộ.
+- **Gate** (`_gate_decision` trong `main.py`): `off` → cho qua; `list`/`approved` mà `channel_id` không khớp → **skip ghi file cho account đó** (+log INFO), account khác vẫn ghi; message vẫn ACK. Signal thiếu `channel_id` khi mode≠off → skip (an toàn).
+- `channel_id` được thread vào `CondeSignal` (đã có trên Redis stream) và ghi vào signal file để audit (EA bỏ qua).
+- Env: `STATS_QUALITY_URL`, `APPROVED_REFRESH_SEC`, `CONDE_ACCOUNT_CONFIG_DIR` (mặc định `../config/accounts`).
+- **Không** tác động strategy-stats hay EA — chỉ `strategies/conde_auto_entry/**` (pipeline agent).
+
 ## Important Notes
 
 - Signal expires after 24 hours (`now - timestamp > 86400` → rejected)

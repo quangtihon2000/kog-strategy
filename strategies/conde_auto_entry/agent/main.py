@@ -11,6 +11,8 @@ import redis as redis_lib
 # Add shared/ to import path so agent_lib is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "shared"))
 
+from account_config import AccountConfigStore, AccountFilter
+from approved_channels import ApprovedChannels
 from config import load_settings
 from models import CondeSignal, _clean_channel_name
 from agent_lib.redis_consumer import RedisConsumer
@@ -20,7 +22,32 @@ import outcome_publisher
 log = logging.getLogger(__name__)
 
 
-def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
+def _gate_decision(
+    flt: AccountFilter, approved: ApprovedChannels, channel_id: int | None
+) -> tuple[bool, str]:
+    """(allow, reason). When mode != off, decide whether this channel may trade.
+
+    `reason` is the skip cause when allow is False, or the fail-open cause when
+    allow is True but the filter couldn't be evaluated (approved set not ready).
+    """
+    if flt.mode == "off":
+        return True, ""
+    if channel_id is None:
+        return False, "no channel_id"
+    if flt.mode == "list":
+        return (channel_id in flt.allowlist), "not in allowlist"
+    # mode == "approved"
+    if not approved.ready:
+        return True, "approved-not-ready (fail-open)"
+    return (channel_id in approved.approved()), "not approved"
+
+
+def run_once(
+    consumer: RedisConsumer,
+    writers_by_symbol: dict,
+    acct_store: AccountConfigStore,
+    approved: ApprovedChannels,
+) -> None:
     result = consumer.consume_one(block_ms=5000)
     if result is None:
         return   # timeout — nothing in the stream
@@ -62,6 +89,20 @@ def run_once(consumer: RedisConsumer, writers_by_symbol: dict) -> None:
         return
 
     for writer in writers:
+        flt = acct_store.get(writer.account_id)
+        allow, reason = _gate_decision(flt, approved, sig.channel_id)
+        if not allow:
+            log.info(
+                "[%s/%s] gate skip: channel_id=%s name=%s mode=%s (%s) ts=%d",
+                writer.account_id, writer.symbol, sig.channel_id,
+                sig.channel_name, flt.mode, reason, sig.timestamp,
+            )
+            continue
+        if reason:
+            log.warning(
+                "[%s/%s] gate fail-open: channel_id=%s (%s)",
+                writer.account_id, writer.symbol, sig.channel_id, reason,
+            )
         try:
             writer.write(sig)
             log.info(
@@ -120,17 +161,30 @@ def main() -> None:
             SignalWriter(acc, sym, out_dir) for acc in settings.mt5_accounts
         ]
 
+    # Phase 3 — per-account channel gate. AccountConfigStore hot-reloads each
+    # account's filter from its config JSON; ApprovedChannels keeps the live
+    # operator-approved set in a background thread.
+    acct_store = AccountConfigStore(settings.account_config_dir)
+    approved = ApprovedChannels(settings.stats_quality_url, settings.approved_refresh_sec)
+    threading.Thread(
+        target=approved.run_forever,
+        name="approved-channels",
+        daemon=True,
+    ).start()
+
     log.info(
-        "Started. Accounts=%s  Symbols=%s  Stream=%s  Dir=%s",
+        "Started. Accounts=%s  Symbols=%s  Stream=%s  Dir=%s  ConfigDir=%s  QualityUrl=%s",
         settings.mt5_accounts,
         settings.mt5_symbols,
         settings.redis_stream,
         out_dir,
+        settings.account_config_dir,
+        settings.stats_quality_url,
     )
 
     while True:
         try:
-            run_once(consumer, writers_by_symbol)
+            run_once(consumer, writers_by_symbol, acct_store, approved)
         except Exception as exc:
             log.error("Loop error: %s", exc, exc_info=True)
             time.sleep(5)   # back off before retrying
