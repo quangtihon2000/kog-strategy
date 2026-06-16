@@ -21,17 +21,40 @@
 {% block content %}
 <section class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
   <div>
-    <h1 class="text-xl font-semibold">Conde · quality</h1>
+    <h1 class="text-xl font-semibold">Conde · quality
+      <span class="text-sm font-normal text-slate-500">
+        {% if account is none %}· all accounts{% else %}· account {{ account }}{% endif %}
+      </span>
+    </h1>
     <div class="text-xs text-slate-500">
+      {% if account is none %}metrics combined across accounts{% else %}metrics scoped to account {{ account }}{% endif %} ·
       auto-rank suggestion · verdict = operator decision ·
       gates: classified &ge;{{ thresholds.min_classified }},
       Lo95 &ge;{{ "%.0f%%"|format(thresholds.win_lo95_floor * 100) }},
       avg R &ge;{{ "%.2f"|format(thresholds.avg_r_floor) }},
       loss &lt;{{ "%.0f%%"|format(thresholds.loss_rate_ceil * 100) }} ·
-      <a class="text-amber-700 hover:underline" href="/conde/quality.json?since={{ since }}">JSON</a>
+      <a class="text-amber-700 hover:underline" href="/conde/quality.json?since={{ since }}{% if account is not none %}&account={{ account }}{% endif %}">JSON</a>
     </div>
   </div>
-  {{ m.since_selector("/conde/quality", since) }}
+  <form class="flex flex-wrap items-center gap-3 text-sm" method="get" action="/conde/quality">
+    <label class="flex items-center gap-2">
+      <span class="text-slate-600">Window</span>
+      <select name="since" onchange="this.form.submit()" class="border border-slate-300 rounded px-2 py-1 bg-white">
+        {% for code, label in since_choices %}
+          <option value="{{ code }}" {% if code == since %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="flex items-center gap-2">
+      <span class="text-slate-600">Account</span>
+      <select name="account" onchange="this.form.submit()" class="border border-slate-300 rounded px-2 py-1 bg-white">
+        <option value="" {% if account is none %}selected{% endif %}>All accounts</option>
+        {% for a in accounts %}
+          <option value="{{ a }}" {% if a == account %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
 </section>
 
 <section class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -87,6 +110,7 @@
           {% if cs.channel_id is not none %}
           <form method="post" action="/conde/quality/{{ cs.channel_id }}" class="flex items-center gap-1">
             <input type="hidden" name="since" value="{{ since }}">
+            <input type="hidden" name="account" value="{{ account if account is not none else '' }}">
             <input type="text" name="note" value="{{ row.ch.quality_note if row.ch and row.ch.quality_note else '' }}"
                    placeholder="note" class="border border-slate-300 rounded px-1 py-0.5 text-xs w-20">
             <button name="status" value="APPROVED" title="Approve"

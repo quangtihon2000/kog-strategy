@@ -13,7 +13,7 @@ from agent_lib.timefmt import now_unix
 from app.deps import get_session
 from app.models import Channel, CondeOutcome, CondeSignal
 from app.settings import get_settings
-from app.stats.conde import aggregate_by_account, aggregate_since
+from app.stats.conde import accounts_with_outcomes, aggregate_by_account, aggregate_since
 from app.stats.quality import QualityThresholds, rank
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
@@ -189,13 +189,23 @@ async def quality(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
+    account: int | None = None,
 ) -> HTMLResponse:
-    """Ranked quality list: auto-tier every channel over the window (Phase 1)."""
+    """Ranked quality list: auto-tier every channel over the window.
+
+    account=None ⇒ all accounts combined; account=N ⇒ metrics scoped to that
+    account's own positions only.
+    """
     s = get_settings()
     since_code = normalize_since(since or s.quality_window)
+    since_epoch = since_to_epoch(since_code)
     thresholds = _quality_thresholds()
 
-    by_channel = await aggregate_since(session, since_to_epoch(since_code))
+    accounts = await accounts_with_outcomes(session, since_epoch)
+    if account is not None and account not in accounts:
+        account = None  # ignore unknown account → fall back to combined
+
+    by_channel = await aggregate_since(session, since_epoch, account=account)
     ranked = rank(by_channel, thresholds)
 
     verdicts = await _verdicts_by_id(
@@ -226,6 +236,8 @@ async def quality(
             "tier_counts": tier_counts,
             "verdict_counts": verdict_counts,
             "thresholds": thresholds,
+            "accounts": accounts,
+            "account": account,
         },
     )
 
@@ -237,8 +249,13 @@ async def set_quality_verdict(
     status: Annotated[str, Form()],
     note: Annotated[str, Form()] = "",
     since: Annotated[str, Form()] = "",
+    account: Annotated[str, Form()] = "",
 ) -> RedirectResponse:
-    """Operator sets the quality verdict for a channel (hybrid review, Phase 2)."""
+    """Operator sets the quality verdict for a channel (hybrid review, Phase 2).
+
+    The verdict is global (per channel, account-agnostic); `account` is only
+    carried through so the redirect returns to the same filtered view.
+    """
     verdict = status.strip().upper()
     if verdict not in _VALID_VERDICTS:
         raise HTTPException(status_code=400, detail=f"invalid status {status!r}")
@@ -253,9 +270,12 @@ async def set_quality_verdict(
     channel.quality_updated_by = "web"
     await session.commit()
 
-    dest = "/conde/quality"
+    params = []
     if since:
-        dest += f"?since={normalize_since(since)}"
+        params.append(f"since={normalize_since(since)}")
+    if account.strip():
+        params.append(f"account={account.strip()}")
+    dest = "/conde/quality" + ("?" + "&".join(params) if params else "")
     return RedirectResponse(dest, status_code=303)
 
 
@@ -263,17 +283,25 @@ async def set_quality_verdict(
 async def quality_json(
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
+    account: int | None = None,
 ) -> JSONResponse:
     """Machine-readable quality list — same ranking as the HTML page.
 
     Stable shape for downstream consumers (a future execution gate, the
-    read-only telegram `/stats quality`, etc.).
+    read-only telegram `/stats quality`, etc.). `account=N` scopes metrics to
+    that account's own positions; omit for all-accounts combined.
     """
     s = get_settings()
     since_code = normalize_since(since or s.quality_window)
+    since_epoch = since_to_epoch(since_code)
     thresholds = _quality_thresholds()
 
-    by_channel = await aggregate_since(session, since_to_epoch(since_code))
+    if account is not None:
+        valid = await accounts_with_outcomes(session, since_epoch)
+        if account not in valid:
+            account = None
+
+    by_channel = await aggregate_since(session, since_epoch, account=account)
     ranked = rank(by_channel, thresholds)
     verdicts = await _verdicts_by_id(
         session, [cs.channel_id for cs, _ in ranked if cs.channel_id is not None]
@@ -283,6 +311,7 @@ async def quality_json(
         {
             "generated_at": now_unix(),
             "since": since_code,
+            "account": account,
             "thresholds": {
                 "min_classified": thresholds.min_classified,
                 "win_lo95_floor": thresholds.win_lo95_floor,

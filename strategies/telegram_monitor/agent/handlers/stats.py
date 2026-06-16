@@ -85,10 +85,12 @@ _VERDICT_SHORT = {"APPROVED": "APP", "REJECTED": "REJ", "PENDING": "—"}
 def _fmt_quality(payload: dict, window: str) -> str:
     """Render the strategy-stats /conde/quality.json into a monospace report."""
     channels = payload.get("channels", [])
+    acct = payload.get("account")
+    scope = f"acct {acct}" if acct is not None else "all accts"
     if not channels:
-        return f"KOG /stats quality — last {window}\n\n(no channels in window)"
+        return f"KOG /stats quality — last {window} · {scope}\n\n(no channels in window)"
     lines = [
-        f"KOG /stats quality — last {window}",
+        f"KOG /stats quality — last {window} · {scope}",
         "auto-tier · verdict · classified · Lo95 · P&L",
         "",
         f"{'tier':<4} {'vrd':<3} {'channel':<14} {'cls':>3} {'lo95':>4} {'pnl':>8}",
@@ -106,11 +108,13 @@ def _fmt_quality(payload: dict, window: str) -> str:
     return "\n".join(lines)
 
 
-async def _quality_report(stats_url: str, window: str) -> str:
+async def _quality_report(stats_url: str, window: str, account: int | None = None) -> str:
     base = (stats_url or "").rstrip("/")
     if not base:
         return "stats url not configured — /stats quality unavailable"
     url = f"{base}/conde/quality.json?since={window}"
+    if account is not None:
+        url += f"&account={account}"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -134,8 +138,17 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"bad duration: {window!r} — use forms like 7d, 30d, 90d"
             )
             return
+        account: int | None = None
+        if len(args) > 2:
+            try:
+                account = int(args[2])
+            except ValueError:
+                await update.effective_message.reply_text(
+                    f"bad account: {args[2]!r} — must be a numeric MT5 login"
+                )
+                return
         try:
-            body = await _quality_report(stats_url, window)
+            body = await _quality_report(stats_url, window, account)
         except (httpx.HTTPError, ValueError) as exc:
             log.warning("quality report error: %s", exc)
             await update.effective_message.reply_text(f"quality report error: {exc}")
