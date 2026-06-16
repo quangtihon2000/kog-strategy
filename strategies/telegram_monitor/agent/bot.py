@@ -29,7 +29,7 @@ _BOT_COMMANDS: list[BotCommand] = [
     BotCommand("tail", "Live tail (5s batched)"),
     BotCommand("tailstop", "Stop active tail"),
     BotCommand("signals", "Newest signal files + age"),
-    BotCommand("stats", "Per-channel signal effectiveness (conde_auto_entry)"),
+    BotCommand("stats", "Per-channel effectiveness; 'quality' subcmd = ranked quality list"),
     BotCommand("gvfx", "Publish GVFX signal (no args = wizard, or <target> [dir] [step] [tp] [low] [high])"),
     BotCommand("cancel_gvfx", "Cancel current GVFX signal (pick: block entries / close all)"),
     BotCommand("zone", "Publish zone_signal (no args = wizard, or <upper> <lower> <above> <below>)"),

@@ -48,6 +48,18 @@ class Channel(Base):
     )
     name_history: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
 
+    # Operator quality verdict (Phase 2). `quality_status` is the human decision
+    # that defines the curated "quality channel" list; the auto-rank tier in
+    # app.stats.quality only *suggests* and never writes here.
+    quality_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="PENDING"
+    )  # PENDING | APPROVED | REJECTED
+    quality_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    quality_updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
 
 # ---------------------------------------------------------------------------
 # Conde

@@ -23,6 +23,11 @@ class Settings:
     redis_consumer: str = "conde-agent-1"
     log_level: str = "INFO"
 
+    # Phase 3 — per-account channel gate
+    account_config_dir: Path = Path(__file__).resolve().parent.parent / "config" / "accounts"
+    stats_quality_url: str = "https://stats.auto-trade.life/conde/quality.json"
+    approved_refresh_sec: int = 300
+
     def signal_path(self, account_id: int, symbol: str) -> Path:
         return self.mt5_signal_dir / f"{account_id}_{symbol}.json"
 
@@ -45,6 +50,9 @@ def load_settings() -> Settings:
     if not symbols:
         raise RuntimeError("MT5_SYMBOLS must contain at least one symbol")
 
+    default_cfg_dir = Path(__file__).resolve().parent.parent / "config" / "accounts"
+    account_config_dir = Path(os.environ.get("CONDE_ACCOUNT_CONFIG_DIR", str(default_cfg_dir)))
+
     return Settings(
         mt5_signal_dir=Path(signal_dir),
         mt5_accounts=accounts,
@@ -54,4 +62,9 @@ def load_settings() -> Settings:
         redis_group=os.environ.get("REDIS_GROUP", "conde_writer"),
         redis_consumer=os.environ.get("REDIS_CONSUMER", "conde-agent-1"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
+        account_config_dir=account_config_dir,
+        stats_quality_url=os.environ.get(
+            "STATS_QUALITY_URL", "https://stats.auto-trade.life/conde/quality.json"
+        ),
+        approved_refresh_sec=int(os.environ.get("APPROVED_REFRESH_SEC", "300")),
     )

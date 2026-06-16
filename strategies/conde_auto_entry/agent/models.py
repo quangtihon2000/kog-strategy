@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from typing import List
+from typing import List, Optional
 
 
 # Smart-quote / dash / ellipsis chars that NFKC leaves intact but the
@@ -45,6 +45,7 @@ class CondeSignal:
     sl: float
     tps: List[float]
     channel_name: str         # source channel id (e.g. Telegram channel handle); required for stats
+    channel_id: Optional[int] = None  # Telegram channel BIGINT — gate key (rename-safe); optional for legacy
 
     # ------------------------------------------------------------------
     def validate(self) -> None:
@@ -112,6 +113,11 @@ class CondeSignal:
             sl           : str (float)   e.g. "2340.00"
             tps          : str           e.g. "2355.0,2360.0,2365.0"  (comma-separated)
         """
+        channel_id_raw = str(d.get("channel_id", "")).strip()
+        try:
+            channel_id = int(channel_id_raw) if channel_id_raw else None
+        except ValueError:
+            channel_id = None
         return cls(
             timestamp=int(d["timestamp"]),
             symbol=d["symbol"],
@@ -120,6 +126,7 @@ class CondeSignal:
             sl=float(d["sl"]),
             tps=[float(x) for x in str(d["tps"]).split(",") if x.strip()],
             channel_name=_clean_channel_name(str(d["channel_name"])),
+            channel_id=channel_id,
         )
 
     # ------------------------------------------------------------------
