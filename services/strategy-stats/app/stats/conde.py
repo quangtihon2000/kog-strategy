@@ -51,12 +51,13 @@ async def fetch_signals(session: AsyncSession, since_epoch: int) -> list[dict]:
     ]
 
 
-async def fetch_outcomes(session: AsyncSession, since_epoch: int) -> list[dict]:
-    rows = (
-        await session.execute(
-            select(CondeOutcome).where(CondeOutcome.signal_ts >= since_epoch)
-        )
-    ).scalars().all()
+async def fetch_outcomes(
+    session: AsyncSession, since_epoch: int, account: int | None = None
+) -> list[dict]:
+    stmt = select(CondeOutcome).where(CondeOutcome.signal_ts >= since_epoch)
+    if account is not None:
+        stmt = stmt.where(CondeOutcome.account == account)
+    rows = (await session.execute(stmt)).scalars().all()
     return [
         {
             "position_id":  r.position_id,
@@ -253,10 +254,26 @@ def aggregate(signals: list[dict], outcomes: list[dict]) -> dict[str | None, Cha
     return stats
 
 
-async def aggregate_since(session: AsyncSession, since_epoch: int) -> dict[int | None, ChannelStats]:
+async def aggregate_since(
+    session: AsyncSession, since_epoch: int, account: int | None = None
+) -> dict[int | None, ChannelStats]:
+    """Per-channel stats. account=None ⇒ all accounts combined (default);
+    account=N ⇒ classify each signal using only that account's positions."""
     signals = await fetch_signals(session, since_epoch)
-    outcomes = await fetch_outcomes(session, since_epoch)
+    outcomes = await fetch_outcomes(session, since_epoch, account=account)
     return aggregate(signals, outcomes)
+
+
+async def accounts_with_outcomes(session: AsyncSession, since_epoch: int) -> list[int]:
+    """Distinct accounts that have conde outcomes in the window (for selectors)."""
+    rows = (
+        await session.execute(
+            select(CondeOutcome.account)
+            .where(CondeOutcome.signal_ts >= since_epoch)
+            .distinct()
+        )
+    ).scalars().all()
+    return sorted(a for a in rows if a is not None)
 
 
 # ---------------------------------------------------------------------------

@@ -235,9 +235,9 @@ All dashboard routes are currently open (no auth). To re-enable Basic Auth, see 
 | `/` | Home — 3 KPI cards (conde / gvfx / zone) + recent conde signals table |
 | `/conde` | Per-channel table + win-rate |
 | `/conde/channel/{channel_id}` | Per-signal breakdown (optional `?signal_ts=` deeplink to single signal) |
-| `/conde/quality` | Quality channel list: auto-rank tier (QUALITY/WATCH/POOR/INSUFFICIENT) + operator verdict (APPROVED/REJECTED/PENDING) with Approve/Reject form |
-| `POST /conde/quality/{channel_id}` | Set operator verdict (`status` + optional `note`) |
-| `/conde/quality.json` | Machine-readable ranked list (auto-tier + verdict + metrics) |
+| `/conde/quality` | Quality channel list: combined auto-rank tier (QUALITY/WATCH/POOR/INSUFFICIENT) + operator verdict (APPROVED/REJECTED/PENDING) with Approve/Reject form, plus one reference column per account (that account's own per-channel tier + classified/win-rate/P&L) |
+| `POST /conde/quality/{channel_id}` | Set operator verdict (`status` + optional `note`). Verdict is global per channel |
+| `/conde/quality.json` | Machine-readable ranked list (auto-tier + verdict + metrics). `?account=N` scopes metrics to one account's own positions (omit = all combined) |
 | `/gvfx` | Per-symbol cards + mode_tag (A/F/S) breakdown |
 | `/gvfx/symbol/{symbol}` | Per-signal grid |
 | `/zone` | Per-account + per-tier (SCALP/NORMAL/MID) |

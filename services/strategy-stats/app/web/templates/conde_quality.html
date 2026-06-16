@@ -23,7 +23,7 @@
   <div>
     <h1 class="text-xl font-semibold">Conde · quality</h1>
     <div class="text-xs text-slate-500">
-      auto-rank suggestion · verdict = operator decision ·
+      main columns = combined across accounts (drives verdict) · per-account columns for reference ·
       gates: classified &ge;{{ thresholds.min_classified }},
       Lo95 &ge;{{ "%.0f%%"|format(thresholds.win_lo95_floor * 100) }},
       avg R &ge;{{ "%.2f"|format(thresholds.avg_r_floor) }},
@@ -54,7 +54,10 @@
         <th class="px-3 py-2 text-right">Lo95</th>
         <th class="px-3 py-2 text-right">Avg R</th>
         <th class="px-3 py-2 text-right">P&amp;L</th>
-        <th class="px-3 py-2 text-left">Verdict</th>
+        {% for a in accounts %}
+        <th class="px-3 py-2 text-left border-l border-slate-200">acct {{ a }}</th>
+        {% endfor %}
+        <th class="px-3 py-2 text-left border-l border-slate-200">Verdict</th>
         <th class="px-3 py-2 text-left">Review</th>
       </tr>
     </thead>
@@ -63,7 +66,7 @@
       {% set cs = row.cs %}
       {% set v = row.v %}
       {% set status = row.ch.quality_status if row.ch else "PENDING" %}
-      <tr class="hover:bg-slate-50">
+      <tr class="hover:bg-slate-50 align-top">
         <td class="px-3 py-2">{{ tier_badge(v.tier) }}</td>
         <td class="px-3 py-2">
           {% if cs.channel_id is not none %}
@@ -79,7 +82,17 @@
         <td class="px-3 py-2 text-right text-slate-500">{{ m.pct(cs.confidence_lo95) }}</td>
         <td class="px-3 py-2 text-right">{% if cs.avg_r is none %}—{% else %}{{ "%.2f"|format(cs.avg_r) }}{% endif %}</td>
         <td class="px-3 py-2 text-right">{{ m.money(cs.total_pnl) }}</td>
-        <td class="px-3 py-2">
+        {% for cell in row.accts %}
+        <td class="px-3 py-2 text-xs border-l border-slate-100">
+          {% if cell is none %}
+          <span class="text-slate-300">—</span>
+          {% else %}
+          {{ tier_badge(cell.v.tier) }}
+          <div class="text-slate-500 mt-0.5">{{ cell.cs.n_classified }}c · {{ m.pct(cell.cs.win_rate) }} · {{ m.money(cell.cs.total_pnl) }}</div>
+          {% endif %}
+        </td>
+        {% endfor %}
+        <td class="px-3 py-2 border-l border-slate-100">
           {{ verdict_badge(status) }}
           {% if row.ch and row.ch.quality_note %}<div class="text-xs text-slate-400">{{ row.ch.quality_note }}</div>{% endif %}
         </td>
@@ -102,7 +115,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="px-3 py-6 text-center text-slate-500">No data in this window.</td></tr>
+      <tr><td colspan="{{ 10 + accounts|length }}" class="px-3 py-6 text-center text-slate-500">No data in this window.</td></tr>
       {% endfor %}
     </tbody>
   </table>
