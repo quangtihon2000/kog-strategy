@@ -14,7 +14,7 @@ from app.deps import get_session
 from app.models import Channel, CondeOutcome, CondeSignal
 from app.settings import get_settings
 from app.stats.conde import accounts_with_outcomes, aggregate_by_account, aggregate_since
-from app.stats.quality import QualityThresholds, rank
+from app.stats.quality import QualityThresholds, evaluate, rank
 from app.web.since import SINCE_CHOICES, normalize_since, since_to_epoch
 
 router = APIRouter()
@@ -189,12 +189,12 @@ async def quality(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     since: str | None = None,
-    account: int | None = None,
 ) -> HTMLResponse:
-    """Ranked quality list: auto-tier every channel over the window.
+    """Ranked quality list (combined) + a reference column per account.
 
-    account=None ⇒ all accounts combined; account=N ⇒ metrics scoped to that
-    account's own positions only.
+    The main row is the fleet-wide combined assessment that drives ordering and
+    the operator verdict; each account gets an extra column showing that
+    account's own per-channel stats so the operator can compare before deciding.
     """
     s = get_settings()
     since_code = normalize_since(since or s.quality_window)
@@ -202,19 +202,31 @@ async def quality(
     thresholds = _quality_thresholds()
 
     accounts = await accounts_with_outcomes(session, since_epoch)
-    if account is not None and account not in accounts:
-        account = None  # ignore unknown account → fall back to combined
 
-    by_channel = await aggregate_since(session, since_epoch, account=account)
+    by_channel = await aggregate_since(session, since_epoch)  # combined
     ranked = rank(by_channel, thresholds)
+
+    # Per-account stats keyed by channel_id, for the reference columns.
+    per_account = {
+        a: await aggregate_since(session, since_epoch, account=a) for a in accounts
+    }
 
     verdicts = await _verdicts_by_id(
         session, [cs.channel_id for cs, _ in ranked if cs.channel_id is not None]
     )
-    rows = [
-        {"cs": cs, "v": verdict, "ch": verdicts.get(cs.channel_id)}
-        for cs, verdict in ranked
-    ]
+
+    rows = []
+    for cs, verdict in ranked:
+        cells = []
+        for a in accounts:
+            acs = per_account[a].get(cs.channel_id)
+            if acs is None or acs.n_executed == 0:
+                cells.append(None)  # this account never traded this channel
+            else:
+                cells.append({"cs": acs, "v": evaluate(acs, thresholds)})
+        rows.append(
+            {"cs": cs, "v": verdict, "ch": verdicts.get(cs.channel_id), "accts": cells}
+        )
 
     tier_counts: dict[str, int] = {}
     verdict_counts: dict[str, int] = {"APPROVED": 0, "REJECTED": 0, "PENDING": 0}
@@ -237,7 +249,6 @@ async def quality(
             "verdict_counts": verdict_counts,
             "thresholds": thresholds,
             "accounts": accounts,
-            "account": account,
         },
     )
 
@@ -249,12 +260,11 @@ async def set_quality_verdict(
     status: Annotated[str, Form()],
     note: Annotated[str, Form()] = "",
     since: Annotated[str, Form()] = "",
-    account: Annotated[str, Form()] = "",
 ) -> RedirectResponse:
     """Operator sets the quality verdict for a channel (hybrid review, Phase 2).
 
-    The verdict is global (per channel, account-agnostic); `account` is only
-    carried through so the redirect returns to the same filtered view.
+    Verdict is global per channel (account-agnostic) — the per-account columns
+    are reference only.
     """
     verdict = status.strip().upper()
     if verdict not in _VALID_VERDICTS:
@@ -270,12 +280,9 @@ async def set_quality_verdict(
     channel.quality_updated_by = "web"
     await session.commit()
 
-    params = []
+    dest = "/conde/quality"
     if since:
-        params.append(f"since={normalize_since(since)}")
-    if account.strip():
-        params.append(f"account={account.strip()}")
-    dest = "/conde/quality" + ("?" + "&".join(params) if params else "")
+        dest += f"?since={normalize_since(since)}"
     return RedirectResponse(dest, status_code=303)
 
 
