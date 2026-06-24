@@ -27,6 +27,7 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 ### Per-order risk
 - Lot = `InpLotPerOrder` (default 0.01), normalize theo `SYMBOL_VOLUME_STEP`.
 - TP = entry ± `effTp * _Point` (clamped via broker stops level), với `effTp` từ `EffectiveStepTpPts()` (ATR hoặc fallback).
+- **Last-leg TP = target**: lệnh cuối của grid — khi `targetGap < 2·effStep` (lệnh kế tiếp cách 1 step sẽ rơi trong phạm vi 1 step của target nên không mở được) → `TP = target` thay vì `entry ± effTp`. Lấp phần hụt khi `effTp < effStep` để lệnh cuối chạy thẳng tới target. Vào lệnh vẫn giữ step (guard target-proximity không đổi). Log có `tp=TGT|EFF` để audit.
 - Hard SL = entry ∓ `InpMaxLossPtsPerOrder * _Point` (default 10000 pts, clamped).
 
 ### ATR-derived step/tp (`use_atr`)

@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.06"
+#property version     "1.07"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -447,24 +447,29 @@ void OnTick() {
    if ( isBuy && g_currentSig.low  > 0 && entryPrice <= g_currentSig.low)  return;
    if (!isBuy && g_currentSig.high > 0 && entryPrice >= g_currentSig.high) return;
 
-   //--- Target proximity guard: skip when entry is within one grid step of
-   //    target. Otherwise the position's TP (≈ effStep * 0.95) lands past
-   //    target — when target is hit, signal deactivates but the position
-   //    keeps a TP it may never reach, dangling until SL or oscillation.
+   //--- Target proximity guard: keep grid step for entries — skip when entry is
+   //    within one grid step of target (no order opens that close to target).
    double stepDistP = effStepPts * _Point;
    double targetGap = isBuy ? (g_currentSig.target - entryPrice)
                             : (entryPrice - g_currentSig.target);
    if (targetGap < stepDistP) return;
 
+   //--- Last leg: the next grid step (entry+step) would land within one step of
+   //    target, so no further order can open before target → this is the final
+   //    grid order. When effTp < effStep its normal TP (entry±effTp) falls short
+   //    of target; give the last leg TP = target so it rides all the way in.
+   bool lastLeg = (targetGap < 2.0 * stepDistP);
+
    if (HasOpenWithinStep(entryPrice, stepP)) return;
 
-   OpenMarket(isBuy, entryPrice, effTpPts, mode);
+   OpenMarket(isBuy, entryPrice, effTpPts, mode, lastLeg);
 }
 
 //+------------------------------------------------------------------+
 //| Open one market position with hard SL + TP per signal             |
 //+------------------------------------------------------------------+
-bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, const string mode) {
+bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, const string mode,
+                const bool useTargetTp) {
    double lot = NormalizeLot(g_cfg_LotPerOrder);
    if (lot <= 0) {
       Print("[GVFX] lot normalized to 0 — skip");
@@ -477,8 +482,10 @@ bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, cons
 
    double slRaw = isBuy ? entry - g_cfg_MaxLossPtsPerOrder * _Point
                         : entry + g_cfg_MaxLossPtsPerOrder * _Point;
-   double tpRaw = isBuy ? entry + tpPts * _Point
-                        : entry - tpPts * _Point;
+   //--- Last grid leg targets the signal target directly; others use effTp.
+   double tpRaw = useTargetTp ? g_currentSig.target
+                              : (isBuy ? entry + tpPts * _Point
+                                       : entry - tpPts * _Point);
 
    double sl = ClampStop(dir, slRaw, true);
    double tp = ClampStop(dir, tpRaw, false);
@@ -491,8 +498,9 @@ bool OpenMarket(const bool isBuy, const double triggerRef, const int tpPts, cons
    bool ok = isBuy ? g_trade.Buy (lot, _Symbol, 0.0, sl, tp, comment)
                    : g_trade.Sell(lot, _Symbol, 0.0, sl, tp, comment);
 
-   PrintFormat("[GVFX %s] mode=%s level=%d lot=%.2f entry=%.5f sl=%.5f tp=%.5f trig=%.5f  %s",
-               isBuy ? "BUY" : "SELL", mode, g_openCount + 1, lot, entry, sl, tp, triggerRef,
+   PrintFormat("[GVFX %s] mode=%s tp=%s level=%d lot=%.2f entry=%.5f sl=%.5f tp=%.5f trig=%.5f  %s",
+               isBuy ? "BUY" : "SELL", mode, useTargetTp ? "TGT" : "EFF",
+               g_openCount + 1, lot, entry, sl, tp, triggerRef,
                ok ? "Opened" : "FAILED: " + g_trade.ResultRetcodeDescription());
 
    if (ok) g_openCount++;
