@@ -3,7 +3,7 @@
 //|  Grid DCA from a target-price signal with daily P&L cut          |
 //+------------------------------------------------------------------+
 #property copyright   "GvfxSignal EA"
-#property version     "1.07"
+#property version     "1.08"
 #property description "Reads {account}_{symbol}.json, grid-DCA toward adverse side until target reached"
 
 #include <Trade\Trade.mqh>
@@ -15,7 +15,7 @@ const bool   InpUseCommonDir        = false;         // Pinned: outcomes path mu
 input double InpLotPerOrder         = 0.01;          // Lot per grid level
 input int    InpMaxPositions        = 20;            // Max OPEN positions on this magic+symbol
 input int    InpMaxLossPtsPerOrder  = 10000;         // Hard SL distance per order (points)
-input int    InpEodCutLeadMins      = 5;             // Cut N minutes before broker's last session close (-1 disables)
+input int    InpEodCutLeadMins      = -1;            // EOD close/trim disabled (>=0 = cut N mins before broker session close)
 input int    InpMaxSpreadPts        = 30;            // Max spread (pts) to allow entry; 0 disables
 input int    InpHistoryLookbackDays = 7;             // History window for restart-safe dedup
 input ENUM_TIMEFRAMES InpAtrStepTf   = PERIOD_M15;   // ATR timeframe for STEP (when use_atr)

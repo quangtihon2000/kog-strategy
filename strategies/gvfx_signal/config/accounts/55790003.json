@@ -8,7 +8,7 @@
   "InpLotPerOrder": 0.01,
   "InpMaxPositions": 20,
   "InpMaxLossPtsPerOrder": 10000,
-  "InpEodCutLeadMins": 5,
+  "InpEodCutLeadMins": -1,
   "InpMaxSpreadPts": 30,
   "InpHistoryLookbackDays": 7,
 

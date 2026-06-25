@@ -2,7 +2,7 @@
 
 ## Overview
 
-Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên tục mở lệnh market miễn là (1) chưa chạm target và (2) trong phạm vi ±`step` points quanh giá hiện tại chưa có vị thế nào của EA. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). EOD cut: gần cuối ngày (server time), nếu `dailyRealized + floating > 0` → đóng hết lệnh và pause re-entry đến qua ngày.
+Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên tục mở lệnh market miễn là (1) chưa chạm target và (2) trong phạm vi ±`step` points quanh giá hiện tại chưa có vị thế nào của EA. Tối đa 20 vị thế đồng thời, mỗi lệnh có TP cố định và hard SL 10000 points. Khi giá chạm target → signal inactive (positions đang mở vẫn chạy theo TP/SL, không vào thêm). EOD cut **mặc định TẮT** (`InpEodCutLeadMins = -1`) — không đóng/trim cuối ngày; positions chỉ thoát theo TP/SL/operator-cancel. (Bật lại bằng `InpEodCutLeadMins ≥ 0`: gần cuối ngày nếu `dailyRealized + floating > 0` → đóng hết lệnh và pause re-entry đến qua ngày.)
 
 ## Components
 
@@ -54,7 +54,8 @@ Grid DCA strategy: từ một "target price" với hướng (BUY/SELL), EA liên
 - **Restart-safe deactivation**: khi target reached, EA persist ts vào GlobalVariable `GVFX_Reached_{magic}_{symbol}`. Cả `OnInit` (recover signal state) lẫn `OnTick` (new-signal detection) đều consult biến này — nếu `sig.timestamp == GVFX_Reached_*` thì giữ `g_signalActive = false` bất kể giá hiện tại đã rút khỏi target hay chưa. Tránh các kịch bản: (a) BUY target chạm rồi bid hồi lại dưới target, redeploy EA → tưởng signal còn active và mở lệnh mới trên signal đã chết; (b) deploy lên chart mới / fresh terminal khi positions/history rotate ra ngoài `InpHistoryLookbackDays` → `ScanMaxSeenTimestamp` trả 0, OnInit không match `probe.timestamp == g_lastSigTs`, OnTick treat file ts như signal mới và resurrect. Biến này tự overwrite khi signal mới reached, không cần cleanup.
 
 ### EOD cut
-- **Trigger window**: từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker. Default lead = 5 phút. Set `InpEodCutLeadMins = -1` để disable.
+- **Mặc định TẮT** (`InpEodCutLeadMins = -1`): EA không close/trim cuối ngày, không suppress entry — positions chỉ thoát theo TP/SL/operator-cancel. Đặt `InpEodCutLeadMins ≥ 0` để bật lại.
+- **Trigger window** (khi bật, lead ≥ 0): từ `(today_session_close - InpEodCutLeadMins phút)` đến hết ngày. `today_session_close` lấy động qua `SymbolInfoSessionTrade(_Symbol, dow, i, ...)` — pick `max(to)` của tất cả phiên trong ngày của broker.
 - **Branch A — total > 0 (`dailyRealized + floating > 0`)**: `CloseAllAndCancel()` → đóng hết positions + cancel pendings, gọi `ArmEodSuppression()` → suppress entries đến qua ngày.
 - **Branch B — total < 0**: `PartialEodTrimLosers()`. Sort các vị thế đang lỗ (`profit + swap < 0`) theo P&L tăng dần (lỗ nhiều nhất trước), close lần lượt; trước mỗi close kiểm tra `dailyRealized + Σcuts + next.pnl ≥ 0` — nếu cắt tiếp sẽ kéo realized âm thì `break`. Sau khi loop xong, gọi `ArmEodSuppression()` → suppress entries đến qua ngày (dù break sớm hay không).
 - **Suppression**: `ArmEodSuppression()` set `g_eodCutDoneAnchor = g_dailyAnchor` và persist vào `GlobalVariable` `GVFX_EodCut_{magic}_{symbol}` (restart-safe). Day rollover → anchor cleared và GlobalVariable bị xóa.
