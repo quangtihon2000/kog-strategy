@@ -21,6 +21,12 @@ on:
           - gvfx_signal
           - telegram_monitor
 
+# GitHub Actions now defaults to Node 24, which the self-hosted Windows VPS
+# runners are too old to run — actions/checkout aborts on the runner. Force
+# Node20-targeted actions back onto Node 20 until the runner OS is upgraded.
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+
 jobs:
   redeploy:
     runs-on: self-hosted
