@@ -17,6 +17,21 @@
   "InpFibOTE3": 0.79,
 
   "InpShowHTFObjects": true,
+
+  "InpEnableTrading": false,
+  "InpEntryFib1": 0.62,
+  "InpEntryFib2": 0.705,
+  "InpEntryFib3": 0.785,
+  "InpLotPerEntry": 0.01,
+  "InpMaxSetupPositions": 3,
+  "InpMaxTotalLots": 0.30,
+  "InpSlBufferPts": 200,
+  "InpPendingExpiryBars": 12,
+  "InpMinStopPts": 150,
+  "InpFallbackRR": 2.0,
+  "InpRequireBiasAlign": true,
+  "InpMaxSpreadPts": 50,
+
   "InpMagic": 20260627,
   "InpVerboseLog": true
 }

@@ -1,13 +1,14 @@
 //+------------------------------------------------------------------+
 //|  IctSmcEA.mq5                                                     |
-//|  ICT / Smart-Money-Concepts market-structure DETECTION EA        |
+//|  ICT / Smart-Money-Concepts market-structure EA                  |
 //|  Phase 1: detect + draw swings, BOS, MSS (CHoCH), HTF bias, Fibo  |
-//|  NO trading yet — visualization + Print logs only.               |
+//|  Phase 2: laddered OTE entries (3 limits), structure SL,          |
+//|           opposing-liquidity TP. Gated by InpEnableTrading.       |
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "IctSmc EA"
-#property version     "1.00"
-#property description "Phase 1 — ICT structure detection: swings, BOS, MSS, HTF bias, OTE fib (no orders)"
+#property version     "2.00"
+#property description "ICT structure + laddered OTE entries (entry/SL/TP gated by InpEnableTrading)"
 
 #include <Trade\Trade.mqh>
 
@@ -36,8 +37,25 @@ input color  InpColMSS              = clrMagenta;   // MSS line (reversal/CHoCH)
 input color  InpColFib              = clrGoldenrod; // Fib OTE band/levels
 input color  InpColBiasBull         = clrLimeGreen; // Bias label when bullish
 input color  InpColBiasBear         = clrTomato;    // Bias label when bearish
-//--- Identity / Phase-2 scaffolding
-input ulong  InpMagic               = 20260627;     // Magic (reserved for Phase 2 orders)
+//--- Trading (Phase 2) — entry / SL / TP
+input bool   InpEnableTrading       = false;        // MASTER: false=draw only, true=place orders
+input double InpEntryFib1           = 0.62;         // Entry tier 1 (OTE upper)
+input double InpEntryFib2           = 0.705;        // Entry tier 2 (OTE mid)
+input double InpEntryFib3           = 0.785;        // Entry tier 3 (OTE lower)
+input double InpLotPerEntry         = 0.01;         // Lot per entry (x3 ladder)
+input int    InpMaxSetupPositions   = 3;            // Max positions/pendings per direction
+input double InpMaxTotalLots        = 0.30;         // Max total lots per direction
+input double InpSlBufferPts         = 200;          // SL buffer beyond the MSS swing (points)
+input int    InpPendingExpiryBars   = 12;           // Cancel unfilled limit after N LTF bars
+input double InpMinStopPts          = 150;          // Min SL distance to accept a setup (points)
+input double InpFallbackRR          = 2.0;          // TP fallback R:R when no opposing liquidity
+input bool   InpRequireBiasAlign    = true;         // Only trade MSS aligned with HTF bias
+input long   InpMaxSpreadPts        = 50;           // Max spread to place entries (0=disabled)
+input color  InpColEntry            = clrAqua;      // Entry lines
+input color  InpColSL               = clrRed;       // SL line
+input color  InpColTP               = clrLime;      // TP line
+//--- Identity
+input ulong  InpMagic               = 20260627;     // Magic number
 input bool   InpVerboseLog          = true;         // Verbose [IctSmc] logging
 
 //--- Shadow globals (mutable, populated in InitShadowsFromInputs + LoadAccountConfig)
@@ -60,6 +78,22 @@ color   g_cfg_ColMSS;
 color   g_cfg_ColFib;
 color   g_cfg_ColBiasBull;
 color   g_cfg_ColBiasBear;
+bool    g_cfg_EnableTrading;
+double  g_cfg_EntryFib1;
+double  g_cfg_EntryFib2;
+double  g_cfg_EntryFib3;
+double  g_cfg_LotPerEntry;
+int     g_cfg_MaxSetupPositions;
+double  g_cfg_MaxTotalLots;
+double  g_cfg_SlBufferPts;
+int     g_cfg_PendingExpiryBars;
+double  g_cfg_MinStopPts;
+double  g_cfg_FallbackRR;
+bool    g_cfg_RequireBiasAlign;
+long    g_cfg_MaxSpreadPts;
+color   g_cfg_ColEntry;
+color   g_cfg_ColSL;
+color   g_cfg_ColTP;
 ulong   g_cfg_Magic;
 bool    g_cfg_VerboseLog;
 bool    g_cfg_Enabled = true;
@@ -90,10 +124,25 @@ struct StructureState {
    bool       lastBreakBullish;   // direction of the most recent classified break
 };
 
+//+------------------------------------------------------------------+
+//| Trade setup derived from an LTF MSS                               |
+//+------------------------------------------------------------------+
+struct TradeSetup {
+   bool      active;
+   bool      bullish;
+   datetime  mssTime;      // dedup key: one setup per MSS
+   double    entry[3];     // 3 laddered OTE entry prices
+   double    sl;
+   double    tp;
+   double    rr;
+   datetime  expiry;       // pending-order expiry
+};
+
 //--- Globals
 CTrade     g_trade;
 StructureState g_htf;
 StructureState g_ltf;
+TradeSetup g_setup;
 datetime   g_lastHTFBar = 0;
 datetime   g_lastLTFBar = 0;
 
@@ -104,7 +153,8 @@ int OnInit() {
    InitShadowsFromInputs();
    LoadAccountConfig();
 
-   g_trade.SetExpertMagicNumber(g_cfg_Magic);  // reserved for Phase 2
+   g_trade.SetExpertMagicNumber(g_cfg_Magic);
+   g_trade.SetDeviationInPoints(30);
 
    g_htf.tf  = g_cfg_HTF;
    g_ltf.tf  = g_cfg_LTF;
@@ -112,11 +162,19 @@ int OnInit() {
    g_ltf.bias = TREND_NONE;
    ZeroBreaks(g_htf);
    ZeroBreaks(g_ltf);
+   ZeroMemory(g_setup);
 
    ObjectsDeleteAll(0, OBJ_PREFIX);
+   EnsureOutcomesDir();
 
    if (!g_cfg_Enabled)
-      Print("[IctSmc][Config] DISABLED — Phase 1 still draws (read-only); Phase 2 would gate entries.");
+      Print("[IctSmc][Config] DISABLED — draws structure only, no new entries.");
+   if (g_cfg_LTF == g_cfg_HTF)
+      Print("[IctSmc][WARN] HTF == LTF — bias and entry structure use the same timeframe.");
+   PrintFormat("[IctSmc] Trading=%s (InpEnableTrading). %s",
+               g_cfg_EnableTrading ? "ON" : "OFF (draw-only)",
+               g_cfg_EnableTrading ? "Orders WILL be placed on aligned MSS setups."
+                                   : "Entry/SL/TP are drawn but no orders are placed.");
 
    //--- Seed both structures so the chart paints immediately
    RecomputeStructure(g_htf);
@@ -185,6 +243,12 @@ void OnNewLTFBar() {
    DrawStructure(g_ltf, true);
    if (wasMSS && g_cfg_DrawFib)
       DrawFibForLastMSS(g_ltf);
+
+   //--- Phase 2: build a fresh setup on a new MSS, then (optionally) place orders
+   if (wasMSS)
+      BuildSetupFromMSS(g_ltf);
+
+   ManagePendings();   // cancel expired limits
    PruneOldObjects();
    ChartRedraw();
 }
@@ -591,6 +655,433 @@ void PruneOldObjects() {
 }
 
 //+==================================================================+
+//|  TRADING LAYER (Phase 2)                                         |
+//+==================================================================+
+
+//+------------------------------------------------------------------+
+//| Build a trade setup from the most recent LTF MSS                 |
+//+------------------------------------------------------------------+
+void BuildSetupFromMSS(StructureState &st) {
+   bool     bull    = st.lastBreakBullish;
+   datetime mssTime = st.lastMSSTime;
+   if (mssTime == 0)                 return;
+   if (mssTime == g_setup.mssTime)   return;   // already built for this MSS
+
+   //--- only trade MSS aligned with HTF bias
+   if (g_cfg_RequireBiasAlign) {
+      if (bull && g_htf.bias != TREND_BULL) {
+         if (g_cfg_VerboseLog) Print("[IctSmc] MSS BULL skipped — HTF bias not bullish");
+         return;
+      }
+      if (!bull && g_htf.bias != TREND_BEAR) {
+         if (g_cfg_VerboseLog) Print("[IctSmc] MSS BEAR skipped — HTF bias not bearish");
+         return;
+      }
+   }
+
+   //--- impulse leg (same as the OTE fib leg)
+   SwingPoint legStart, legEnd;
+   if (bull) {
+      if (!LastSwingOf(st, SWING_HIGH, legEnd))                  return;
+      if (!LastSwingBefore(st, SWING_LOW, legEnd.time, legStart)) return;
+   } else {
+      if (!LastSwingOf(st, SWING_LOW, legEnd))                    return;
+      if (!LastSwingBefore(st, SWING_HIGH, legEnd.time, legStart))return;
+   }
+   double range = legEnd.price - legStart.price;
+   if (MathAbs(range) < _Point) return;
+
+   TradeSetup s;
+   ZeroMemory(s);
+   s.bullish = bull;
+   s.mssTime = mssTime;
+
+   //--- 3 laddered OTE entries
+   double f[3];
+   f[0] = g_cfg_EntryFib1; f[1] = g_cfg_EntryFib2; f[2] = g_cfg_EntryFib3;
+   for (int i = 0; i < 3; i++)
+      s.entry[i] = NormalizeDouble(legEnd.price - f[i] * range, _Digits);
+
+   //--- SL beyond the protected swing (leg origin) + buffer
+   double buf = g_cfg_SlBufferPts * _Point;
+   s.sl = bull ? NormalizeDouble(legStart.price - buf, _Digits)
+               : NormalizeDouble(legStart.price + buf, _Digits);
+
+   double entryAvg = (s.entry[0] + s.entry[1] + s.entry[2]) / 3.0;
+   double stopDist = MathAbs(entryAvg - s.sl);
+   if (stopDist < g_cfg_MinStopPts * _Point) {
+      if (g_cfg_VerboseLog)
+         PrintFormat("[IctSmc] Setup skipped — SL distance %.0f pts < min %.0f",
+                     stopDist / _Point, g_cfg_MinStopPts);
+      return;
+   }
+
+   //--- TP at opposing liquidity (nearest opposite swing beyond the leg end)
+   double tp = 0.0;
+   if (!FindOpposingLiquidity(st, bull, legEnd.price, tp)) {
+      tp = bull ? entryAvg + g_cfg_FallbackRR * stopDist
+                : entryAvg - g_cfg_FallbackRR * stopDist;
+   }
+   s.tp = NormalizeDouble(tp, _Digits);
+   if (bull  && s.tp <= entryAvg) return;
+   if (!bull && s.tp >= entryAvg) return;
+
+   s.rr     = bull ? (s.tp - entryAvg) / stopDist : (entryAvg - s.tp) / stopDist;
+   s.expiry = TimeCurrent() + (datetime)(g_cfg_PendingExpiryBars * PeriodSeconds(g_cfg_LTF));
+   s.active = true;
+
+   //--- a new setup supersedes the old one: drop stale unfilled pendings
+   CancelAllPendings();
+   g_setup = s;
+
+   DrawSetup(g_setup);
+   PrintFormat("[IctSmc] Setup %s @MSS %s  E[%.5f/%.5f/%.5f] SL %.5f TP %.5f RR %.2f",
+               bull ? "BULL" : "BEAR", TimeToString(mssTime),
+               s.entry[0], s.entry[1], s.entry[2], s.sl, s.tp, s.rr);
+
+   if (g_cfg_EnableTrading && g_cfg_Enabled)
+      PlaceSetupOrders(g_setup);
+   else if (g_cfg_VerboseLog)
+      Print("[IctSmc] Trading OFF — setup drawn only, no orders placed.");
+}
+
+//+------------------------------------------------------------------+
+//| Nearest opposite swing beyond the leg end = opposing liquidity   |
+//+------------------------------------------------------------------+
+bool FindOpposingLiquidity(StructureState &st, bool bull, double legEndPrice, double &tp) {
+   bool   found = false;
+   double best  = 0.0;
+   for (int i = 0; i < ArraySize(st.swings); i++) {
+      SwingPoint sp = st.swings[i];
+      if (bull) {
+         //--- buy: target a swing-high above the broken high (nearest above)
+         if (sp.type == SWING_HIGH && sp.price > legEndPrice) {
+            if (!found || sp.price < best) { best = sp.price; found = true; }
+         }
+      } else {
+         //--- sell: target a swing-low below the broken low (nearest below)
+         if (sp.type == SWING_LOW && sp.price < legEndPrice) {
+            if (!found || sp.price > best) { best = sp.price; found = true; }
+         }
+      }
+   }
+   if (found) tp = best;
+   return found;
+}
+
+//+------------------------------------------------------------------+
+//| Place the 3 laddered limit orders (guards + dedup)               |
+//+------------------------------------------------------------------+
+void PlaceSetupOrders(TradeSetup &s) {
+   if (!IsSpreadOK("Entry")) return;
+
+   ENUM_POSITION_TYPE dir = s.bullish ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+   double lot     = NormalizeLot(g_cfg_LotPerEntry);
+   double minDist = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
+   double ask     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   string tsStr   = IntegerToString((long)s.mssTime);
+
+   for (int i = 0; i < 3; i++) {
+      if (CountOpenPositions(dir) >= g_cfg_MaxSetupPositions) {
+         PrintFormat("[IctSmc] E%d skipped — max %d positions/pendings reached", i + 1, g_cfg_MaxSetupPositions);
+         break;
+      }
+      if (SumOpenLots(dir) + lot > g_cfg_MaxTotalLots + 1e-8) {
+         PrintFormat("[IctSmc] E%d skipped — total lots cap %.2f reached", i + 1, g_cfg_MaxTotalLots);
+         break;
+      }
+      string prefix = StringFormat("ICT_E%d_%s_", i + 1, tsStr);
+      if (TradeExistsByCommentPrefix(prefix)) continue;
+
+      double price = s.entry[i];
+      double sl    = s.sl;
+      double tp    = s.tp;
+      //--- keep SL/TP at least the broker min distance from this entry
+      if (s.bullish) {
+         if (price - sl < minDist) sl = price - minDist;
+         if (tp - price < minDist) tp = price + minDist;
+      } else {
+         if (sl - price < minDist) sl = price + minDist;
+         if (price - tp < minDist) tp = price - minDist;
+      }
+      sl = NormalizeDouble(sl, _Digits);
+      tp = NormalizeDouble(tp, _Digits);
+
+      string comment = prefix + (s.bullish ? "B" : "S");
+      bool ok = false;
+      if (s.bullish) {
+         if (price >= ask) { PrintFormat("[IctSmc] E%d skipped — price already at/through %.5f", i + 1, price); continue; }
+         ok = g_trade.BuyLimit(lot, price, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, s.expiry, comment);
+      } else {
+         if (price <= bid) { PrintFormat("[IctSmc] E%d skipped — price already at/through %.5f", i + 1, price); continue; }
+         ok = g_trade.SellLimit(lot, price, _Symbol, sl, tp, ORDER_TIME_SPECIFIED, s.expiry, comment);
+      }
+      PrintFormat("[IctSmc] %s E%d limit %.5f SL %.5f TP %.5f lot %.2f  %s",
+                  s.bullish ? "BUY" : "SELL", i + 1, price, sl, tp, lot,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Cancel unfilled limits when the setup expires                    |
+//+------------------------------------------------------------------+
+void ManagePendings() {
+   if (!g_setup.active) return;
+   if (TimeCurrent() <= g_setup.expiry) return;
+   int n = CancelAllPendings();
+   if (n > 0 && g_cfg_VerboseLog)
+      PrintFormat("[IctSmc] Expired setup — cancelled %d unfilled limit(s)", n);
+   g_setup.active = false;
+}
+
+//+------------------------------------------------------------------+
+//| Delete all this EA's pending orders (magic + symbol)             |
+//+------------------------------------------------------------------+
+int CancelAllPendings() {
+   int cnt = 0;
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong t = OrderGetTicket(i);
+      if (t == 0) continue;
+      if (OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+      if (OrderGetInteger(ORDER_MAGIC) != (long)g_cfg_Magic) continue;
+      if (g_trade.OrderDelete(t)) cnt++;
+   }
+   return cnt;
+}
+
+//+------------------------------------------------------------------+
+//| Draw the entry/SL/TP levels of the active setup                  |
+//+------------------------------------------------------------------+
+void ClearTradeObjects() { DeleteByPrefix(OBJ_PREFIX + "TRADE_"); }
+
+void DrawSetup(TradeSetup &s) {
+   ClearTradeObjects();
+   if (!s.active) return;
+   datetime t1 = s.mssTime;
+   datetime t2 = s.expiry;
+   for (int i = 0; i < 3; i++) {
+      SetTrend(OBJ_PREFIX + "TRADE_E" + IntegerToString(i + 1), t1, s.entry[i], t2, s.entry[i],
+               g_cfg_ColEntry, STYLE_DOT, 1);
+      SetText(OBJ_PREFIX + "TRADE_ET" + IntegerToString(i + 1), t2, s.entry[i],
+              "E" + IntegerToString(i + 1), g_cfg_ColEntry, ANCHOR_LEFT, 8);
+   }
+   SetTrend(OBJ_PREFIX + "TRADE_SL", t1, s.sl, t2, s.sl, g_cfg_ColSL, STYLE_SOLID, 1);
+   SetText(OBJ_PREFIX + "TRADE_SLT", t2, s.sl, "SL", g_cfg_ColSL, ANCHOR_LEFT, 8);
+   SetTrend(OBJ_PREFIX + "TRADE_TP", t1, s.tp, t2, s.tp, g_cfg_ColTP, STYLE_SOLID, 1);
+   SetText(OBJ_PREFIX + "TRADE_TPT", t2, s.tp, StringFormat("TP  RR=%.2f", s.rr),
+           g_cfg_ColTP, ANCHOR_LEFT, 8);
+}
+
+//+------------------------------------------------------------------+
+//| Order / position helpers (reused patterns from CondeAutoEntryEA) |
+//+------------------------------------------------------------------+
+double NormalizeLot(const double raw) {
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double mn   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double mx   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   if (step <= 0) step = 0.01;
+   double v = MathFloor(raw / step) * step;
+   if (v < mn) v = mn;
+   if (v > mx) v = mx;
+   return NormalizeDouble(v, 2);
+}
+
+bool IsSpreadOK(const string tag) {
+   if (g_cfg_MaxSpreadPts <= 0) return true;
+   long spread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+   if (spread > g_cfg_MaxSpreadPts) {
+      PrintFormat("[IctSmc][%s SKIP] Spread %d pts > max %d pts", tag, (int)spread, (int)g_cfg_MaxSpreadPts);
+      return false;
+   }
+   return true;
+}
+
+bool IsPendingForDir(const long otype, const ENUM_POSITION_TYPE dir) {
+   if (dir == POSITION_TYPE_BUY)
+      return (otype == ORDER_TYPE_BUY_LIMIT || otype == ORDER_TYPE_BUY_STOP);
+   return (otype == ORDER_TYPE_SELL_LIMIT || otype == ORDER_TYPE_SELL_STOP);
+}
+
+int CountOpenPositions(const ENUM_POSITION_TYPE dir) {
+   int count = 0;
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
+      if (PositionGetInteger(POSITION_TYPE)  == (long)dir) count++;
+   }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0) continue;
+      if (OrderGetString(ORDER_SYMBOL) != _Symbol)          continue;
+      if (OrderGetInteger(ORDER_MAGIC) != (long)g_cfg_Magic) continue;
+      if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir)) count++;
+   }
+   return count;
+}
+
+double SumOpenLots(const ENUM_POSITION_TYPE dir) {
+   double total = 0.0;
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
+      if (PositionGetInteger(POSITION_TYPE)  == (long)dir)
+         total += PositionGetDouble(POSITION_VOLUME);
+   }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0) continue;
+      if (OrderGetString(ORDER_SYMBOL) != _Symbol)          continue;
+      if (OrderGetInteger(ORDER_MAGIC) != (long)g_cfg_Magic) continue;
+      if (IsPendingForDir(OrderGetInteger(ORDER_TYPE), dir))
+         total += OrderGetDouble(ORDER_VOLUME_CURRENT);
+   }
+   return total;
+}
+
+//+------------------------------------------------------------------+
+//| Restart-safe dedup: open + pending + recent history by comment   |
+//+------------------------------------------------------------------+
+bool TradeExistsByCommentPrefix(const string prefix) {
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
+      if (StringFind(PositionGetString(POSITION_COMMENT), prefix) == 0) return true;
+   }
+   for (int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if (ticket == 0) continue;
+      if (OrderGetString(ORDER_SYMBOL) != _Symbol)          continue;
+      if (OrderGetInteger(ORDER_MAGIC) != (long)g_cfg_Magic) continue;
+      if (StringFind(OrderGetString(ORDER_COMMENT), prefix) == 0) return true;
+   }
+   datetime from = TimeCurrent() - (datetime)(3 * 86400);
+   if (HistorySelect(from, TimeCurrent() + 60)) {
+      int deals = HistoryDealsTotal();
+      for (int i = deals - 1; i >= 0; i--) {
+         ulong deal = HistoryDealGetTicket(i);
+         if (deal == 0) continue;
+         if (HistoryDealGetString(deal, DEAL_SYMBOL) != _Symbol)          continue;
+         if (HistoryDealGetInteger(deal, DEAL_MAGIC) != (long)g_cfg_Magic) continue;
+         if (HistoryDealGetInteger(deal, DEAL_ENTRY) != DEAL_ENTRY_IN)     continue;
+         if (StringFind(HistoryDealGetString(deal, DEAL_COMMENT), prefix) == 0) return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Outcome capture                                                  |
+//+------------------------------------------------------------------+
+void EnsureOutcomesDir() {
+   FolderCreate("IctSmcEA\\outcomes");  // no-op if it already exists
+}
+
+long ParseTsFromComment(const string c) {
+   string p[];
+   int n = StringSplit(c, '_', p);   // ICT_E1_<ts>_B
+   if (n >= 3 && p[0] == "ICT") return StringToInteger(p[2]);
+   return 0;
+}
+
+int ParseTierFromComment(const string c) {
+   string p[];
+   int n = StringSplit(c, '_', p);
+   if (n >= 2 && StringLen(p[1]) >= 2) return (int)StringToInteger(StringSubstr(p[1], 1));
+   return 0;
+}
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &req,
+                        const MqlTradeResult &res) {
+   if (trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+   ulong deal = trans.deal;
+   if (deal == 0) return;
+   if (!HistoryDealSelect(deal)) return;
+   if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal, DEAL_ENTRY) != DEAL_ENTRY_OUT) return;
+   if (HistoryDealGetString(deal, DEAL_SYMBOL) != _Symbol) return;
+
+   long position_id = HistoryDealGetInteger(deal, DEAL_POSITION_ID);
+   if (position_id == 0) return;
+
+   string out_comment = HistoryDealGetString(deal, DEAL_COMMENT);
+   long   signal_ts   = ParseTsFromComment(out_comment);
+   int    entry_tier  = ParseTierFromComment(out_comment);
+   double entry_price = 0.0;
+   long   opened_at   = 0;
+   string direction   = "";
+   long   in_magic    = -1;
+
+   if (HistorySelectByPosition(position_id)) {
+      int n = HistoryDealsTotal();
+      for (int i = 0; i < n; i++) {
+         ulong d = HistoryDealGetTicket(i);
+         if (d == 0) continue;
+         if ((ENUM_DEAL_ENTRY)HistoryDealGetInteger(d, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+         in_magic    = HistoryDealGetInteger(d, DEAL_MAGIC);
+         entry_price = HistoryDealGetDouble(d, DEAL_PRICE);
+         opened_at   = (long)HistoryDealGetInteger(d, DEAL_TIME);
+         direction   = (HistoryDealGetInteger(d, DEAL_TYPE) == DEAL_TYPE_BUY) ? "BUY" : "SELL";
+         string in_comment = HistoryDealGetString(d, DEAL_COMMENT);
+         if (signal_ts  == 0) signal_ts  = ParseTsFromComment(in_comment);
+         if (entry_tier == 0) entry_tier = ParseTierFromComment(in_comment);
+         break;
+      }
+   }
+   if (in_magic != (long)g_cfg_Magic) return;
+
+   double exit_price  = HistoryDealGetDouble(deal, DEAL_PRICE);
+   double profit      = HistoryDealGetDouble(deal, DEAL_PROFIT);
+   double swap        = HistoryDealGetDouble(deal, DEAL_SWAP);
+   double commission  = HistoryDealGetDouble(deal, DEAL_COMMISSION);
+   double volume      = HistoryDealGetDouble(deal, DEAL_VOLUME);
+   long   closed_at   = (long)HistoryDealGetInteger(deal, DEAL_TIME);
+   long   reason_int  = HistoryDealGetInteger(deal, DEAL_REASON);
+   string close_reason = (reason_int == DEAL_REASON_TP)     ? "TP"
+                       : (reason_int == DEAL_REASON_SL)     ? "SL"
+                       : (reason_int == DEAL_REASON_EXPERT) ? "EXPERT" : "OTHER";
+
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   string json = "{";
+   json += "\"position_id\":"     + IntegerToString(position_id) + ",";
+   json += "\"deal_out_ticket\":" + IntegerToString((long)deal) + ",";
+   json += "\"signal_ts\":"       + IntegerToString((long)signal_ts) + ",";
+   json += "\"entry_tier\":"      + IntegerToString(entry_tier) + ",";
+   json += "\"comment\":\""       + out_comment + "\",";
+   json += "\"account\":"         + IntegerToString((long)AccountInfoInteger(ACCOUNT_LOGIN)) + ",";
+   json += "\"symbol\":\""        + _Symbol + "\",";
+   json += "\"direction\":\""     + direction + "\",";
+   json += "\"magic\":"           + IntegerToString((long)g_cfg_Magic) + ",";
+   json += "\"volume\":"          + DoubleToString(volume, 2) + ",";
+   json += "\"entry_price\":"     + DoubleToString(entry_price, digits) + ",";
+   json += "\"exit_price\":"      + DoubleToString(exit_price, digits) + ",";
+   json += "\"profit\":"          + DoubleToString(profit, 2) + ",";
+   json += "\"swap\":"            + DoubleToString(swap, 2) + ",";
+   json += "\"commission\":"      + DoubleToString(commission, 2) + ",";
+   json += "\"opened_at\":"       + IntegerToString(opened_at) + ",";
+   json += "\"closed_at\":"       + IntegerToString(closed_at) + ",";
+   json += "\"close_reason\":\""  + close_reason + "\"";
+   json += "}";
+
+   string path = "IctSmcEA\\outcomes\\" + IntegerToString(position_id) + ".json";
+   int h = FileOpen(path, FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if (h == INVALID_HANDLE) {
+      PrintFormat("[IctSmc][Outcome] Cannot write '%s' (err %d)", path, GetLastError());
+      return;
+   }
+   FileWriteString(h, json);
+   FileClose(h);
+   PrintFormat("[IctSmc][Outcome] saved pos=%s tier=%d reason=%s profit=%.2f",
+               IntegerToString(position_id), entry_tier, close_reason, profit);
+}
+
+//+==================================================================+
 //|  HELPERS                                                         |
 //+==================================================================+
 string TfStr(ENUM_TIMEFRAMES tf) {
@@ -709,6 +1200,22 @@ void InitShadowsFromInputs() {
    g_cfg_ColFib             = InpColFib;
    g_cfg_ColBiasBull        = InpColBiasBull;
    g_cfg_ColBiasBear        = InpColBiasBear;
+   g_cfg_EnableTrading      = InpEnableTrading;
+   g_cfg_EntryFib1          = InpEntryFib1;
+   g_cfg_EntryFib2          = InpEntryFib2;
+   g_cfg_EntryFib3          = InpEntryFib3;
+   g_cfg_LotPerEntry        = InpLotPerEntry;
+   g_cfg_MaxSetupPositions  = InpMaxSetupPositions;
+   g_cfg_MaxTotalLots       = InpMaxTotalLots;
+   g_cfg_SlBufferPts        = InpSlBufferPts;
+   g_cfg_PendingExpiryBars  = InpPendingExpiryBars;
+   g_cfg_MinStopPts         = InpMinStopPts;
+   g_cfg_FallbackRR         = InpFallbackRR;
+   g_cfg_RequireBiasAlign   = InpRequireBiasAlign;
+   g_cfg_MaxSpreadPts       = InpMaxSpreadPts;
+   g_cfg_ColEntry           = InpColEntry;
+   g_cfg_ColSL              = InpColSL;
+   g_cfg_ColTP              = InpColTP;
    g_cfg_Magic              = InpMagic;
    g_cfg_VerboseLog         = InpVerboseLog;
    g_cfg_Enabled            = true;
@@ -750,6 +1257,22 @@ void LoadAccountConfig() {
    g_cfg_ColFib             = (color)JsonGetLong(json, "InpColFib",       (long)g_cfg_ColFib);
    g_cfg_ColBiasBull        = (color)JsonGetLong(json, "InpColBiasBull",  (long)g_cfg_ColBiasBull);
    g_cfg_ColBiasBear        = (color)JsonGetLong(json, "InpColBiasBear",  (long)g_cfg_ColBiasBear);
+   g_cfg_EnableTrading      = JsonGetBool(json,   "InpEnableTrading",     g_cfg_EnableTrading);
+   g_cfg_EntryFib1          = JsonGetDouble(json, "InpEntryFib1",         g_cfg_EntryFib1);
+   g_cfg_EntryFib2          = JsonGetDouble(json, "InpEntryFib2",         g_cfg_EntryFib2);
+   g_cfg_EntryFib3          = JsonGetDouble(json, "InpEntryFib3",         g_cfg_EntryFib3);
+   g_cfg_LotPerEntry        = JsonGetDouble(json, "InpLotPerEntry",       g_cfg_LotPerEntry);
+   g_cfg_MaxSetupPositions  = (int)JsonGetLong(json, "InpMaxSetupPositions", (long)g_cfg_MaxSetupPositions);
+   g_cfg_MaxTotalLots       = JsonGetDouble(json, "InpMaxTotalLots",      g_cfg_MaxTotalLots);
+   g_cfg_SlBufferPts        = JsonGetDouble(json, "InpSlBufferPts",       g_cfg_SlBufferPts);
+   g_cfg_PendingExpiryBars  = (int)JsonGetLong(json, "InpPendingExpiryBars", (long)g_cfg_PendingExpiryBars);
+   g_cfg_MinStopPts         = JsonGetDouble(json, "InpMinStopPts",        g_cfg_MinStopPts);
+   g_cfg_FallbackRR         = JsonGetDouble(json, "InpFallbackRR",        g_cfg_FallbackRR);
+   g_cfg_RequireBiasAlign   = JsonGetBool(json,   "InpRequireBiasAlign",  g_cfg_RequireBiasAlign);
+   g_cfg_MaxSpreadPts       = JsonGetLong(json,   "InpMaxSpreadPts",      g_cfg_MaxSpreadPts);
+   g_cfg_ColEntry           = (color)JsonGetLong(json, "InpColEntry",     (long)g_cfg_ColEntry);
+   g_cfg_ColSL              = (color)JsonGetLong(json, "InpColSL",        (long)g_cfg_ColSL);
+   g_cfg_ColTP              = (color)JsonGetLong(json, "InpColTP",        (long)g_cfg_ColTP);
    g_cfg_Magic              = (ulong)JsonGetLong(json, "InpMagic",        (long)g_cfg_Magic);
    g_cfg_VerboseLog         = JsonGetBool(json,   "InpVerboseLog",  g_cfg_VerboseLog);
 

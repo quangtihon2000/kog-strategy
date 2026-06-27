@@ -78,13 +78,50 @@ with `Inp*` keys. Enum/color inputs are overridden by their integer value
 - Attach the compiled `IctSmcEA` to a separate XAUUSD chart in that terminal
   (any period). Watch the **Experts** tab for `[IctSmc] BOS/MSS …` logs.
 
-## Phase 2 (future) — trading
+## Phase 2 — Entry / SL / TP (laddered OTE entries)
 
-The scaffolding is already trade-ready so Phase 2 is additive:
-- `CTrade g_trade` + `InpMagic` are set in `OnInit`.
-- `g_cfg_Enabled` already gates (Phase 1 only logs it).
-- Entry trigger is already computed: an LTF MSS aligned with HTF bias + price
-  tapping the OTE band → market/limit order, SL beyond the MSS swing, TP at the
-  opposing liquidity / fib extension.
-- Add `OnTradeTransaction` + outcome JSON under `Files/IctSmcEA/outcomes/`
-  (mirror `ZoneSignalEA`) for strategy-stats joins.
+When an LTF **MSS aligned with HTF bias** forms, the EA builds a `TradeSetup` and
+**always draws** the entry/SL/TP levels on the chart. Whether it actually places
+orders is gated by **`InpEnableTrading`** (default **false** = draw-only).
+
+| Component | Rule |
+|---|---|
+| **Entry** | 3 laddered limit orders at OTE fibs `InpEntryFib1/2/3` (default 0.62 / 0.705 / 0.785) of the impulse leg |
+| **SL** | Beyond the protected swing (leg origin that produced the MSS) + `InpSlBufferPts` |
+| **TP** | Opposing liquidity — nearest opposite swing beyond the leg end; fallback `InpFallbackRR` (×SL) when none |
+| **Direction filter** | `InpRequireBiasAlign` — only trade MSS in the HTF-bias direction |
+
+**Execution guards** (only when `InpEnableTrading=true && enabled`):
+`IsSpreadOK` (`InpMaxSpreadPts`), `CountOpenPositions`/`SumOpenLots` caps
+(`InpMaxSetupPositions`, `InpMaxTotalLots`), restart-safe dedup
+`TradeExistsByCommentPrefix`, broker min-stop clamp, `NormalizeLot`. A tier whose
+price has already been passed by the market is skipped (limit must rest the right side).
+
+**Lifecycle**: a new MSS supersedes the old setup (`CancelAllPendings`). Unfilled
+limits are cancelled after `InpPendingExpiryBars` LTF bars (`ManagePendings`).
+`OnTradeTransaction` writes a closed-trade outcome JSON to
+`Files/IctSmcEA/outcomes/<position_id>.json` (magic-filtered; fields mirror the other
+EAs plus `entry_tier`; `signal_ts` = the MSS bar time, embedded in the comment
+`ICT_E{1..3}_{mssTime}_{B|S}`).
+
+### Trading inputs
+
+| Input | Default | Purpose |
+|---|---|---|
+| `InpEnableTrading` | false | Master switch: false=draw only, true=place orders |
+| `InpEntryFib1/2/3` | 0.62 / 0.705 / 0.785 | 3 OTE entry ratios |
+| `InpLotPerEntry` | 0.01 | Lot per entry (×3) |
+| `InpMaxSetupPositions` | 3 | Max positions+pendings per direction |
+| `InpMaxTotalLots` | 0.30 | Max total lots per direction |
+| `InpSlBufferPts` | 200 | SL buffer beyond the MSS swing (points) |
+| `InpPendingExpiryBars` | 12 | Cancel unfilled limit after N LTF bars |
+| `InpMinStopPts` | 150 | Min SL distance to accept a setup |
+| `InpFallbackRR` | 2.0 | TP fallback R:R when no opposing liquidity |
+| `InpRequireBiasAlign` | true | Only trade MSS aligned with HTF bias |
+| `InpMaxSpreadPts` | 50 | Max spread to place entries (0=off) |
+| `InpColEntry/SL/TP` | aqua/red/lime | Setup level colors |
+
+## Phase 3 (future)
+- Optional break-even / trailing management of filled tiers (reuse
+  `ManageTrailingStops` pattern from `CondeAutoEntryEA`).
+- Partial-close at intermediate liquidity.
