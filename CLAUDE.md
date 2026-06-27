@@ -27,6 +27,8 @@ kog_strategy/
 │   │   └── config/accounts/
 │   ├── gvfx_signal/         # Grid DCA from target-price signal (EA + agent)
 │   │   └── config/accounts/
+│   ├── ict_smc/             # ICT/SMC structure detection (EA only, no agent)
+│   │   └── config/accounts/ # Phase 1: draws swings/BOS/MSS/bias/OTE fib, no orders
 │   └── telegram_monitor/    # Read-only Telegram fleet monitor (agent only)
 ├── shared/agent_lib/        # Shared Python code (RedisConsumer)
 ├── scripts/                 # PowerShell CI/CD scripts (run on VPS)

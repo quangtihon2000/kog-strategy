@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "label": "ict_smc — <ACCOUNT>",
+  "owner": "<OWNER>",
+
+  "InpHTF": 16388,
+  "InpLTF": 15,
+  "InpSwingLookback": 3,
+  "InpMaxHistoryBars": 500,
+  "InpMaxSwingsTracked": 60,
+  "InpBiasSwingsForTrend": 2,
+
+  "InpDrawFib": true,
+  "InpDrawEquilibrium": true,
+  "InpFibOTE1": 0.62,
+  "InpFibOTE2": 0.705,
+  "InpFibOTE3": 0.79,
+
+  "InpShowHTFObjects": true,
+  "InpMagic": 20260627,
+  "InpVerboseLog": true
+}
