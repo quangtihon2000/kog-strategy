@@ -121,7 +121,24 @@ EAs plus `entry_tier`; `signal_ts` = the MSS bar time, embedded in the comment
 | `InpMaxSpreadPts` | 50 | Max spread to place entries (0=off) |
 | `InpColEntry/SL/TP` | aqua/red/lime | Setup level colors |
 
-## Phase 3 (future)
-- Optional break-even / trailing management of filled tiers (reuse
-  `ManageTrailingStops` pattern from `CondeAutoEntryEA`).
-- Partial-close at intermediate liquidity.
+## Phase 3 — Trade management (filled positions)
+
+`ManageOpenPositions()` runs on a 1 Hz tick throttle for every position of this
+magic+symbol. It is **stateless** (derived from each position's open price, SL, TP,
+volume) so it survives EA restarts, and it runs **regardless of `InpEnableTrading`**
+so positions opened earlier keep being managed even after trading is switched off.
+
+| Feature | Toggle | Rule |
+|---|---|---|
+| **Break-even** | `InpEnableBreakEven` (true) | At `InpBeTriggerPts` profit, move SL to entry ± `InpBeOffsetPts` |
+| **Trailing** | `InpEnableTrailing` (true) | At `InpTrailStartPts` profit, trail SL `InpTrailDistPts` behind price; only move when improving by ≥ `InpTrailStepPts`; never cross TP |
+| **Partial close** | `InpEnablePartialClose` (false) | At `InpPartialClosePts` profit, close `InpPartialClosePct` of volume **once** (skipped if the split would breach broker min-lot — so it is a no-op at the default 0.01 lot; size up to use it) |
+
+Trailing takes priority over break-even. SL moves are gated to be strictly
+improving and never cross the TP. Partial close fires only while a position is
+still full size (`vol ≥ InpLotPerEntry`), which is how "do it once" stays
+restart-safe without extra state.
+
+## Phase 4 (future)
+- Per-tier TP ladder (tier 1 → nearest liquidity, tier 3 → final) instead of a
+  shared TP, for structural scaling-out.

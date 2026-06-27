@@ -32,6 +32,17 @@
   "InpRequireBiasAlign": true,
   "InpMaxSpreadPts": 50,
 
+  "InpEnableBreakEven": true,
+  "InpBeTriggerPts": 300,
+  "InpBeOffsetPts": 20,
+  "InpEnableTrailing": true,
+  "InpTrailStartPts": 500,
+  "InpTrailDistPts": 300,
+  "InpTrailStepPts": 50,
+  "InpEnablePartialClose": false,
+  "InpPartialClosePts": 400,
+  "InpPartialClosePct": 0.5,
+
   "InpMagic": 20260627,
   "InpVerboseLog": true
 }

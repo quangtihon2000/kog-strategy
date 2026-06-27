@@ -4,11 +4,12 @@
 //|  Phase 1: detect + draw swings, BOS, MSS (CHoCH), HTF bias, Fibo  |
 //|  Phase 2: laddered OTE entries (3 limits), structure SL,          |
 //|           opposing-liquidity TP. Gated by InpEnableTrading.       |
+//|  Phase 3: break-even, trailing stop, partial close on filled pos. |
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "IctSmc EA"
-#property version     "2.00"
-#property description "ICT structure + laddered OTE entries (entry/SL/TP gated by InpEnableTrading)"
+#property version     "3.00"
+#property description "ICT structure + laddered OTE entries + BE/trailing/partial (gated by InpEnableTrading)"
 
 #include <Trade\Trade.mqh>
 
@@ -54,6 +55,17 @@ input long   InpMaxSpreadPts        = 50;           // Max spread to place entri
 input color  InpColEntry            = clrAqua;      // Entry lines
 input color  InpColSL               = clrRed;       // SL line
 input color  InpColTP               = clrLime;      // TP line
+//--- Trade management (Phase 3) — applies to filled positions of this magic
+input bool   InpEnableBreakEven     = true;         // Move SL to break-even in profit
+input double InpBeTriggerPts        = 300;          // Profit to arm break-even (points)
+input double InpBeOffsetPts         = 20;           // SL offset past entry at BE (points)
+input bool   InpEnableTrailing      = true;         // Trail SL once far enough in profit
+input double InpTrailStartPts       = 500;          // Profit to start trailing (points)
+input double InpTrailDistPts        = 300;          // Trail SL this far behind price (points)
+input double InpTrailStepPts        = 50;           // Min SL improvement before modify (points)
+input bool   InpEnablePartialClose  = false;        // Take partial profit (needs lot >= 2x min)
+input double InpPartialClosePts     = 400;          // Profit to take partial (points)
+input double InpPartialClosePct     = 0.5;          // Fraction of volume to close (0..1)
 //--- Identity
 input ulong  InpMagic               = 20260627;     // Magic number
 input bool   InpVerboseLog          = true;         // Verbose [IctSmc] logging
@@ -94,6 +106,16 @@ long    g_cfg_MaxSpreadPts;
 color   g_cfg_ColEntry;
 color   g_cfg_ColSL;
 color   g_cfg_ColTP;
+bool    g_cfg_EnableBreakEven;
+double  g_cfg_BeTriggerPts;
+double  g_cfg_BeOffsetPts;
+bool    g_cfg_EnableTrailing;
+double  g_cfg_TrailStartPts;
+double  g_cfg_TrailDistPts;
+double  g_cfg_TrailStepPts;
+bool    g_cfg_EnablePartialClose;
+double  g_cfg_PartialClosePts;
+double  g_cfg_PartialClosePct;
 ulong   g_cfg_Magic;
 bool    g_cfg_VerboseLog;
 bool    g_cfg_Enabled = true;
@@ -145,6 +167,7 @@ StructureState g_ltf;
 TradeSetup g_setup;
 datetime   g_lastHTFBar = 0;
 datetime   g_lastLTFBar = 0;
+datetime   g_lastManageCheck = 0;
 
 #define OBJ_PREFIX "IctSmc_"
 
@@ -205,6 +228,14 @@ void OnDeinit(const int reason) {
 
 //+------------------------------------------------------------------+
 void OnTick() {
+   //--- Manage filled positions of this magic (BE/trail/partial), throttled to 1Hz.
+   //--- Runs regardless of InpEnableTrading so existing positions stay managed.
+   datetime now = TimeCurrent();
+   if (now != g_lastManageCheck) {
+      g_lastManageCheck = now;
+      ManageOpenPositions();
+   }
+
    //--- HTF new-bar → recompute bias
    datetime htfBar = iTime(_Symbol, g_cfg_HTF, 0);
    if (htfBar != g_lastHTFBar) {
@@ -851,6 +882,78 @@ int CancelAllPendings() {
 }
 
 //+------------------------------------------------------------------+
+//| Manage filled positions: partial close, break-even, trailing     |
+//| Stateless (derived from each position) → restart-safe.           |
+//+------------------------------------------------------------------+
+void ManageOpenPositions() {
+   if (!g_cfg_EnableBreakEven && !g_cfg_EnableTrailing && !g_cfg_EnablePartialClose) return;
+
+   double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double lotFull = NormalizeLot(g_cfg_LotPerEntry);
+
+   for (int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if (!PositionSelectByTicket(ticket)) continue;
+      if (PositionGetString(POSITION_SYMBOL) != _Symbol)          continue;
+      if (PositionGetInteger(POSITION_MAGIC) != (long)g_cfg_Magic) continue;
+
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      bool   isBuy     = (type == POSITION_TYPE_BUY);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double curSL     = PositionGetDouble(POSITION_SL);
+      double tp        = PositionGetDouble(POSITION_TP);
+      double vol       = PositionGetDouble(POSITION_VOLUME);
+      double profitPts = (isBuy ? (bid - openPrice) : (openPrice - ask)) / _Point;
+
+      //--- partial profit (once: only while still full size)
+      if (g_cfg_EnablePartialClose && profitPts >= g_cfg_PartialClosePts
+          && vol >= lotFull - 1e-8) {
+         double closeVol = NormalizeLot(vol * g_cfg_PartialClosePct);
+         if (closeVol >= minLot && (vol - closeVol) >= minLot) {
+            bool okp = g_trade.PositionClosePartial(ticket, closeVol);
+            PrintFormat("[IctSmc] Partial close #%I64u %.2f/%.2f @ +%.0f pts  %s",
+                        ticket, closeVol, vol, profitPts,
+                        okp ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+         }
+      }
+
+      //--- desired SL: trailing takes priority over break-even
+      double desiredSL = curSL;
+      string stage = "";
+      if (g_cfg_EnableTrailing && profitPts >= g_cfg_TrailStartPts) {
+         desiredSL = isBuy ? (bid - g_cfg_TrailDistPts * _Point)
+                           : (ask + g_cfg_TrailDistPts * _Point);
+         stage = "Trail";
+      } else if (g_cfg_EnableBreakEven && profitPts >= g_cfg_BeTriggerPts) {
+         desiredSL = isBuy ? (openPrice + g_cfg_BeOffsetPts * _Point)
+                           : (openPrice - g_cfg_BeOffsetPts * _Point);
+         stage = "BE";
+      }
+      if (stage == "") continue;
+      desiredSL = NormalizeDouble(desiredSL, _Digits);
+
+      //--- only move if strictly improving by at least the step
+      if (isBuy) {
+         if (desiredSL < curSL + g_cfg_TrailStepPts * _Point) continue;
+      } else {
+         if (curSL != 0.0 && desiredSL > curSL - g_cfg_TrailStepPts * _Point) continue;
+      }
+      //--- never cross TP
+      if (tp > 0.0) {
+         if (isBuy  && desiredSL >= tp) continue;
+         if (!isBuy && desiredSL <= tp) continue;
+      }
+
+      bool ok = g_trade.PositionModify(ticket, desiredSL, tp);
+      PrintFormat("[IctSmc][%s] #%I64u SL %.5f -> %.5f (+%.0f pts)  %s",
+                  stage, ticket, curSL, desiredSL, profitPts,
+                  ok ? "OK" : "FAILED: " + g_trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
 //| Draw the entry/SL/TP levels of the active setup                  |
 //+------------------------------------------------------------------+
 void ClearTradeObjects() { DeleteByPrefix(OBJ_PREFIX + "TRADE_"); }
@@ -1216,6 +1319,16 @@ void InitShadowsFromInputs() {
    g_cfg_ColEntry           = InpColEntry;
    g_cfg_ColSL              = InpColSL;
    g_cfg_ColTP              = InpColTP;
+   g_cfg_EnableBreakEven    = InpEnableBreakEven;
+   g_cfg_BeTriggerPts       = InpBeTriggerPts;
+   g_cfg_BeOffsetPts        = InpBeOffsetPts;
+   g_cfg_EnableTrailing     = InpEnableTrailing;
+   g_cfg_TrailStartPts      = InpTrailStartPts;
+   g_cfg_TrailDistPts       = InpTrailDistPts;
+   g_cfg_TrailStepPts       = InpTrailStepPts;
+   g_cfg_EnablePartialClose = InpEnablePartialClose;
+   g_cfg_PartialClosePts    = InpPartialClosePts;
+   g_cfg_PartialClosePct    = InpPartialClosePct;
    g_cfg_Magic              = InpMagic;
    g_cfg_VerboseLog         = InpVerboseLog;
    g_cfg_Enabled            = true;
@@ -1273,6 +1386,16 @@ void LoadAccountConfig() {
    g_cfg_ColEntry           = (color)JsonGetLong(json, "InpColEntry",     (long)g_cfg_ColEntry);
    g_cfg_ColSL              = (color)JsonGetLong(json, "InpColSL",        (long)g_cfg_ColSL);
    g_cfg_ColTP              = (color)JsonGetLong(json, "InpColTP",        (long)g_cfg_ColTP);
+   g_cfg_EnableBreakEven    = JsonGetBool(json,   "InpEnableBreakEven",   g_cfg_EnableBreakEven);
+   g_cfg_BeTriggerPts       = JsonGetDouble(json, "InpBeTriggerPts",      g_cfg_BeTriggerPts);
+   g_cfg_BeOffsetPts        = JsonGetDouble(json, "InpBeOffsetPts",       g_cfg_BeOffsetPts);
+   g_cfg_EnableTrailing     = JsonGetBool(json,   "InpEnableTrailing",    g_cfg_EnableTrailing);
+   g_cfg_TrailStartPts      = JsonGetDouble(json, "InpTrailStartPts",     g_cfg_TrailStartPts);
+   g_cfg_TrailDistPts       = JsonGetDouble(json, "InpTrailDistPts",      g_cfg_TrailDistPts);
+   g_cfg_TrailStepPts       = JsonGetDouble(json, "InpTrailStepPts",      g_cfg_TrailStepPts);
+   g_cfg_EnablePartialClose = JsonGetBool(json,   "InpEnablePartialClose", g_cfg_EnablePartialClose);
+   g_cfg_PartialClosePts    = JsonGetDouble(json, "InpPartialClosePts",   g_cfg_PartialClosePts);
+   g_cfg_PartialClosePct    = JsonGetDouble(json, "InpPartialClosePct",   g_cfg_PartialClosePct);
    g_cfg_Magic              = (ulong)JsonGetLong(json, "InpMagic",        (long)g_cfg_Magic);
    g_cfg_VerboseLog         = JsonGetBool(json,   "InpVerboseLog",  g_cfg_VerboseLog);
 
