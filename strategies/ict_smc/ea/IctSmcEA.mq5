@@ -5,11 +5,12 @@
 //|  Phase 2: laddered OTE entries (3 limits), structure SL,          |
 //|           opposing-liquidity TP. Gated by InpEnableTrading.       |
 //|  Phase 3: break-even, trailing stop, partial close on filled pos. |
+//|  Phase 4: per-tier TP ladder (tier1=nearest liquidity .. final).  |
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "IctSmc EA"
-#property version     "3.00"
-#property description "ICT structure + laddered OTE entries + BE/trailing/partial (gated by InpEnableTrading)"
+#property version     "4.00"
+#property description "ICT structure + laddered OTE entries + per-tier TP + BE/trailing (gated by InpEnableTrading)"
 
 #include <Trade\Trade.mqh>
 
@@ -50,6 +51,7 @@ input double InpSlBufferPts         = 200;          // SL buffer beyond the MSS 
 input int    InpPendingExpiryBars   = 12;           // Cancel unfilled limit after N LTF bars
 input double InpMinStopPts          = 150;          // Min SL distance to accept a setup (points)
 input double InpFallbackRR          = 2.0;          // TP fallback R:R when no opposing liquidity
+input bool   InpPerTierTP           = true;         // true=per-tier liquidity TP ladder; false=shared nearest TP
 input bool   InpRequireBiasAlign    = true;         // Only trade MSS aligned with HTF bias
 input long   InpMaxSpreadPts        = 50;           // Max spread to place entries (0=disabled)
 input color  InpColEntry            = clrAqua;      // Entry lines
@@ -101,6 +103,7 @@ double  g_cfg_SlBufferPts;
 int     g_cfg_PendingExpiryBars;
 double  g_cfg_MinStopPts;
 double  g_cfg_FallbackRR;
+bool    g_cfg_PerTierTP;
 bool    g_cfg_RequireBiasAlign;
 long    g_cfg_MaxSpreadPts;
 color   g_cfg_ColEntry;
@@ -155,8 +158,8 @@ struct TradeSetup {
    datetime  mssTime;      // dedup key: one setup per MSS
    double    entry[3];     // 3 laddered OTE entry prices
    double    sl;
-   double    tp;
-   double    rr;
+   double    tp[3];        // per-tier TP ladder (tier1=nearest liquidity .. tier3=final)
+   double    rr[3];        // per-tier R:R
    datetime  expiry;       // pending-order expiry
 };
 
@@ -747,17 +750,32 @@ void BuildSetupFromMSS(StructureState &st) {
       return;
    }
 
-   //--- TP at opposing liquidity (nearest opposite swing beyond the leg end)
-   double tp = 0.0;
-   if (!FindOpposingLiquidity(st, bull, legEnd.price, tp)) {
-      tp = bull ? entryAvg + g_cfg_FallbackRR * stopDist
-                : entryAvg - g_cfg_FallbackRR * stopDist;
+   //--- TP ladder: successive opposing-liquidity levels beyond the leg end
+   //--- tier 1 (shallow entry) → nearest liquidity ... tier 3 (deep entry) → farthest
+   double lv[];
+   int n = CollectLiquidity(st, bull, legEnd.price, lv);
+   for (int i = 0; i < 3; i++) {
+      double tpi;
+      if (!g_cfg_PerTierTP) {
+         tpi = (n > 0) ? lv[0]
+                       : (bull ? entryAvg + g_cfg_FallbackRR * stopDist
+                               : entryAvg - g_cfg_FallbackRR * stopDist);
+      } else if (n > 0) {
+         tpi = lv[MathMin(i, n - 1)];           // missing tiers reuse the farthest level
+      } else {
+         tpi = bull ? entryAvg + (g_cfg_FallbackRR + i) * stopDist
+                    : entryAvg - (g_cfg_FallbackRR + i) * stopDist;  // RR ladder 2R/3R/4R
+      }
+      s.tp[i] = NormalizeDouble(tpi, _Digits);
+      //--- ensure TP sits the correct side of this tier's entry; else fallback RR ladder
+      if (bull  && s.tp[i] <= s.entry[i])
+         s.tp[i] = NormalizeDouble(s.entry[i] + (g_cfg_FallbackRR + i) * stopDist, _Digits);
+      if (!bull && s.tp[i] >= s.entry[i])
+         s.tp[i] = NormalizeDouble(s.entry[i] - (g_cfg_FallbackRR + i) * stopDist, _Digits);
+      s.rr[i] = bull ? (s.tp[i] - s.entry[i]) / MathAbs(s.entry[i] - s.sl)
+                     : (s.entry[i] - s.tp[i]) / MathAbs(s.entry[i] - s.sl);
    }
-   s.tp = NormalizeDouble(tp, _Digits);
-   if (bull  && s.tp <= entryAvg) return;
-   if (!bull && s.tp >= entryAvg) return;
 
-   s.rr     = bull ? (s.tp - entryAvg) / stopDist : (entryAvg - s.tp) / stopDist;
    s.expiry = TimeCurrent() + (datetime)(g_cfg_PendingExpiryBars * PeriodSeconds(g_cfg_LTF));
    s.active = true;
 
@@ -766,9 +784,10 @@ void BuildSetupFromMSS(StructureState &st) {
    g_setup = s;
 
    DrawSetup(g_setup);
-   PrintFormat("[IctSmc] Setup %s @MSS %s  E[%.5f/%.5f/%.5f] SL %.5f TP %.5f RR %.2f",
+   PrintFormat("[IctSmc] Setup %s @MSS %s  E[%.5f/%.5f/%.5f] SL %.5f TP[%.5f/%.5f/%.5f] RR[%.2f/%.2f/%.2f]",
                bull ? "BULL" : "BEAR", TimeToString(mssTime),
-               s.entry[0], s.entry[1], s.entry[2], s.sl, s.tp, s.rr);
+               s.entry[0], s.entry[1], s.entry[2], s.sl,
+               s.tp[0], s.tp[1], s.tp[2], s.rr[0], s.rr[1], s.rr[2]);
 
    if (g_cfg_EnableTrading && g_cfg_Enabled)
       PlaceSetupOrders(g_setup);
@@ -777,27 +796,47 @@ void BuildSetupFromMSS(StructureState &st) {
 }
 
 //+------------------------------------------------------------------+
-//| Nearest opposite swing beyond the leg end = opposing liquidity   |
+//| Collect opposing-liquidity levels beyond the leg end, sorted by  |
+//| distance (nearest first), deduped by >= InpMinStopPts spacing.   |
+//| bull → swing-highs above legEnd; bear → swing-lows below legEnd.  |
 //+------------------------------------------------------------------+
-bool FindOpposingLiquidity(StructureState &st, bool bull, double legEndPrice, double &tp) {
-   bool   found = false;
-   double best  = 0.0;
+int CollectLiquidity(StructureState &st, bool bull, double legEndPrice, double &out[]) {
+   double cand[];
+   ArrayResize(cand, 0);
    for (int i = 0; i < ArraySize(st.swings); i++) {
       SwingPoint sp = st.swings[i];
-      if (bull) {
-         //--- buy: target a swing-high above the broken high (nearest above)
-         if (sp.type == SWING_HIGH && sp.price > legEndPrice) {
-            if (!found || sp.price < best) { best = sp.price; found = true; }
-         }
-      } else {
-         //--- sell: target a swing-low below the broken low (nearest below)
-         if (sp.type == SWING_LOW && sp.price < legEndPrice) {
-            if (!found || sp.price > best) { best = sp.price; found = true; }
-         }
+      if (bull  && sp.type == SWING_HIGH && sp.price > legEndPrice) {
+         int k = ArraySize(cand); ArrayResize(cand, k + 1); cand[k] = sp.price;
+      }
+      if (!bull && sp.type == SWING_LOW && sp.price < legEndPrice) {
+         int k = ArraySize(cand); ArrayResize(cand, k + 1); cand[k] = sp.price;
       }
    }
-   if (found) tp = best;
-   return found;
+   int m = ArraySize(cand);
+   if (m == 0) { ArrayResize(out, 0); return 0; }
+
+   //--- insertion sort by distance from legEnd (nearest first)
+   for (int i = 1; i < m; i++) {
+      double v = cand[i];
+      int j = i - 1;
+      //--- bull: nearer = smaller price; bear: nearer = larger price
+      while (j >= 0 && ((bull && cand[j] > v) || (!bull && cand[j] < v))) {
+         cand[j + 1] = cand[j];
+         j--;
+      }
+      cand[j + 1] = v;
+   }
+
+   //--- dedup levels closer than the min-stop spacing
+   double minGap = g_cfg_MinStopPts * _Point;
+   ArrayResize(out, 0);
+   for (int i = 0; i < m; i++) {
+      int o = ArraySize(out);
+      if (o > 0 && MathAbs(cand[i] - out[o - 1]) < minGap) continue;
+      ArrayResize(out, o + 1);
+      out[o] = cand[i];
+   }
+   return ArraySize(out);
 }
 
 //+------------------------------------------------------------------+
@@ -827,7 +866,7 @@ void PlaceSetupOrders(TradeSetup &s) {
 
       double price = s.entry[i];
       double sl    = s.sl;
-      double tp    = s.tp;
+      double tp    = s.tp[i];
       //--- keep SL/TP at least the broker min distance from this entry
       if (s.bullish) {
          if (price - sl < minDist) sl = price - minDist;
@@ -971,9 +1010,12 @@ void DrawSetup(TradeSetup &s) {
    }
    SetTrend(OBJ_PREFIX + "TRADE_SL", t1, s.sl, t2, s.sl, g_cfg_ColSL, STYLE_SOLID, 1);
    SetText(OBJ_PREFIX + "TRADE_SLT", t2, s.sl, "SL", g_cfg_ColSL, ANCHOR_LEFT, 8);
-   SetTrend(OBJ_PREFIX + "TRADE_TP", t1, s.tp, t2, s.tp, g_cfg_ColTP, STYLE_SOLID, 1);
-   SetText(OBJ_PREFIX + "TRADE_TPT", t2, s.tp, StringFormat("TP  RR=%.2f", s.rr),
-           g_cfg_ColTP, ANCHOR_LEFT, 8);
+   for (int i = 0; i < 3; i++) {
+      SetTrend(OBJ_PREFIX + "TRADE_TP" + IntegerToString(i + 1), t1, s.tp[i], t2, s.tp[i],
+               g_cfg_ColTP, STYLE_SOLID, 1);
+      SetText(OBJ_PREFIX + "TRADE_TPT" + IntegerToString(i + 1), t2, s.tp[i],
+              StringFormat("TP%d RR=%.2f", i + 1, s.rr[i]), g_cfg_ColTP, ANCHOR_LEFT, 8);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -1314,6 +1356,7 @@ void InitShadowsFromInputs() {
    g_cfg_PendingExpiryBars  = InpPendingExpiryBars;
    g_cfg_MinStopPts         = InpMinStopPts;
    g_cfg_FallbackRR         = InpFallbackRR;
+   g_cfg_PerTierTP          = InpPerTierTP;
    g_cfg_RequireBiasAlign   = InpRequireBiasAlign;
    g_cfg_MaxSpreadPts       = InpMaxSpreadPts;
    g_cfg_ColEntry           = InpColEntry;
@@ -1381,6 +1424,7 @@ void LoadAccountConfig() {
    g_cfg_PendingExpiryBars  = (int)JsonGetLong(json, "InpPendingExpiryBars", (long)g_cfg_PendingExpiryBars);
    g_cfg_MinStopPts         = JsonGetDouble(json, "InpMinStopPts",        g_cfg_MinStopPts);
    g_cfg_FallbackRR         = JsonGetDouble(json, "InpFallbackRR",        g_cfg_FallbackRR);
+   g_cfg_PerTierTP          = JsonGetBool(json,   "InpPerTierTP",         g_cfg_PerTierTP);
    g_cfg_RequireBiasAlign   = JsonGetBool(json,   "InpRequireBiasAlign",  g_cfg_RequireBiasAlign);
    g_cfg_MaxSpreadPts       = JsonGetLong(json,   "InpMaxSpreadPts",      g_cfg_MaxSpreadPts);
    g_cfg_ColEntry           = (color)JsonGetLong(json, "InpColEntry",     (long)g_cfg_ColEntry);

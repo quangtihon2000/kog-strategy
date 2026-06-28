@@ -88,7 +88,7 @@ orders is gated by **`InpEnableTrading`** (default **false** = draw-only).
 |---|---|
 | **Entry** | 3 laddered limit orders at OTE fibs `InpEntryFib1/2/3` (default 0.62 / 0.705 / 0.785) of the impulse leg |
 | **SL** | Beyond the protected swing (leg origin that produced the MSS) + `InpSlBufferPts` |
-| **TP** | Opposing liquidity — nearest opposite swing beyond the leg end; fallback `InpFallbackRR` (×SL) when none |
+| **TP** | Per-tier liquidity ladder (see Phase 4); fallback `InpFallbackRR` (×SL) when no liquidity |
 | **Direction filter** | `InpRequireBiasAlign` — only trade MSS in the HTF-bias direction |
 
 **Execution guards** (only when `InpEnableTrading=true && enabled`):
@@ -139,6 +139,23 @@ improving and never cross the TP. Partial close fires only while a position is
 still full size (`vol ≥ InpLotPerEntry`), which is how "do it once" stays
 restart-safe without extra state.
 
-## Phase 4 (future)
-- Per-tier TP ladder (tier 1 → nearest liquidity, tier 3 → final) instead of a
-  shared TP, for structural scaling-out.
+## Phase 4 — Per-tier TP ladder
+
+Each of the 3 entry tiers gets its own TP at successive opposing-liquidity levels
+(structural scale-out), controlled by **`InpPerTierTP`** (default true):
+
+- `CollectLiquidity()` gathers opposing swings beyond the leg end (bull → swing-highs
+  above; bear → swing-lows below), sorts them by distance (nearest first), and dedups
+  levels closer than `InpMinStopPts`.
+- **tier 1** (entry 0.62, shallowest) → **nearest** liquidity; **tier 3** (entry 0.785,
+  deepest) → **farthest**. Missing tiers reuse the farthest level found.
+- No liquidity at all → an RR ladder `InpFallbackRR + tier` (≈ 2R / 3R / 4R) so the 3
+  TPs stay distinct. Each tier's TP is validated to sit the correct side of its entry.
+- `InpPerTierTP=false` → all tiers share the nearest liquidity (Phase-2 behavior).
+
+`TradeSetup` carries `tp[3]` + `rr[3]`; `DrawSetup` renders 3 TP lines (`TP1/TP2/TP3`
+with per-tier RR). Each limit order is placed with its own tier TP. Outcome JSON is
+unchanged (it reads each position's actual TP via the close deal).
+
+## Phase 5 (future)
+- Optional move-SL-to-next-tier-entry as each tier fills (structural trailing).

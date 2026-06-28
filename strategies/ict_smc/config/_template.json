@@ -29,6 +29,7 @@
   "InpPendingExpiryBars": 12,
   "InpMinStopPts": 150,
   "InpFallbackRR": 2.0,
+  "InpPerTierTP": true,
   "InpRequireBiasAlign": true,
   "InpMaxSpreadPts": 50,
 
