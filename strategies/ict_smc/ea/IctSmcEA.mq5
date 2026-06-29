@@ -6,11 +6,12 @@
 //|           opposing-liquidity TP. Gated by InpEnableTrading.       |
 //|  Phase 3: break-even, trailing stop, partial close on filled pos. |
 //|  Phase 4: per-tier TP ladder (tier1=nearest liquidity .. final).  |
+//|  Phase 5: structural SL trailing behind LTF swings.               |
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "IctSmc EA"
-#property version     "4.00"
-#property description "ICT structure + laddered OTE entries + per-tier TP + BE/trailing (gated by InpEnableTrading)"
+#property version     "5.00"
+#property description "ICT structure + OTE ladder entries + per-tier TP + BE/points/structural SL trailing"
 
 #include <Trade\Trade.mqh>
 
@@ -61,10 +62,12 @@ input color  InpColTP               = clrLime;      // TP line
 input bool   InpEnableBreakEven     = true;         // Move SL to break-even in profit
 input double InpBeTriggerPts        = 300;          // Profit to arm break-even (points)
 input double InpBeOffsetPts         = 20;           // SL offset past entry at BE (points)
-input bool   InpEnableTrailing      = true;         // Trail SL once far enough in profit
+input bool   InpEnableTrailing      = true;         // Trail SL once far enough in profit (points-based)
 input double InpTrailStartPts       = 500;          // Profit to start trailing (points)
 input double InpTrailDistPts        = 300;          // Trail SL this far behind price (points)
 input double InpTrailStepPts        = 50;           // Min SL improvement before modify (points)
+input bool   InpStructuralTrail     = true;         // Trail SL behind LTF swing structure (ICT)
+input double InpStructBufferPts     = 50;           // Buffer behind the protective swing (points)
 input bool   InpEnablePartialClose  = false;        // Take partial profit (needs lot >= 2x min)
 input double InpPartialClosePts     = 400;          // Profit to take partial (points)
 input double InpPartialClosePct     = 0.5;          // Fraction of volume to close (0..1)
@@ -116,6 +119,8 @@ bool    g_cfg_EnableTrailing;
 double  g_cfg_TrailStartPts;
 double  g_cfg_TrailDistPts;
 double  g_cfg_TrailStepPts;
+bool    g_cfg_StructuralTrail;
+double  g_cfg_StructBufferPts;
 bool    g_cfg_EnablePartialClose;
 double  g_cfg_PartialClosePts;
 double  g_cfg_PartialClosePct;
@@ -921,11 +926,39 @@ int CancelAllPendings() {
 }
 
 //+------------------------------------------------------------------+
-//| Manage filled positions: partial close, break-even, trailing     |
-//| Stateless (derived from each position) → restart-safe.           |
+//| Is `cand` a more protective SL than `cur`? (treats 0 as "unset")  |
+//+------------------------------------------------------------------+
+bool SLImproves(bool isBuy, double cand, double cur) {
+   if (cand <= 0.0) return false;
+   if (cur  <= 0.0) return true;
+   return isBuy ? (cand > cur) : (cand < cur);
+}
+
+//+------------------------------------------------------------------+
+//| Structural SL = behind the most recent protective LTF swing       |
+//| BUY → newest swing-low below price; SELL → newest swing-high above |
+//+------------------------------------------------------------------+
+bool GetStructuralSL(bool isBuy, double ref, double &sl) {
+   double buf = g_cfg_StructBufferPts * _Point;
+   for (int i = ArraySize(g_ltf.swings) - 1; i >= 0; i--) {
+      SwingPoint sp = g_ltf.swings[i];
+      if (isBuy && sp.type == SWING_LOW && sp.price < ref) {
+         sl = sp.price - buf; return true;
+      }
+      if (!isBuy && sp.type == SWING_HIGH && sp.price > ref) {
+         sl = sp.price + buf; return true;
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Manage filled positions: partial close, break-even, trailing,    |
+//| structural-trail. Stateless (derived from each position).        |
 //+------------------------------------------------------------------+
 void ManageOpenPositions() {
-   if (!g_cfg_EnableBreakEven && !g_cfg_EnableTrailing && !g_cfg_EnablePartialClose) return;
+   if (!g_cfg_EnableBreakEven && !g_cfg_EnableTrailing
+       && !g_cfg_StructuralTrail && !g_cfg_EnablePartialClose) return;
 
    double bid    = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double ask    = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -958,20 +991,27 @@ void ManageOpenPositions() {
          }
       }
 
-      //--- desired SL: trailing takes priority over break-even
-      double desiredSL = curSL;
+      //--- candidate SLs: break-even floor, points-trail, structural-trail.
+      //--- pick the most protective (highest for BUY / lowest for SELL); only ever improve.
+      double bestSL = curSL;
       string stage = "";
+      if (g_cfg_EnableBreakEven && profitPts >= g_cfg_BeTriggerPts) {
+         double beSL = isBuy ? (openPrice + g_cfg_BeOffsetPts * _Point)
+                             : (openPrice - g_cfg_BeOffsetPts * _Point);
+         if (SLImproves(isBuy, beSL, bestSL)) { bestSL = beSL; stage = "BE"; }
+      }
       if (g_cfg_EnableTrailing && profitPts >= g_cfg_TrailStartPts) {
-         desiredSL = isBuy ? (bid - g_cfg_TrailDistPts * _Point)
-                           : (ask + g_cfg_TrailDistPts * _Point);
-         stage = "Trail";
-      } else if (g_cfg_EnableBreakEven && profitPts >= g_cfg_BeTriggerPts) {
-         desiredSL = isBuy ? (openPrice + g_cfg_BeOffsetPts * _Point)
-                           : (openPrice - g_cfg_BeOffsetPts * _Point);
-         stage = "BE";
+         double ptSL = isBuy ? (bid - g_cfg_TrailDistPts * _Point)
+                             : (ask + g_cfg_TrailDistPts * _Point);
+         if (SLImproves(isBuy, ptSL, bestSL)) { bestSL = ptSL; stage = "Trail"; }
+      }
+      if (g_cfg_StructuralTrail && profitPts >= g_cfg_TrailStartPts) {
+         double ssSL;
+         if (GetStructuralSL(isBuy, (isBuy ? bid : ask), ssSL)
+             && SLImproves(isBuy, ssSL, bestSL)) { bestSL = ssSL; stage = "Struct"; }
       }
       if (stage == "") continue;
-      desiredSL = NormalizeDouble(desiredSL, _Digits);
+      double desiredSL = NormalizeDouble(bestSL, _Digits);
 
       //--- only move if strictly improving by at least the step
       if (isBuy) {
@@ -1369,6 +1409,8 @@ void InitShadowsFromInputs() {
    g_cfg_TrailStartPts      = InpTrailStartPts;
    g_cfg_TrailDistPts       = InpTrailDistPts;
    g_cfg_TrailStepPts       = InpTrailStepPts;
+   g_cfg_StructuralTrail    = InpStructuralTrail;
+   g_cfg_StructBufferPts    = InpStructBufferPts;
    g_cfg_EnablePartialClose = InpEnablePartialClose;
    g_cfg_PartialClosePts    = InpPartialClosePts;
    g_cfg_PartialClosePct    = InpPartialClosePct;
@@ -1437,6 +1479,8 @@ void LoadAccountConfig() {
    g_cfg_TrailStartPts      = JsonGetDouble(json, "InpTrailStartPts",     g_cfg_TrailStartPts);
    g_cfg_TrailDistPts       = JsonGetDouble(json, "InpTrailDistPts",      g_cfg_TrailDistPts);
    g_cfg_TrailStepPts       = JsonGetDouble(json, "InpTrailStepPts",      g_cfg_TrailStepPts);
+   g_cfg_StructuralTrail    = JsonGetBool(json,   "InpStructuralTrail",   g_cfg_StructuralTrail);
+   g_cfg_StructBufferPts    = JsonGetDouble(json, "InpStructBufferPts",   g_cfg_StructBufferPts);
    g_cfg_EnablePartialClose = JsonGetBool(json,   "InpEnablePartialClose", g_cfg_EnablePartialClose);
    g_cfg_PartialClosePts    = JsonGetDouble(json, "InpPartialClosePts",   g_cfg_PartialClosePts);
    g_cfg_PartialClosePct    = JsonGetDouble(json, "InpPartialClosePct",   g_cfg_PartialClosePct);

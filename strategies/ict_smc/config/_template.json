@@ -40,6 +40,8 @@
   "InpTrailStartPts": 500,
   "InpTrailDistPts": 300,
   "InpTrailStepPts": 50,
+  "InpStructuralTrail": true,
+  "InpStructBufferPts": 50,
   "InpEnablePartialClose": false,
   "InpPartialClosePts": 400,
   "InpPartialClosePct": 0.5,

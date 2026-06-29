@@ -131,13 +131,15 @@ so positions opened earlier keep being managed even after trading is switched of
 | Feature | Toggle | Rule |
 |---|---|---|
 | **Break-even** | `InpEnableBreakEven` (true) | At `InpBeTriggerPts` profit, move SL to entry ± `InpBeOffsetPts` |
-| **Trailing** | `InpEnableTrailing` (true) | At `InpTrailStartPts` profit, trail SL `InpTrailDistPts` behind price; only move when improving by ≥ `InpTrailStepPts`; never cross TP |
-| **Partial close** | `InpEnablePartialClose` (false) | At `InpPartialClosePts` profit, close `InpPartialClosePct` of volume **once** (skipped if the split would breach broker min-lot — so it is a no-op at the default 0.01 lot; size up to use it) |
+| **Points trailing** | `InpEnableTrailing` (true) | At `InpTrailStartPts` profit, trail SL `InpTrailDistPts` behind price |
+| **Structural trailing** | `InpStructuralTrail` (true) | At `InpTrailStartPts` profit, trail SL behind the newest protective LTF swing + `InpStructBufferPts` — see Phase 5 |
+| **Partial close** | `InpEnablePartialClose` (false) | At `InpPartialClosePts` profit, close `InpPartialClosePct` of volume **once** (skipped if the split would breach broker min-lot — a no-op at 0.01 lot; size up to use it) |
 
-Trailing takes priority over break-even. SL moves are gated to be strictly
-improving and never cross the TP. Partial close fires only while a position is
-still full size (`vol ≥ InpLotPerEntry`), which is how "do it once" stays
-restart-safe without extra state.
+All SL candidates (BE, points-trail, structural-trail) are evaluated together and
+the **most protective** one wins (`SLImproves`); SL only ever moves in the safer
+direction (≥ `InpTrailStepPts` step) and never crosses the TP. Partial close fires
+only while a position is still full size (`vol ≥ InpLotPerEntry`), which is how "do
+it once" stays restart-safe without extra state.
 
 ## Phase 4 — Per-tier TP ladder
 
@@ -157,5 +159,15 @@ Each of the 3 entry tiers gets its own TP at successive opposing-liquidity level
 with per-tier RR). Each limit order is placed with its own tier TP. Outcome JSON is
 unchanged (it reads each position's actual TP via the close deal).
 
-## Phase 5 (future)
-- Optional move-SL-to-next-tier-entry as each tier fills (structural trailing).
+## Phase 5 — Structural SL trailing
+
+`GetStructuralSL()` derives an SL from live LTF market structure rather than a fixed
+point distance: for a long it returns the **newest swing-low below price** minus
+`InpStructBufferPts` (for a short, the newest swing-high above price plus buffer). As
+price prints higher lows in an uptrend, the SL "climbs the staircase" of higher-lows —
+the ICT way to ride a trend. It is folded into the same most-protective-wins selection
+as break-even and points-trailing (`InpStructuralTrail`, default true), so the three
+coexist and whichever protects most is used. Stateless → restart-safe.
+
+## Phase 6 (future)
+- Move SL to the previous tier's entry as each deeper tier fills (entry ratchet).
