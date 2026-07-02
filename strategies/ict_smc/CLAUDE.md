@@ -19,7 +19,7 @@ is added in Phase 2.
 | Concept | Definition | Drawn as |
 |---|---|---|
 | **Swing high/low (đỉnh/đáy)** | Fractal pivot: bar's high/low strictly beyond `InpSwingLookback` (N) bars each side | ▼ / ▲ markers (HTF + LTF) |
-| **HTF bias** | HTF (`InpHTF`) swing sequence: HH+HL = BULL, LH+LL = BEAR, else hold (sticky) | Corner label `ICT HTF H4 bias: …` |
+| **HTF bias** | Direction of the latest HTF break — BOS keeps it, MSS flips it (ICT structure). Before any break, bootstrap from the swing sequence: HH+HL = BULL, LH+LL = BEAR, else hold | Corner label `ICT HTF H4 bias: …` |
 | **BOS** (Break of Structure) | Closed bar breaks a swing **with** the prevailing trend (continuation) | Solid line + `BOS` text |
 | **MSS** (Market Structure Shift / CHoCH) | Closed bar breaks a swing **against** the prevailing trend (reversal) | Dash-dot line + `MSS` text |
 | **Fibonacci OTE** | After an LTF MSS: fib on the impulse leg — 0.5 (premium/discount) + OTE 0.62/0.705/0.79 | Goldenrod band + level lines |
@@ -86,8 +86,8 @@ orders is gated by **`InpEnableTrading`** (default **false** = draw-only).
 
 | Component | Rule |
 |---|---|
-| **Entry** | 3 laddered limit orders at OTE fibs `InpEntryFib1/2/3` (default 0.62 / 0.705 / 0.785) of the impulse leg |
-| **SL** | Beyond the protected swing (leg origin that produced the MSS) + `InpSlBufferPts` |
+| **Entry** | 3 laddered limit orders at OTE fibs `InpEntryFib1/2/3` (default 0.62 / 0.705 / 0.785) of the impulse leg (leg origin = **newest** opposite swing — the displacement low/high, which often forms after the broken swing in time) |
+| **SL** | Beyond the protected swing (the displacement-origin swing) + `InpSlBufferPts` |
 | **TP** | Per-tier liquidity ladder (see Phase 4); fallback `InpFallbackRR` (×SL) when no liquidity |
 | **Direction filter** | `InpRequireBiasAlign` — only trade MSS in the HTF-bias direction |
 
@@ -97,8 +97,11 @@ orders is gated by **`InpEnableTrading`** (default **false** = draw-only).
 `TradeExistsByCommentPrefix`, broker min-stop clamp, `NormalizeLot`. A tier whose
 price has already been passed by the market is skipped (limit must rest the right side).
 
-**Lifecycle**: a new MSS supersedes the old setup (`CancelAllPendings`). Unfilled
-limits are cancelled after `InpPendingExpiryBars` LTF bars (`ManagePendings`).
+**Lifecycle**: a new MSS supersedes the old setup (`CancelAllPendings`). An MSS
+**against** the active setup invalidates it immediately — resting limits are
+cancelled even when that MSS itself is filtered out by the HTF-bias filter.
+Unfilled limits are also cancelled after `InpPendingExpiryBars` LTF bars
+(`ManagePendings`).
 `OnTradeTransaction` writes a closed-trade outcome JSON to
 `Files/IctSmcEA/outcomes/<position_id>.json` (magic-filtered; fields mirror the other
 EAs plus `entry_tier`; `signal_ts` = the MSS bar time, embedded in the comment

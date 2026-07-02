@@ -10,7 +10,7 @@
 //|  CI/CD deployed                                                  |
 //+------------------------------------------------------------------+
 #property copyright   "IctSmc EA"
-#property version     "5.00"
+#property version     "5.01"
 #property description "ICT structure + OTE ladder entries + per-tier TP + BE/points/structural SL trailing"
 
 #include <Trade\Trade.mqh>
@@ -263,9 +263,9 @@ void OnTick() {
 void OnNewHTFBar() {
    if (iBars(_Symbol, g_cfg_HTF) <= 2 * g_cfg_SwingLookback + 2) return;
    RecomputeStructure(g_htf);
-   TrendDir newBias = ComputeBias(g_htf);
+   //--- classify against the pre-break bias, then fold the break into the bias
    ClassifyLatestBreak(g_htf);
-   g_htf.bias = newBias;
+   g_htf.bias = ComputeBias(g_htf);
    DrawStructure(g_htf, g_cfg_ShowHTFObjects);
    DrawBiasLabel(g_htf.bias);
    PruneOldObjects();
@@ -373,9 +373,14 @@ void AppendSwing(StructureState &st, datetime t, double price, int shift, SwingT
 }
 
 //+------------------------------------------------------------------+
-//| HTF/LTF bias from the swing sequence                             |
+//| Structure bias. ICT: structure direction is set by the latest    |
+//| break — BOS keeps it, MSS flips it. The swing-sequence (HH+HL /  |
+//| LH+LL) logic only bootstraps bias before the first recorded break.|
 //+------------------------------------------------------------------+
 TrendDir ComputeBias(StructureState &st) {
+   if (st.lastBOSTime > 0 || st.lastMSSTime > 0)
+      return st.lastBreakBullish ? TREND_BULL : TREND_BEAR;
+
    int need = g_cfg_BiasSwingsForTrend + 1;
    double H[]; double L[];
    if (!LastSwings(st, SWING_HIGH, need, H)) return st.bias;
@@ -539,15 +544,19 @@ void DrawBreakLine(StructureState &st, const SwingPoint &broken, datetime breakA
 //| Draw the OTE fib for the most recent MSS leg on this TF          |
 //+------------------------------------------------------------------+
 void DrawFibForLastMSS(StructureState &st) {
+   //--- leg origin = NEWEST opposite swing (displacement origin), which often
+   //--- forms AFTER the broken swing in time — must match BuildSetupFromMSS.
    SwingPoint legStart, legEnd;
    if (st.lastBreakBullish) {
-      //--- bullish MSS: leg from prior swing-low (0.0) up to broken swing-high (1.0)
-      if (!LastSwingOf(st, SWING_HIGH, legEnd)) return;
-      if (!LastSwingBefore(st, SWING_LOW, legEnd.time, legStart)) return;
+      //--- bullish MSS: leg from newest swing-low (0.0) up to broken swing-high (1.0)
+      if (!LastSwingOf(st, SWING_HIGH, legEnd))   return;
+      if (!LastSwingOf(st, SWING_LOW,  legStart)) return;
+      if (legStart.price >= legEnd.price)         return;   // invalid leg
    } else {
-      //--- bearish MSS: leg from prior swing-high (0.0) down to broken swing-low (1.0)
-      if (!LastSwingOf(st, SWING_LOW, legEnd)) return;
-      if (!LastSwingBefore(st, SWING_HIGH, legEnd.time, legStart)) return;
+      //--- bearish MSS: leg from newest swing-high (0.0) down to broken swing-low (1.0)
+      if (!LastSwingOf(st, SWING_LOW,  legEnd))   return;
+      if (!LastSwingOf(st, SWING_HIGH, legStart)) return;
+      if (legStart.price <= legEnd.price)         return;   // invalid leg
    }
 
    DrawFibOTE(st, legStart, legEnd);
@@ -562,8 +571,10 @@ void DrawFibOTE(StructureState &st, const SwingPoint &legStart, const SwingPoint
    double range = legEnd.price - legStart.price;
    if (MathAbs(range) < _Point) return;
 
-   datetime t1 = legStart.time;
-   datetime t2 = legEnd.time + 6 * PeriodSeconds(st.tf);  // extend a few bars right
+   //--- legStart may be newer than legEnd in time (displacement origin) — order anchors
+   datetime t1 = (legStart.time < legEnd.time) ? legStart.time : legEnd.time;
+   datetime tMax = (legStart.time > legEnd.time) ? legStart.time : legEnd.time;
+   datetime t2 = tMax + 6 * PeriodSeconds(st.tf);  // extend a few bars right
 
    //--- equilibrium 0.5 (premium/discount boundary), distinct dashed style
    if (g_cfg_DrawEquilibrium) {
@@ -706,6 +717,15 @@ void BuildSetupFromMSS(StructureState &st) {
    if (mssTime == 0)                 return;
    if (mssTime == g_setup.mssTime)   return;   // already built for this MSS
 
+   //--- an MSS against the active setup invalidates its entry zone (ICT):
+   //--- drop resting limits even if this MSS itself is not tradeable
+   if (g_setup.active && g_setup.bullish != bull) {
+      int nCancelled = CancelAllPendings();
+      g_setup.active = false;
+      ClearTradeObjects();
+      PrintFormat("[IctSmc] Opposite MSS — setup invalidated, %d pending(s) cancelled", nCancelled);
+   }
+
    //--- only trade MSS aligned with HTF bias
    if (g_cfg_RequireBiasAlign) {
       if (bull && g_htf.bias != TREND_BULL) {
@@ -718,17 +738,20 @@ void BuildSetupFromMSS(StructureState &st) {
       }
    }
 
-   //--- impulse leg (same as the OTE fib leg)
+   //--- impulse leg (same as the OTE fib leg). Origin = NEWEST opposite swing:
+   //--- the displacement low/high usually forms AFTER the broken swing in time
+   //--- (e.g. downtrend H1,L1,H2,L2 then break of H2 → leg is L2→H2, not L1→H2).
    SwingPoint legStart, legEnd;
    if (bull) {
-      if (!LastSwingOf(st, SWING_HIGH, legEnd))                  return;
-      if (!LastSwingBefore(st, SWING_LOW, legEnd.time, legStart)) return;
+      if (!LastSwingOf(st, SWING_HIGH, legEnd))   return;
+      if (!LastSwingOf(st, SWING_LOW,  legStart)) return;
    } else {
-      if (!LastSwingOf(st, SWING_LOW, legEnd))                    return;
-      if (!LastSwingBefore(st, SWING_HIGH, legEnd.time, legStart))return;
+      if (!LastSwingOf(st, SWING_LOW,  legEnd))   return;
+      if (!LastSwingOf(st, SWING_HIGH, legStart)) return;
    }
-   double range = legEnd.price - legStart.price;
-   if (MathAbs(range) < _Point) return;
+   double range = legEnd.price - legStart.price;   // >0 bull leg, <0 bear leg
+   if (bull  && range <  _Point) return;
+   if (!bull && range > -_Point) return;
 
    TradeSetup s;
    ZeroMemory(s);
