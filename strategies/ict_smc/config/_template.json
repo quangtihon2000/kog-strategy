@@ -1,0 +1,51 @@
+{
+  "enabled": true,
+  "label": "ict_smc — <ACCOUNT>",
+  "owner": "<OWNER>",
+
+  "InpHTF": 16388,
+  "InpLTF": 15,
+  "InpSwingLookback": 3,
+  "InpMaxHistoryBars": 500,
+  "InpMaxSwingsTracked": 60,
+  "InpBiasSwingsForTrend": 2,
+
+  "InpDrawFib": true,
+  "InpDrawEquilibrium": true,
+  "InpFibOTE1": 0.62,
+  "InpFibOTE2": 0.705,
+  "InpFibOTE3": 0.79,
+
+  "InpShowHTFObjects": true,
+
+  "InpEnableTrading": false,
+  "InpEntryFib1": 0.62,
+  "InpEntryFib2": 0.705,
+  "InpEntryFib3": 0.785,
+  "InpLotPerEntry": 0.01,
+  "InpMaxSetupPositions": 3,
+  "InpMaxTotalLots": 0.30,
+  "InpSlBufferPts": 200,
+  "InpPendingExpiryBars": 12,
+  "InpMinStopPts": 150,
+  "InpFallbackRR": 2.0,
+  "InpPerTierTP": true,
+  "InpRequireBiasAlign": true,
+  "InpMaxSpreadPts": 50,
+
+  "InpEnableBreakEven": true,
+  "InpBeTriggerPts": 300,
+  "InpBeOffsetPts": 20,
+  "InpEnableTrailing": true,
+  "InpTrailStartPts": 500,
+  "InpTrailDistPts": 300,
+  "InpTrailStepPts": 50,
+  "InpStructuralTrail": true,
+  "InpStructBufferPts": 50,
+  "InpEnablePartialClose": false,
+  "InpPartialClosePts": 400,
+  "InpPartialClosePct": 0.5,
+
+  "InpMagic": 20260627,
+  "InpVerboseLog": true
+}

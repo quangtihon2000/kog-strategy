@@ -77,6 +77,17 @@
         }
       }
     },
+    "ict_smc": {
+      "ea_source": "strategies/ict_smc/ea/IctSmcEA.mq5",
+      "deploy_to": [],
+      "agent": {
+        "enabled": false,
+        "agent_dir": null,
+        "service_name": null,
+        "data_subfolder": null,
+        "env": { "required": [], "optional": [] }
+      }
+    },
     "telegram_monitor": {
       "ea_source": null,
       "deploy_to": [],
